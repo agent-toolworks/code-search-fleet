@@ -804,6 +804,40 @@ real_dirs() {
   fi
 }
 
+# The repositories in the current view, by NAME -- the is_repo-filtered set the
+# rest of the tool already calls "the fleet" (real_dirs, non_repo_entries, the
+# `searching:` count). The text and structural engines that walk the view search
+# THESE by name rather than the view wholesale, and that closes two doors at
+# once, because they are the same door:
+#
+#   - A loose file or a non-repo folder at the fleet root -- a README, the
+#     refresh job's log, a scratch-notes/ directory -- is not searched. That is
+#     what `cs repos` already tells the caller ("not repositories, so not
+#     searched: ..."); before this, ripgrep and ast-grep searched them anyway
+#     and grep searched the folders, so tool output such as update.log leaked
+#     into fleet-wide text answers.
+#   - Every hit line is therefore repo-prefixed. A file sitting DIRECTLY at the
+#     fleet root produces `file:line:content` with no leading `repo/`, and the
+#     repo attribution downstream is `cut -d/ -f1` -- so each such hit line
+#     became its own "repo" and three hits in one root file reported as three
+#     repos (the count that rides every textual answer as blast radius, and the
+#     denominator cs seam's orphan warning keys on). No rootless line, no
+#     miscount.
+#
+# Names, not absolute paths: the engines run with cwd=$view, so a bare name
+# resolves through the view -- a symlink in a ticket workspace, a real directory
+# in the fleet -- and the hit path stays the clean `repo/...` the pipeline (and
+# normalize) expects, whichever layout produced it. semgrep already scopes to
+# real_dirs for the same reason and needs nothing here.
+view_repo_names() {
+  local d
+  for d in "$view"/*/; do
+    [[ -d "$d" ]] || continue
+    is_repo "${d%/}" || continue
+    basename "${d%/}"
+  done
+}
+
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # Evidence that an entry IS a repository, rather than merely that it exists.
@@ -1215,14 +1249,31 @@ grep_fleet() {
   # regex does not compile", and both arrive as exit 2.
   local rc=0 err_f
   err_f=$(cs_tmp cs-engerr)
+  # Search the repositories in the view, by name, rather than the view itself:
+  # loose files and non-repo folders at the fleet root are not repositories and
+  # not searched, and every hit line stays repo-prefixed. See view_repo_names.
+  local repo_targets=() name
+  while IFS= read -r name; do repo_targets+=("$name"); done < <(view_repo_names)
+  if [[ ${#repo_targets[@]} -eq 0 ]]; then
+    # No repositories in view. An empty fleet is refused upstream before any
+    # query runs, so this is a backstop: a degenerate view searches nothing
+    # rather than letting a pathless `rg`/`grep .` fall back to the process cwd.
+    rm -f "$err_f"
+    return 1
+  fi
   if [[ "$engine" == ripgrep ]]; then
     # --regexp is ripgrep's default, so pass a harmless flag instead of none.
     [[ "$extra" == "--regexp" ]] && extra="--no-config"
     local globs=() d
     for d in ${CS_EXCLUDE_DIRS[@]+"${CS_EXCLUDE_DIRS[@]}"}; do globs+=(--glob "!**/$d/**" --glob "!$d/**"); done
+    # With cwd=$view the bare names resolve through the view; --follow makes rg
+    # descend into a ticket workspace's repo symlinks, and --hidden still reaches
+    # .github/ and .env INSIDE each named repo. Only the fleet root's own loose
+    # files stop being reachable, which is the point.
     (cd "$view" && run_timed rg --follow --hidden --no-ignore \
         --no-heading --line-number --color=never \
-        ${globs[@]+"${globs[@]}"} ${wordflag[@]+"${wordflag[@]}"} "$extra" -- "$pattern" .) 2>"$err_f"
+        ${globs[@]+"${globs[@]}"} ${wordflag[@]+"${wordflag[@]}"} "$extra" -- "$pattern" \
+        "${repo_targets[@]}") 2>"$err_f"
     rc=$?
     # 1 is "no match" and must stay silent; 2 is either an uncompilable regex
     # (systemic, refuse) or an unreadable file (per-file, PARTIAL).
@@ -1233,10 +1284,12 @@ grep_fleet() {
     # view made of symlinks. Passing the repo directories explicitly with a
     # trailing slash works on both BSD and GNU grep and does not depend on
     # symlink-following semantics at all.
-    local ex=() d
+    local ex=() d grep_targets=()
     for d in ${CS_EXCLUDE_DIRS[@]+"${CS_EXCLUDE_DIRS[@]}"}; do ex+=("--exclude-dir=$d"); done
+    for name in "${repo_targets[@]}"; do grep_targets+=("$view/$name/"); done
     run_timed grep -Rn --binary-files=without-match \
-        ${ex[@]+"${ex[@]}"} ${wordflag[@]+"${wordflag[@]}"} "$extra" -- "$pattern" "$view"/*/ 2>"$err_f"
+        ${ex[@]+"${ex[@]}"} ${wordflag[@]+"${wordflag[@]}"} "$extra" -- "$pattern" \
+        "${grep_targets[@]}" 2>"$err_f"
     rc=$?
     note_search_result "$rc" "$err_f" grep "searching for '$pattern'"
   fi
@@ -3184,9 +3237,20 @@ cmd_calls() {
     ast-grep)
       local args=(--follow -p "$pattern")
       [[ -n "$lang" ]] && args+=(-l "$lang")
+      # Scoped to the repositories in the view, by name, for the same reason the
+      # text backends are (see view_repo_names): otherwise ast-grep walks the
+      # whole view and a code match in a loose fleet-root file becomes a pathless
+      # hit that cut -d/ -f1 miscounts as its own repo. semgrep below already
+      # iterates real_dirs and needs nothing.
+      local ag_names=() _agn
+      while IFS= read -r _agn; do args+=("$_agn"); ag_names+=("$_agn"); done < <(view_repo_names)
       local ag_raw ag_rc ag_err
       ag_err=$(cs_tmp cs-engerr)
-      ag_raw=$( (cd "$view" && run_timed ast-grep "${args[@]}") 2>"$ag_err" ); ag_rc=$?
+      if [[ ${#ag_names[@]} -eq 0 ]]; then
+        ag_raw=""; ag_rc=0
+      else
+        ag_raw=$( (cd "$view" && run_timed ast-grep "${args[@]}") 2>"$ag_err" ); ag_rc=$?
+      fi
       # ast-grep follows the grep convention, so an unparseable pattern or an
       # unknown language is >=2 and distinguishable from an honest no-match --
       # and, like ripgrep, it reports an unreadable file the same way, which is

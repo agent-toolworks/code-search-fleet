@@ -2616,11 +2616,15 @@ rm -rf "$brokeawk"
 # a layered answer.
 info ""
 info "${C_BOLD}what counts as a repository${C_OFF}"
-printf '# fleet notes\n'      > "$FLEET_ROOT/CLAUDE.md"
-printf '#!/bin/sh\necho hi\n' > "$FLEET_ROOT/update-all.sh"
-printf 'ran at 09:00\n'       > "$FLEET_ROOT/update.log"
+# The token is planted in a root file sitting DIRECTLY at the fleet root, in the
+# root's refresh SCRIPT, and in a non-repo SUBDIRECTORY — the three shapes of
+# "not a repository" — so the search assertion below covers a pathless hit line
+# (the file at the root), a root script, and a stray folder in one probe.
+printf '# fleet notes FLEET_ROOT_ONLY_PROBE\n'      > "$FLEET_ROOT/CLAUDE.md"
+printf '#!/bin/sh\necho FLEET_ROOT_ONLY_PROBE\n'    > "$FLEET_ROOT/update-all.sh"
+printf 'ran FLEET_ROOT_ONLY_PROBE at 09:00\n'       > "$FLEET_ROOT/update.log"
 mkdir -p "$FLEET_ROOT/scratch-notes"          # the harder case: passes a -d test
-printf 'jottings\n' > "$FLEET_ROOT/scratch-notes/a.txt"
+printf 'jottings FLEET_ROOT_ONLY_PROBE\n' > "$FLEET_ROOT/scratch-notes/a.txt"
 
 real_n=$(compgen -G "$FLEET_ROOT/*/.git" | grep -c '')
 repos_out=$("$here/cs" repos 2>/dev/null)
@@ -2655,6 +2659,36 @@ if [[ "${seam_reported:-0}" -eq "$seam_actual" ]]; then
 else
   err "cs seam reported ${seam_reported:-?} repo(s) but hit $seam_actual"
   fail=$((fail + 1)); failed_ids+=("repos-count-disagreement")
+fi
+
+# A text search must not reach the fleet root's own loose files or a non-repo
+# folder. `cs repos` promises they are "not searched", and a hit in one is a
+# fault two ways over: it leaks tool output (the refresh log is one of them)
+# into a fleet-wide answer, and it inflates the repo count — a file sitting
+# DIRECTLY at the root produces a `file:line:content` hit with no leading
+# `repo/`, and the attribution is `cut -d/ -f1`, so each such hit line becomes
+# its own phantom "repo" (three hits in one root file once reported three
+# repos). The token above is in CLAUDE.md, update-all.sh, update.log and
+# scratch-notes/ — a root file, a root script, and a non-repo folder — so any
+# hit here is wrong, and it is checked on BOTH backends because the miss was
+# asymmetric: ripgrep walked the whole view while grep's own glob happened to
+# skip the loose files but not the folder.
+probe_bad=()
+for eng in ripgrep grep; do
+  [[ "$eng" == ripgrep ]] && ! [[ -x "$(command -v rg 2>/dev/null || true)" ]] && continue
+  ph=$(CS_TEXT_ENGINE=$eng "$here/cs" text 'FLEET_ROOT_ONLY_PROBE' --quiet 2>/dev/null \
+       | grep -c '[^[:space:]]')
+  pr=$(CS_TEXT_ENGINE=$eng "$here/cs" text 'FLEET_ROOT_ONLY_PROBE' 2>&1 1>/dev/null \
+       | grep '^answer:' | sed -n 's/.*· \([0-9][0-9]*\) repo(s).*/\1/p')
+  [[ "$ph" -eq 0 ]] || probe_bad+=("$eng:${ph}hit")
+  [[ "${pr:-0}" -eq 0 ]] || probe_bad+=("$eng:${pr}repo")
+done
+if [[ ${#probe_bad[@]} -eq 0 ]]; then
+  ok "text search ignores fleet-root files and non-repo folders (no hit, no phantom repo)"
+  pass=$((pass + 1))
+else
+  err "a non-repository was searched or miscounted: ${probe_bad[*]}"
+  fail=$((fail + 1)); failed_ids+=("search-reaches-non-repos")
 fi
 
 # A worktree's .git is a FILE, so a -d test would silently exclude every one of

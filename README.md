@@ -1064,7 +1064,7 @@ Either way the skill resolves the CLI through `${CLAUDE_PLUGIN_ROOT}`, falling
 back to the checkout — the working directory is the user's project, so `cs` is
 never on a relative path.
 
-### Also available over MCP, opt-in
+### Also available over MCP
 
 The cost argument above — schemas are permanent, the skill body is on demand —
 assumed a client that inlines every tool schema at session start. That is still
@@ -1073,20 +1073,57 @@ clients that **defer** tool schemas: tools arrive as names only, and a schema is
 fetched when a tool is actually called. The standing cost there is a list of 21
 identifiers — smaller than the always-on skill description it partly duplicates.
 
-So `scripts/cs-mcp` exposes the same subcommands over MCP, and it is **opt-in**
-rather than bundled with the plugin. A client that inlines schemas should not
-be made to pay for a surface that is only cheap somewhere else:
+So `scripts/cs-mcp` exposes the same subcommands over MCP, and **installing the
+plugin now registers it** — the plugin ships a `.mcp.json` at its root that
+Claude Code resolves against `${CLAUDE_PLUGIN_ROOT}`:
+
+```json
+{
+  "mcpServers": {
+    "cs": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/cs-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+```
+
+`env` is `{}` on purpose, not an empty slot to fill: the server inherits no
+shell, so the fleet root is resolved by `~/.config/repo-fleet/fleet.env` under
+the same environment > config-file > default precedence the CLI uses — see
+`scripts/lib/common.sh`. Leave it empty and the plugin-shipped server resolves
+the fleet exactly as an existing manual registration does; put a `FLEET_ROOT`
+here and you would pin every install to one machine's layout.
+
+This closes the reachability gap `cs-mcp` was built for: the surface `cs` is
+primarily reached through no longer depends on a human remembering a second,
+undocumented `claude mcp add` after install. A client that inlines schemas and
+does not want to pay the standing cost can still remove it with
+`claude mcp remove cs` (or disable the plugin's MCP server in that client).
+
+#### The tool names are plugin-scoped
+
+A plugin-provided server is namespaced by Claude Code, so its tools arrive under
+a **plugin-scoped prefix** rather than the bare `mcp__cs__*` a manual
+user-scope registration produces. Any doctrine, rules file, or workspace
+template that hard-codes `mcp__cs__…` needs a rename pass to match what the
+installed plugin actually exposes — check the tool list once after installing.
+
+The manual registration is still available, and is the way to keep the bare
+`mcp__cs__*` names (or to wire the server from a plain clone, with no plugin):
 
 ```sh
 # $CS_ROOT as resolved under "Running the scripts from a terminal" above
-"$CS_ROOT/scripts/cs-mcp" --install     # prints the exact command, path resolved
+"$CS_ROOT/scripts/cs-mcp" --install     # prints the exact `claude mcp add` command, path resolved
 "$CS_ROOT/scripts/cs-mcp" --self-check  # can it reach cs and your fleet from here?
 "$CS_ROOT/scripts/cs-mcp" --tools       # the surface, without speaking the protocol
 ```
 
 `--install` exists because the path is the whole difficulty: `CLAUDE_PLUGIN_ROOT`
 is unset in the shell where you actually run `claude mcp add`, and an installed
-plugin lives under a versioned cache directory nobody types from memory.
+plugin lives under a versioned cache directory nobody types from memory. The
+`.mcp.json` above is what removes the need for it on the install path.
 
 What it buys over the CLI is **reachability**, not capability. A tool an agent
 must be told about is reached only when something remembers to tell it; a tool

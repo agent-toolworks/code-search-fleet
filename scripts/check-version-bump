@@ -39,7 +39,10 @@ market=".claude-plugin/marketplace.json"
 
 # What a plugin user actually receives. The manifests are excluded: changing
 # the version is the whole point, and a manifest-only commit needs no bump.
-SHIPPED_RE='^(scripts/|skills/|\.claude-plugin/marketplace\.json)'
+# .mcp.json ships at the plugin root — installing the plugin registers the MCP
+# server from it — so a change to the server command it names is exactly the
+# "new artifact under an unchanged version string" failure this gate exists for.
+SHIPPED_RE='^(scripts/|skills/|\.mcp\.json|\.claude-plugin/marketplace\.json)'
 
 version_in() {  # <json text>
   sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<< "$1" | head -1

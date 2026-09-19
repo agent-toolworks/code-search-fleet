@@ -761,9 +761,26 @@ else
   # invalidate it however old the file is. Otherwise "trust the fingerprint"
   # would just be "never rebuild".
   touch -t "$(date -v-2H '+%Y%m%d%H%M' 2>/dev/null || date -d '2 hours ago' '+%Y%m%d%H%M')" "$ttl_fp"
-  ttl_probe="$FLEET_ROOT/pricing-lib-java/ttl-probe.txt"
+  # Identity passed explicitly, and the rewind point recorded rather than
+  # assumed — the same two mistakes the history block above already made and
+  # fixed, repeated here and missed because CI never reached this check while
+  # the version gate was red.
+  #
+  # A CI runner has no user.name/user.email, so this commit failed with status
+  # 128, HEAD never moved, and `cs def` then CORRECTLY declined to rebuild —
+  # which this check reported as "cs reused a stale index", a cs regression
+  # that had not happened, while `>/dev/null 2>&1` hid the one message that
+  # said why. Worse, the rewind was `reset --hard HEAD~1`: with no probe commit
+  # to undo it unwound a REAL fixture commit and corrupted the fleet for every
+  # check that followed.
+  ttl_repo="$FLEET_ROOT/pricing-lib-java"
+  ttl_probe="$ttl_repo/ttl-probe.txt"
+  ttl_git() { git -C "$ttl_repo" -c user.name=verify -c user.email=verify@local "$@"; }
+  ttl_base=$(git -C "$ttl_repo" rev-parse HEAD 2>/dev/null || echo "")
   printf 'ttl probe\n' > "$ttl_probe"
-  (cd "$FLEET_ROOT/pricing-lib-java" && git add -A && git commit -qm 'ttl probe') >/dev/null 2>&1
+  ttl_git add -A >/dev/null 2>&1
+  ttl_git commit -qm 'ttl probe' >/dev/null 2>&1 \
+    || warn "  ttl probe commit failed; the fingerprint check below is not meaningful"
   ttl_moved=$("$here/cs" def Reserve --fleet 2>&1)
   if printf '%s' "$ttl_moved" | grep -q 'rebuilt now'; then
     ok "a moved HEAD invalidates the index whatever its age"
@@ -772,7 +789,10 @@ else
     err "a fleet-scoped 'cs def' reused an index from before a commit moved HEAD"
     fail=$((fail + 1)); failed_ids+=("tags-ttl-fingerprint-key")
   fi
-  (cd "$FLEET_ROOT/pricing-lib-java" && git reset -q --hard HEAD~1) >/dev/null 2>&1
+  # Back to the RECORDED commit, never HEAD~1: if the probe commit did not
+  # happen there is nothing to unwind, and HEAD~1 would take a real one with it.
+  [[ -n "$ttl_base" ]] && git -C "$ttl_repo" reset -q --hard "$ttl_base" >/dev/null 2>&1
+  rm -f "$ttl_probe"
 
   # An explicit CS_TAGS_TTL still wins, in both scopes. It is the escape hatch
   # for a fleet root people edit in place rather than a read-only mirror, so

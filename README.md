@@ -949,11 +949,11 @@ claude plugin install code-search@code-search-fleet
 
 Or get it together with the workspace tooling it is designed to sit beside, from
 one catalog — see
-[repo-fleet](https://github.com/my-organization-for-testing-067/repo-fleet),
+[repo-fleet](https://github.com/agent-toolworks/repo-fleet),
 which owns the fleet and ticket-workspace side and lists this plugin too:
 
 ```sh
-claude plugin marketplace add my-organization-for-testing-067/repo-fleet
+claude plugin marketplace add agent-toolworks/repo-fleet
 claude plugin install code-search@repo-fleet
 claude plugin install fleet-workspace@repo-fleet
 ```
@@ -1070,7 +1070,7 @@ The cost argument above — schemas are permanent, the skill body is on demand �
 assumed a client that inlines every tool schema at session start. That is still
 true of some, and there the objection stands unchanged. It is no longer true of
 clients that **defer** tool schemas: tools arrive as names only, and a schema is
-fetched when a tool is actually called. The standing cost there is a list of 21
+fetched when a tool is actually called. The standing cost there is a list of 27
 identifiers — smaller than the always-on skill description it partly duplicates.
 
 So `scripts/cs-mcp` exposes the same subcommands over MCP, and **installing the
@@ -1096,6 +1096,12 @@ the same environment > config-file > default precedence the CLI uses — see
 the fleet exactly as an existing manual registration does; put a `FLEET_ROOT`
 here and you would pin every install to one machine's layout.
 
+The server this registers runs from the **versioned plugin cache**, not from
+your clone. A manual registration that points at a clone picks up changes with
+`git pull`. The plugin's server only changes when you run `claude plugin update`
+(see [Updating](#updating)), so a clone's `cs` and the MCP surface can end up on
+different versions. If they behave differently, compare their versions first.
+
 This closes the reachability gap `cs-mcp` was built for: the surface `cs` is
 primarily reached through no longer depends on a human remembering a second,
 undocumented `claude mcp add` after install. A client that inlines schemas and
@@ -1108,7 +1114,20 @@ A plugin-provided server is namespaced by Claude Code, so its tools arrive under
 a **plugin-scoped prefix** rather than the bare `mcp__cs__*` a manual
 user-scope registration produces. Any doctrine, rules file, or workspace
 template that hard-codes `mcp__cs__…` needs a rename pass to match what the
-installed plugin actually exposes — check the tool list once after installing.
+installed plugin actually exposes. The pattern is
+`mcp__plugin_<plugin>_<server>__<tool>`, which for this plugin is:
+
+```
+mcp__plugin_code-search_cs__cs_text
+mcp__plugin_code-search_cs__cs_uses
+mcp__plugin_code-search_cs__cs_engines
+…                                        (all of `cs-mcp --tools`)
+```
+
+So the rename is mechanical: `sed 's/mcp__cs__/mcp__plugin_code-search_cs__/g'`.
+Confirm it once in a **new** session after installing. The tool list is fixed
+when a session starts, so the session that ran the install cannot see the new
+tools, and `claude plugin details` does not list tool names either.
 
 The manual registration is still available, and is the way to keep the bare
 `mcp__cs__*` names (or to wire the server from a plain clone, with no plugin):

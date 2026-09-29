@@ -355,7 +355,7 @@ info ""
 # Reported separately rather than as "of those": an engine absent here has no
 # version to differ, so it is not counted among the version deltas above.
 [[ $absent_here -gt 0 ]] && warn "$absent_here engine(s) in the baseline are not installed here — absent, not changed"
-[[ $improvements -gt 0 ]] && warn "$improvements known limitation(s) no longer apply — revisit the routing in docs/repo-fleet.md"
+[[ $improvements -gt 0 ]] && warn "$improvements known limitation(s) no longer apply — revisit the routing in skills/code-search/SKILL.md"
 if [[ $skips -gt 0 ]]; then
   warn "$skips probe(s) SKIPPED — a skip is not a pass:"
   for s in "${skip_why[@]:-}"; do [[ -n "$s" ]] && info "    $s"; done

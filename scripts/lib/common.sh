@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Shared config and helpers for the fleet/ticket scripts.
-# See docs/repo-fleet.md for the setup this assumes.
+# The setup this assumes is under "Setting up a fleet" in README.md, and in
+# repo-fleet's GETTING-STARTED.md for fleet-init.
 
 # Config precedence: environment > config file > defaults.
 #

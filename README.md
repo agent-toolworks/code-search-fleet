@@ -27,12 +27,27 @@ Committing to one engine means accepting its blind spot permanently.
 
 ```sh
 scripts/bootstrap                  # install engines (--check to only report)
-export FLEET_ROOT=~/code/fleet     # a directory holding your repos
-scripts/verify-search              # 204 checks against a throwaway fixture fleet
+export FLEET_ROOT=~/code/fleet     # a directory holding your repos (see below)
+scripts/verify-search              # 200+ checks against a throwaway fixture fleet
 
 scripts/cs which                   # which subcommand answers what
 scripts/cs uses "/api/v1/orders"   # who uses this string, in code only
 ```
+
+**On a first `verify-search` run with tokensave 7.11 or newer, expect 3 failures.**
+All three are `cs fields` checks (`fields-qualifier-dropped`,
+`fields-writes-complete`, `fields-overflow-hint`). They come from a known change
+in tokensave's output that `cs` has not caught up with yet
+([#44](https://github.com/agent-toolworks/code-search-fleet/issues/44)). They do
+not mean the install is broken. Everything else should pass. Checks for an engine
+you have not installed show as skipped, not failed.
+
+**Platforms.** Tested on macOS and Linux, which is also what CI runs on. The
+scripts are bash, and `bootstrap` knows `brew`, `apt-get` and `dnf`. Native
+Windows is not supported. WSL2 is untested, but it is Linux, so it should work
+there. If you try it, keep the fleet on the Linux filesystem (`~/code/fleet`),
+not under `/mnt/c`. Every search walks the whole fleet, and crossing into the
+Windows filesystem makes that many times slower.
 
 Every *engine* is optional; `cs engines` reports what is present and `cs` routes
 around what is missing rather than failing silently.
@@ -47,6 +62,35 @@ report it.
 `timeout(1)` is worth having too. Without it a hung language server hangs `cs`
 with no upper bound, and a search that never returns is the one outcome worse
 than a wrong one, because nothing reports it. `brew install coreutils` on macOS.
+
+## Setting up a fleet
+
+A fleet is a directory with one clone per repository, kept on `main`. `cs`
+searches whatever is there. It does not clone anything itself.
+
+Put the location in `~/.config/repo-fleet/fleet.env`:
+
+```sh
+export FLEET_ROOT="$HOME/code/fleet"     # one clone per repo
+export TICKETS_ROOT="$HOME/tickets"      # per-ticket worktree workspaces (optional)
+```
+
+**This file is what the MCP server reads.** The server that the plugin registers
+is started by Claude Code, not from your shell. Whether a `FLEET_ROOT` exported in
+your shell profile reaches it depends on how Claude Code was launched. `cs` and
+`cs-mcp` both source `fleet.env` on every call, so it is the one setting both
+always see. The precedence is environment, then `fleet.env`, then the default
+`~/code/fleet` (see `scripts/lib/common.sh`). An exported `FLEET_ROOT` still wins
+in a shell where it is set.
+
+To build and maintain the fleet itself, use `fleet-init` from the
+`fleet-workspace` plugin. `fleet-init --config` writes the file above,
+`--clone <org/repo>…` fills the fleet, and `--cron` prints the daily refresh
+line. The steps are in repo-fleet's
+[GETTING-STARTED.md](https://github.com/agent-toolworks/repo-fleet/blob/main/GETTING-STARTED.md),
+which also covers ticket workspaces. If you do not use `fleet-workspace`, any
+directory of clones works. Keep it up to date yourself, because `cs` answers from
+whatever is checked out.
 
 ## Commands
 
@@ -940,25 +984,31 @@ blind spots, verification.
 
 ### As a Claude Code plugin
 
-This repo is its own marketplace:
+Install from the agent-toolworks catalog. It lists this plugin next to
+`fleet-workspace`, which builds and maintains the fleet (see
+[Setting up a fleet](#setting-up-a-fleet)):
+
+```sh
+claude plugin marketplace add agent-toolworks/plugins
+claude plugin install code-search@agent-toolworks
+claude plugin install fleet-workspace@agent-toolworks   # optional: fleet-init, ticket workspaces
+```
+
+This repo is also its own marketplace, if you want only this plugin:
 
 ```sh
 claude plugin marketplace add agent-toolworks/code-search-fleet
 claude plugin install code-search@code-search-fleet
 ```
 
-Or get it together with the workspace tooling it is designed to sit beside, from
-one catalog — see
-[repo-fleet](https://github.com/agent-toolworks/repo-fleet),
-which owns the fleet and ticket-workspace side and lists this plugin too:
+**`repo-fleet` is the legacy catalog.** Installs made as `code-search@repo-fleet`
+keep working. The catalog calls itself deprecated, so do not use it for a new
+install. To move an existing install, run
+`claude plugin uninstall code-search@repo-fleet` and then use the commands above.
 
-```sh
-claude plugin marketplace add agent-toolworks/repo-fleet
-claude plugin install code-search@repo-fleet
-claude plugin install fleet-workspace@repo-fleet
-```
-
-Then set the one thing it cannot guess:
+Then tell it where the fleet is. `~/.config/repo-fleet/fleet.env` is the one
+place both the CLI and the MCP server read (see
+[Setting up a fleet](#setting-up-a-fleet)):
 
 ```sh
 export FLEET_ROOT=~/code/fleet     # the directory holding your repos
@@ -966,16 +1016,25 @@ export FLEET_ROOT=~/code/fleet     # the directory holding your repos
 
 ### Updating
 
+Use the marketplace you installed from. `claude plugin list` shows the full id:
+
 ```sh
-claude plugin marketplace update repo-fleet
+claude plugin marketplace update agent-toolworks      # installed as code-search@agent-toolworks
+claude plugin update code-search@agent-toolworks
+
+claude plugin marketplace update code-search-fleet    # installed as code-search@code-search-fleet
+claude plugin update code-search@code-search-fleet
+
+claude plugin marketplace update repo-fleet           # legacy: code-search@repo-fleet
 claude plugin update code-search@repo-fleet
 ```
 
-Both lines are load-bearing. The first refreshes the catalog so it knows a newer
-version exists; running only the second updates against a stale catalog and
-reports nothing to do. And the plugin **must** be named `code-search@repo-fleet`
-— the bare `code-search` fails with `Plugin "code-search" not found`, which
-reads like the plugin is not installed rather than like the id is incomplete.
+Both lines of each pair are needed. The first refreshes the catalog so it knows
+a newer version exists. Running only the second updates against a stale catalog
+and reports nothing to do. The plugin also **must** be given with its
+marketplace, as in `code-search@agent-toolworks`. The bare `code-search` fails
+with `Plugin "code-search" not found`, which reads like the plugin is not
+installed, not like the id is incomplete.
 
 Restart Claude Code afterwards; the CLI says so, and the previously loaded skill
 stays in the session until you do.
@@ -1009,6 +1068,17 @@ hand the same way CI does:
 ./scripts/check-version-bump          # against origin/main, or the previous commit
 ```
 
+**The catalogs that republish this plugin carry no `version`.**
+`agent-toolworks/plugins` and the legacy `repo-fleet` list it through a `url`
+source. For a plugin fetched that way, `plugin.json` wins over an entry's
+`version` at install and update time. The entry's copy only affects what
+`/plugin` shows before install, because nothing else can be read then. That
+copy had drifted to `1.13.0` while `plugin.json` said `1.14.1`, and no check here
+could see it. So those entries now leave `version` out, and `plugin.json` is the
+only place it is stated. This repo's own `marketplace.json` still carries one,
+because its entry is a relative path in the same tree, and
+`check-version-bump` holds it equal to `plugin.json`.
+
 ### Running the scripts from a terminal
 
 The whole repo ships with the plugin — the `cs` CLI, all five engines' glue, the
@@ -1021,16 +1091,23 @@ where it was built".
 `/scripts/…` in an ordinary shell and fails. Resolve the installed copy instead:
 
 ```sh
-CS_ROOT=$(ls -d ~/.claude/plugins/cache/repo-fleet/code-search/*/ | tail -1)
+MARKETPLACE=agent-toolworks   # or code-search-fleet, or repo-fleet: the part after @ in `claude plugin list`
+CS_ROOT=$(ls -d ~/.claude/plugins/cache/"$MARKETPLACE"/code-search/*/ \
+          | grep -E '/[0-9]+(\.[0-9]+)*/$' | sort -V | tail -1)
 
 "$CS_ROOT/scripts/bootstrap"        # install the engines (--check to only report)
 "$CS_ROOT/scripts/verify-search"    # the full suite, against a throwaway fixture fleet
 "$CS_ROOT/scripts/cs" which         # the decision table
 ```
 
-`tail -1` picks the highest version, which matters because an update leaves the
-previous version's directory in place. Substitute the marketplace you installed
-from if it was not `repo-fleet`.
+The filter and `sort -V` pick the highest *version*, which matters because an
+update leaves the previous version's directory in place. A plain `tail -1` is
+not enough. A catalog entry pinned by `sha` can also leave a directory named
+after the short commit (`code-search/c7607743042c/` next to
+`code-search/1.14.1/`), and a hex name sorts after a version string. `tail -1`
+would then pick that directory, not the one the running `cs-mcp` serves from. If
+the result looks wrong, `claude plugin details code-search` names the installed
+version.
 
 `verify-search` builds its own fixture repos, so it neither touches your code nor
 needs `FLEET_ROOT` set — which makes it the right first thing to run, before the
@@ -1152,6 +1229,48 @@ the `mcp__<server>__` tool-name prefix, so calls are counted by name rather than
 by matching the shape of a shell command — which undercounts precisely when
 someone invokes it in a way the matcher does not recognise, and an uncounted
 call is indistinguishable from non-use.
+
+#### Calling the tools
+
+The main argument has a **different name on different tools**. Copying the
+argument name from a sibling tool is the most common wrong call. One example per
+shape, with the names as the plugin exposes them:
+
+```jsonc
+// pattern: cs_text, cs_calls
+mcp__plugin_code-search_cs__cs_text   {"scope": "fleet", "pattern": "orders\\.reserved"}
+// query: cs_uses, cs_seam, cs_gaps, cs_history
+mcp__plugin_code-search_cs__cs_uses   {"scope": "PROJ-123", "query": "/api/v1/orders"}
+// symbol: cs_def (repo optional)
+mcp__plugin_code-search_cs__cs_def    {"scope": "fleet", "symbol": "PriceCalculator"}
+// symbol + repo: cs_impls, cs_callers, cs_callees, cs_impact
+mcp__plugin_code-search_cs__cs_impls  {"scope": "fleet", "symbol": "IInventory", "repo": "inventory-api"}
+// symbol + repo + file: cs_refs
+mcp__plugin_code-search_cs__cs_refs   {"scope": "fleet", "symbol": "Reserve", "repo": "inventory-api",
+                                       "file": "src/Inventory/ReserveHandler.cs"}
+// one named key: cs_fields (field), cs_values (key), cs_constructs (type), cs_provides (coordinate)
+mcp__plugin_code-search_cs__cs_fields {"scope": "fleet", "field": "Order::status", "count": true}
+// scope only: cs_deps, cs_versions, cs_owns, cs_repos, …; nothing at all: cs_scopes, cs_which, cs_why, cs_engines
+mcp__plugin_code-search_cs__cs_scopes {}
+```
+
+For every tool's required and optional arguments, use `cs-mcp --tools`:
+
+```
+$ "$CS_ROOT/scripts/cs-mcp" --tools
+cs_uses        cs uses       (query, scope; optional: word, source_only, count)
+cs_text        cs text       (pattern, scope; optional: word, source_only, count)
+cs_impls       cs impls      (symbol, repo, scope)
+…
+```
+
+An argument the tool does not take is rejected by name, and the error lists what
+the tool does take. The call does not run:
+
+```
+cs_text {"scope": "fleet", "query": "probe"}
+→ unknown argument 'query' — cs_text takes: pattern, scope, word, source_only, count
+```
 
 #### Every tool requires an explicit scope
 

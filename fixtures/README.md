@@ -10,8 +10,9 @@ cross-repo graph querying resolve? Being tiny is correct for those questions.
 
 **What these are not for:** judging whether a search tool is good. This code is
 clean, small, and its seams were planted on purpose — every tool will score well
-on it. That question needs real queries against a real repo; see the
-"Evaluating the tooling" section of `docs/repo-fleet.md`.
+on it. That question needs real queries against a real repo, drawn from your
+own tickets; see "Honest limits" in the top-level `README.md`, and
+`fixtures/BASELINE.md` for how the scored queries here were measured.
 
 The exception is accuracy. The fixture carries **decoys** — a prose-only
 mention of an endpoint, a consumer of a topic version nobody produces, a

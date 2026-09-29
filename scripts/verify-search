@@ -3951,6 +3951,21 @@ else
   fail=$((fail + 1)); failed_ids+=("mcp-noscope-refusal")
 fi
 
+# An argument name copied from a sibling tool (`query` on cs_text, `pattern`
+# on cs_uses) used to be ignored, so the reply was "pattern is required": true,
+# and silent about the actual mistake. It must be named, with what the tool
+# takes, and the call must not run.
+mcp_unknown=$(mcp_req cs_text '{"scope":"fleet","query":"orders.reserved.v1"}' | mcp_drive "$FLEET_ROOT")
+if printf '%s' "$mcp_unknown" | grep -q '^isError' \
+   && printf '%s' "$mcp_unknown" | grep -q "unknown argument 'query'" \
+   && printf '%s' "$mcp_unknown" | grep -q 'cs_text takes: pattern, scope'; then
+  ok "an MCP call with an unknown argument names it and what the tool takes"
+  pass=$((pass + 1))
+else
+  err "an unknown MCP argument was not named: $mcp_unknown"
+  fail=$((fail + 1)); failed_ids+=("mcp-unknown-argument")
+fi
+
 # cs's central distinction has to survive the new surface: a refusal and an
 # honest zero are opposite facts, and over MCP the only channel for that is
 # isError. Collapsing them would make "nothing uses this" and "this did not

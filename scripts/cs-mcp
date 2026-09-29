@@ -783,6 +783,21 @@ def call_tool(name, arguments):
     _, sub, _, args = spec
     arg_names = {a[0] for a in args}
 
+    # The schema says additionalProperties: false, but not every client
+    # enforces it -- and an unknown argument was otherwise just ignored, so
+    # `cs_text {"query": …}` came back as "pattern is required": right about
+    # what was missing, silent about what was wrong. The argument name differs
+    # between sibling tools (pattern / query / symbol / field …), so copying it
+    # from the wrong one is the common mistake, and naming it saves the round
+    # trip. Checked first, because it is usually the cause of a missing one.
+    unknown = [k for k in arguments if k not in arg_names]
+    if unknown:
+        takes = ", ".join(a[0] for a in args) or "no arguments"
+        raise ToolError(
+            f"unknown argument{'s' if len(unknown) > 1 else ''} "
+            f"{', '.join(repr(k) for k in unknown)} — {name} takes: {takes}"
+        )
+
     # Reached through the same path as a bad scope, so the explanation is
     # written once. A client that does not enforce `required` gets the same
     # refusal as one that passes an empty string.
@@ -875,10 +890,15 @@ def main():
     if "--tools" in sys.argv[1:]:
         # For eyeballing the surface, and for verify-search: what a client
         # would see, without having to speak the protocol to find out.
+        # Optional arguments are listed too: the argument NAMES differ between
+        # sibling tools, and this is the one place to read them all at once.
         for spec in TOOLS:
             req = [a[0] for a in spec[3] if a[2]]
-            print(f"{spec[0]:<14} cs {spec[1]:<10} "
-                  f"({', '.join(req) if req else 'no arguments'})")
+            opt = [a[0] for a in spec[3] if not a[2]]
+            line = ", ".join(req) if req else "no required arguments"
+            if opt:
+                line += "; optional: " + ", ".join(opt)
+            print(f"{spec[0]:<14} cs {spec[1]:<10} ({line})")
         return 0
     if "--self-check" in sys.argv[1:]:
         # Does the thing this server wraps actually work from HERE, with this

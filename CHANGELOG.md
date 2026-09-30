@@ -8,6 +8,14 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.15.1 — 2026-09-29
+
+- The README is short and ordered for use (#53): install (plugin first), fleet setup,
+  first queries, commands, how far to trust an answer, honest limits. It has a table of
+  contents. The reference and rationale moved, unchanged, into `docs/`: `answer-kinds.md`,
+  `mcp.md`, `updating.md`, `tuning.md` and `verifying.md`. Links into the README still
+  resolve.
+
 ## 1.15.0 — 2026-09-29
 
 - `cs fields` keeps its write list complete on tokensave 7.11 and newer (#44). From 7.11,

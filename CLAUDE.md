@@ -2,7 +2,7 @@
 
 `cs` (in `scripts/`) searches a fleet of repositories and labels every answer with the
 evidence behind it; the Claude Code plugin is this repository (`.claude-plugin/`,
-`skills/`, `.mcp.json`). The README is the reference.
+`skills/`, `.mcp.json`). The README and `docs/` are the reference.
 
 - Versions: `VERSION` and `CHANGELOG.md`. Add a line under **Unreleased** for every
   change; cut a release with `scripts/set-version X.Y.Z` (minor for a new verb, flag or

@@ -15,7 +15,7 @@ There the standing cost is a list of ~21 identifiers, which is smaller than the
 always-on skill description this partly duplicates.
 
 So: both surfaces, and neither is the default for everyone. The CLI stays the
-primary one and needs nothing installed. This server is opt-in (see README), so
+primary one and needs nothing installed. This server is opt-in (see docs/mcp.md), so
 a client that inlines schemas is not made to pay for a surface that is only
 cheap somewhere else.
 

@@ -73,6 +73,18 @@ if [[ "$pv" != "$mv_" ]]; then
   both are read, by different consumers, and neither reads the other"
 fi
 
+# 1b. VERSION and CHANGELOG.md say the same, and every version says what
+#     changed. scripts/set-version writes all four at once; this catches a
+#     hand edit to one of them.
+if [[ -f "$root/VERSION" ]]; then
+  fv=$(tr -d '[:space:]' < "$root/VERSION")
+  [[ "$fv" == "$pv" ]] || die "VERSION says $fv, $manifest says $pv
+  set all of them with: scripts/set-version <version>"
+  grep -q "^## $pv " "$root/CHANGELOG.md" 2>/dev/null \
+    || die "CHANGELOG.md has no \"## $pv\" entry
+  add what changed under \"## Unreleased\", then: scripts/set-version <version>"
+fi
+
 # 2. If nothing a user receives changed, there is nothing to bump for.
 # Two-dot against the working tree, not three-dot against HEAD: `base` is
 # already the merge base, and comparing the tree means this says the same thing

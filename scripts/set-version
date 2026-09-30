@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+#
+# set-version MAJOR.MINOR.PATCH
+#
+# Set the plugin's version everywhere it is written, and date the changelog.
+#
+# Updates VERSION, the two manifests (.claude-plugin/plugin.json and the plugin
+# entry in .claude-plugin/marketplace.json), and CHANGELOG.md: what is under
+# "## Unreleased" becomes the new version's entry, with today's date, and an
+# empty "## Unreleased" is left above it. Commit the result, then tag it
+# vMAJOR.MINOR.PATCH; `check-version-bump` holds the four in agreement.
+#
+# MINOR for a new verb, flag or behaviour; PATCH for a fix alone.
+set -euo pipefail
+
+new="${1:-}"
+[[ "$new" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: $0 MAJOR.MINOR.PATCH" >&2; exit 1; }
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+old=$(cat "$root/VERSION")
+log="$root/CHANGELOG.md"
+[[ "$old" != "$new" ]] || { echo "already $new" >&2; exit 1; }
+grep -q "^## $new " "$log" && { echo "CHANGELOG.md already has $new" >&2; exit 1; }
+# A version says what changed: refuse one with nothing under "Unreleased".
+awk '/^## Unreleased$/ { on = 1; next } /^## / { on = 0 } on && NF { found = 1 } END { exit !found }' "$log" \
+  || { echo "nothing under \"## Unreleased\" in CHANGELOG.md" >&2; exit 1; }
+
+# In place without sed -i, whose flag differs between BSD and GNU sed.
+subst() {  # <file> <sed expression>
+  local tmp; tmp=$(mktemp)
+  sed "$2" "$1" > "$tmp" && cat "$tmp" > "$1"; rm -f "$tmp"
+}
+
+printf '%s\n' "$new" > "$root/VERSION"
+for manifest in "$root/.claude-plugin/plugin.json" "$root/.claude-plugin/marketplace.json"; do
+  subst "$manifest" "s/\"version\": \"$old\"/\"version\": \"$new\"/"
+  grep -q "\"version\": \"$new\"" "$manifest" || { echo "$manifest did not say $old" >&2; exit 1; }
+done
+subst "$log" "s/^## Unreleased\$/## Unreleased\\
+\\
+## $new — $(date +%Y-%m-%d)/"
+
+echo "$old -> $new. Check CHANGELOG.md, run scripts/check-version-bump and the suites, commit, then: git tag v$new"

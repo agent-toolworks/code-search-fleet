@@ -1069,6 +1069,13 @@ hand the same way CI does:
 ./scripts/check-version-bump          # against origin/main, or the previous commit
 ```
 
+**Cutting a release.** Every change adds a line under **Unreleased** in
+`CHANGELOG.md`. To release, run `scripts/set-version X.Y.Z`: minor for a new
+verb, flag or behaviour, patch for a fix alone. It moves Unreleased under the
+new version with today's date, and writes the number to `VERSION` and both
+manifests. Then commit and tag `vX.Y.Z`. `check-version-bump` also fails when
+`VERSION` disagrees with `plugin.json`, or the changelog has no entry for it.
+
 **The catalogs that republish this plugin carry no `version`.**
 `agent-toolworks/plugins` and the legacy `repo-fleet` list it through a `url`
 source. For a plugin fetched that way, `plugin.json` wins over an entry's

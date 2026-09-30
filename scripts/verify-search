@@ -1532,19 +1532,81 @@ else
       fail=$((fail + 1)); failed_ids+=("fields-empty-refuses")
     fi
 
+    # tokensave 7.11 changed two things these checks measure (#44): --limit
+    # caps writes as well as reads, and a `Type::field` qualifier is applied.
+    # Every check below must hold on both sides of that line, and the two that
+    # assert engine-specific wording branch on it.
+    ts_ver=$(tokensave --version 2>/dev/null | awk '{print $2}')
+    ts_711=""
+    [[ -n "$ts_ver" && "$(printf '7.11.0\n%s\n' "$ts_ver" | sort -V | head -1)" == "7.11.0" ]] && ts_711=1
+
     # A `Type::field` query is parsed into a qualifier and then NOT applied on
     # 7.9.0 -- and the results returned are the BARE-name results. Measured:
     # `DiscountEngine::_threshold` (a real class) and `NoSuchClass::_threshold`
     # (a fabricated one) return identical sites and identical counts, so the
     # qualifier does not even spell-check. Answering would put the broad
     # question's result under the narrow question's heading.
+    #
+    # From 7.11 it IS applied -- to fields DECLARED on the type, and a Python
+    # attribute only assigned in a method has none, so the real class answers
+    # zero. That must refuse as a statement about declarations, not fall
+    # through to "check the name is real", which it is.
     fld_q=$("$here/cs" fields 'DiscountEngine::_threshold' --fleet 2>&1); fld_q_rc=$?
-    if [[ $fld_q_rc -eq 1 ]] && printf '%s' "$fld_q" | grep -q 'NOT narrowed'; then
-      ok "a qualifier the engine drops refuses rather than answering broadly"
+    if [[ -z "$ts_711" ]]; then
+      if [[ $fld_q_rc -eq 1 ]] && printf '%s' "$fld_q" | grep -q 'NOT narrowed'; then
+        ok "a qualifier the engine drops refuses rather than answering broadly"
+        pass=$((pass + 1))
+      else
+        err "cs fields returned an unnarrowed answer for a qualified query (exit $fld_q_rc)"
+        fail=$((fail + 1)); failed_ids+=("fields-qualifier-dropped")
+      fi
+    elif [[ $fld_q_rc -eq 1 ]] \
+         && printf '%s' "$fld_q" | grep -q "applied the qualifier" \
+         && printf '%s' "$fld_q" | grep -q "resolved to 'DiscountEngine'" \
+         && printf '%s' "$fld_q" | grep -q 'NOT .nothing uses it'; then
+      ok "an applied qualifier that matches no site refuses, and says why (tokensave $ts_ver)"
       pass=$((pass + 1))
     else
-      err "cs fields returned an unnarrowed answer for a qualified query (exit $fld_q_rc)"
-      fail=$((fail + 1)); failed_ids+=("fields-qualifier-dropped")
+      err "an applied-but-unmatched qualifier was not explained (exit $fld_q_rc, tokensave $ts_ver)"
+      fail=$((fail + 1)); failed_ids+=("fields-qualifier-unmatched")
+    fi
+
+    # And an applied qualifier that DOES match drops what it cannot type: a
+    # receiver returned by a call (`Make()._hfield`) is counted in
+    # unattributed_count and not listed. Measured on 7.11: 1 write and 1 read
+    # listed, 2 sites dropped. Presented plainly, that is a complete-looking
+    # answer that is a lower bound. C#, because the qualifier needs a DECLARED
+    # field to match and the Python extractor records none.
+    if [[ -n "$ts_711" ]]; then
+      lb_repo="$FLEET_ROOT/inventory-api-dotnet"
+      mkdir -p "$lb_repo/src/Probe"
+      cat > "$lb_repo/src/Probe/Holder.cs" <<'PROBE'
+namespace Probe {
+  public class Holder {
+    public int _hfield;
+    public void Set() { this._hfield = 1; }
+    public int Get() { return this._hfield; }
+  }
+  public class User {
+    Holder Make() { return new Holder(); }
+    public void Use() { Make()._hfield = 2; var y = Make()._hfield; }
+  }
+}
+PROBE
+      (cd "$lb_repo" && tokensave init >/dev/null 2>&1) || true
+      lb_out=$("$here/cs" fields 'Holder::_hfield' --fleet 2>&1); lb_rc=$?
+      lb_json=$("$here/cs" fields 'Holder::_hfield' --fleet --porcelain --quiet 2>/dev/null)
+      if [[ $lb_rc -eq 0 ]] \
+         && printf '%s' "$lb_out" | grep -q '2 site(s) whose receiver could not be typed' \
+         && printf '%s' "$lb_out" | grep -q 'LOWER BOUND' \
+         && printf '%s' "$lb_json" | python3 -c 'import json,sys; assert json.load(sys.stdin)["partial"] is True' 2>/dev/null; then
+        ok "a narrowed answer that dropped untypable receivers is PARTIAL, a lower bound"
+        pass=$((pass + 1))
+      else
+        err "a narrowed field answer hid the sites it could not type (exit $lb_rc)"
+        fail=$((fail + 1)); failed_ids+=("fields-qualifier-lower-bound")
+      fi
+      rm -rf "$lb_repo/src/Probe" "$lb_repo/.tokensave"
     fi
 
     # The cap is PER KIND. Reads outnumber writes heavily (~7:1 in the reported
@@ -1577,15 +1639,18 @@ PROBE
     # tokensave truncates its OWN stdout at 15000 characters -- it is built for
     # MCP token budgets and the cut lands mid-token, leaving invalid JSON rather
     # than a short answer. At ~200 bytes a site that trips around 75 sites, so
-    # the 100-site probe above hits it every run. `--limit N` bounds read_sites
-    # only (write_sites is never capped by it) AND reports the CAPPED number as
-    # read_count, so the true read total is unrecoverable. That has to surface
-    # as PARTIAL: a read total that reads as complete understates exactly the
+    # the 100-site probe above hits it every run, and cs retries: the writes on
+    # their own (--writes-only), the reads as a --limit sample. The reads are
+    # then a sample, and that has to surface as PARTIAL: a read total that reads as complete understates exactly the
     # blast radius this verb exists to measure.
+    # The graph's true read total is still stated: it is in the head of the
+    # first, cut, output, which the truncation never reaches. In references --
+    # the site total is what is unknown.
     trunc_out=$(CS_MAX_RESULTS=0 "$here/cs" fields _capprobefield --fleet 2>&1)
     trunc_json=$(CS_MAX_RESULTS=0 "$here/cs" fields _capprobefield --fleet --porcelain --quiet 2>/dev/null)
     if printf '%s' "$trunc_out" | grep -q 'PARTIAL' \
        && printf '%s' "$trunc_out" | grep -q 'true total unknown' \
+       && printf '%s' "$trunc_out" | grep -q 'SAMPLE of 60 read references' \
        && printf '%s' "$trunc_json" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
@@ -1599,9 +1664,10 @@ assert d["kind"] == "structural", d["kind"]
       fail=$((fail + 1)); failed_ids+=("fields-engine-truncation")
     fi
 
-    # The writes survive that truncation. They are the half `--limit` does not
-    # touch, so a complete write list is exactly what is still trustworthy --
-    # and it is the half a changed default is reviewed against.
+    # The writes survive that truncation, and they are the half a changed
+    # default is reviewed against. Before 7.11 `--limit` did not touch them;
+    # from 7.11 it does, and cs was answering 30 of these 41 under "the write
+    # list is complete" (#44) -- so they are fetched by their own query.
     if [[ "$(CS_MAX_RESULTS=0 "$here/cs" fields _capprobefield --fleet --quiet 2>/dev/null | grep -c '\[write\]')" -eq 41 ]]; then
       ok "the write list stays complete when the engine samples the reads"
       pass=$((pass + 1))

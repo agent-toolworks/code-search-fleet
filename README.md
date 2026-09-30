@@ -34,13 +34,9 @@ scripts/cs which                   # which subcommand answers what
 scripts/cs uses "/api/v1/orders"   # who uses this string, in code only
 ```
 
-**On a first `verify-search` run with tokensave 7.11 or newer, expect 3 failures.**
-All three are `cs fields` checks (`fields-qualifier-dropped`,
-`fields-writes-complete`, `fields-overflow-hint`). They come from a known change
-in tokensave's output that `cs` has not caught up with yet
-([#44](https://github.com/agent-toolworks/code-search-fleet/issues/44)). They do
-not mean the install is broken. Everything else should pass. Checks for an engine
-you have not installed show as skipped, not failed.
+Every check should pass. Checks for an engine you have not installed show as
+skipped, not failed. The tokensave checks are verified on 7.9.0, 7.11.0 and
+7.13.0.
 
 **Platforms.** Tested on macOS and Linux, which is also what CI runs on. The
 scripts are bash, and `bootstrap` knows `brew`, `apt-get` and `dnf`. Native
@@ -375,8 +371,8 @@ per-repo, so the union is assembled across them and the repos with no graph are
 named — a field read in an unindexed repo looks exactly like a field nobody
 reads.
 
-Three things it refuses or discloses rather than guessing, all measured against
-tokensave 7.9.0:
+Three things it refuses or discloses rather than guessing, measured against
+tokensave 7.9.0 and re-measured on 7.11.0 and 7.13.0:
 
 - **An empty answer refuses.** `field_sites` returns zero counts with exit 0 for
   a field that does not exist, in the identical shape it returns for a field
@@ -384,11 +380,16 @@ tokensave 7.9.0:
   a *real* field too, because field nodes are not in that index. Nothing can
   separate the two, and *"nothing reads this field"* is the answer someone
   deletes a field on.
-- **A `Type::field` qualifier that is not applied refuses.** The qualifier is
-  parsed and then dropped, and the *bare-name* results come back regardless:
-  `DiscountEngine::_threshold` and a fabricated `NoSuchClass::_threshold` return
-  identical sites. Answering would put the broad question's result under the
-  narrow question's heading.
+- **A `Type::field` qualifier is trusted only as far as the engine applies it.**
+  Before 7.11 it is parsed and then dropped, and the *bare-name* results come
+  back regardless: `DiscountEngine::_threshold` and a fabricated
+  `NoSuchClass::_threshold` return identical sites. Answering would put the
+  broad question's result under the narrow question's heading, so it refuses.
+  From 7.11 it is applied, by typing each site's receiver. That brings two
+  more cases. A narrowed zero refuses, because a Python attribute that is only
+  assigned has no declaration to match, so a real type can answer zero. And
+  sites whose receiver cannot be typed (`make()._x`) are counted, not listed,
+  so a narrowed answer that dropped any is marked PARTIAL, a lower bound.
 - **At fleet scale, ask for counts instead.** A common field name overflows
   tokensave's 15000-character output on its *write* list alone, so the listing
   refuses — correctly, since a partial site list would understate the blast

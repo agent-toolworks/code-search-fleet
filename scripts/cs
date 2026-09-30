@@ -3681,9 +3681,33 @@ cmd_impact() {
 # the limit and nothing distinguishes "21 sites exist" from "21 of many were
 # returned". The fan-out's honest refusal is better behaviour than that, and a
 # summary built on a capped count would be a total nobody established.
+# From tokensave 7.11 a `Type::field` qualifier is APPLIED: a site is kept
+# only when its receiver resolves to the type. A zero from that is a fact about
+# typing, not about who uses the field -- measured, a Python attribute that is
+# only assigned (`self._x = ...`) has no declaration for the type to own, so
+# DiscountEngine::_threshold answers zero in the fixture although DiscountEngine
+# both writes and reads it. The generic "no site" refusal would send the reader
+# to check a name that is fine.
+fields_qualifier_unmatched_msg() {  # <Type::field> [--count]
+  local field="$1" flag="${2:+ $2}"
+  printf '%s' "cs fields$flag: tokensave applied the qualifier in '$field' and no site's receiver resolved to '${field%%::*}' in any graph — this is NOT 'nothing uses it'
+  the narrowing keeps a site only when its receiver is typed as '${field%%::*}':
+  an attribute that is only assigned (Python's self.${field##*::} = ...) has no
+  declaration to match, and a receiver returned by a call cannot be typed, so a
+  real type can answer with the same zero as a misspelt one
+  ask the broad question deliberately with: cs fields '${field##*::}'$flag"
+}
+
+# The other half of the same narrowing: sites whose receiver could not be typed
+# are counted by the engine and NOT listed, so a narrowed answer with any of
+# them is a lower bound -- each repo's count is on the lines above.
+fields_lower_bound_warn() {  # <Type::field> <repos>
+  warn "PARTIAL: narrowed by receiver type, and in:$2 some sites' receivers could not be typed and are NOT included — a LOWER BOUND. Unnarrowed: cs fields '${1##*::}'"
+}
+
 fields_count_via_tokensave() {  # <field> [only-repo]
   local field="$1" only="${2:-}" d name rows="" rc n_graph=0 no_graph="" oldest="" age
-  local refs_only=""
+  local refs_only="" qual_unmatched="" lower_bound=""
   for d in $(real_dirs); do
     name=$(basename "$d")
     [[ -n "$only" && "$name" != "$only" ]] && continue
@@ -3707,6 +3731,8 @@ fields_count_via_tokensave() {  # <field> [only-repo]
          # them against a listing's site count.
          CS_SOURCE_PARTIAL=1
          refs_only="$refs_only $name" ;;
+      7) qual_unmatched="$qual_unmatched $name" ;;
+      8) CS_SOURCE_PARTIAL=1; lower_bound="$lower_bound $name" ;;
     esac
     [[ -n "$one" ]] && rows="${rows:+$rows
 }$one"
@@ -3722,6 +3748,7 @@ fields_count_via_tokensave() {  # <field> [only-repo]
   # Same refusal as the listing route, for the same reason: tokensave returns
   # zero counts for a field that does not exist in the identical shape it
   # returns for one that is never touched, and no probe here separates them.
+  [[ -z "$rows" && -n "$qual_unmatched" ]] && die "$(fields_qualifier_unmatched_msg "$field" --count)"
   if [[ -z "$rows" ]]; then
     die "cs fields --count: no read or write site for '$field' in $n_graph graph(s) — this is NOT 'nothing uses it'
   tokensave returns the same zero counts for a field that does not exist as for
@@ -3729,6 +3756,7 @@ fields_count_via_tokensave() {  # <field> [only-repo]
   confirm the name is real first: cs text '$field'"
   fi
 
+  [[ -n "$lower_bound" ]] && fields_lower_bound_warn "$field" "$lower_bound"
   [[ -n "$refs_only" ]] && warn "PARTIAL: tokensave truncated its output for:$refs_only — those rows count REFERENCES, not sites, and are not comparable with a listing's site count (three references on one line are one place to edit)"
 
   emit_capped "$rows"
@@ -3751,7 +3779,7 @@ fields_count_via_tokensave() {  # <field> [only-repo]
 
 fields_via_tokensave() {  # <field> [only-repo]
   local field="$1" only="${2:-}" d name out="" rc n_graph=0 no_graph="" oldest="" age
-  local truncated_by_engine=""
+  local truncated_by_engine="" qual_unmatched="" lower_bound=""
   for d in $(real_dirs); do
     name=$(basename "$d")
     [[ -n "$only" && "$name" != "$only" ]] && continue
@@ -3766,7 +3794,7 @@ fields_via_tokensave() {  # <field> [only-repo]
   the sites it would have returned are the ones for the bare field name, which
   is the broad answer under a narrow heading -- refused rather than shown
   measured on tokensave 7.9.0: a real type and a fabricated one return the
-  identical result, so the qualifier does not even spell-check
+  identical result, so the qualifier does not even spell-check (7.11 applies it)
   ask the broad question deliberately with: cs fields '${field##*::}'" ;;
       4) die "cs fields: the tokensave graph for $name could not be queried
   nothing was read there, so nothing was ruled out
@@ -3790,6 +3818,8 @@ fields_via_tokensave() {  # <field> [only-repo]
          # would understate exactly the blast radius this verb is for.
          CS_SOURCE_PARTIAL=1
          truncated_by_engine="$truncated_by_engine $name" ;;
+      7) qual_unmatched="$qual_unmatched $name" ;;
+      8) CS_SOURCE_PARTIAL=1; lower_bound="$lower_bound $name" ;;
     esac
     [[ -n "$one" ]] && out="${out:+$out
 }$one"
@@ -3807,7 +3837,11 @@ fields_via_tokensave() {  # <field> [only-repo]
   warn "this is a GRAPH answer, not a language server: it cannot see reflection, DI registration, serialization by name, or generated code — all of which touch fields without a site the graph records."
   # Named per repo, because the sampling happened per graph and the read counts
   # printed below are true for the other repos.
-  [[ -n "$truncated_by_engine" ]] && warn "PARTIAL: tokensave truncated its own output for:$truncated_by_engine — the reads from those repos are a SAMPLE and their true read total is not recoverable. The write lists are complete. Narrow with: cs fields '$field' <repo>"
+  [[ -n "$lower_bound" ]] && fields_lower_bound_warn "$field" "$lower_bound"
+  # The write lists are complete because tokensave_call.py fetched them on
+  # their own and CHECKED them against the graph's write total -- not because
+  # --limit spares them, which stopped being true in tokensave 7.11 (#44).
+  [[ -n "$truncated_by_engine" ]] && warn "PARTIAL: tokensave truncated its own output for:$truncated_by_engine — the reads from those repos are a SAMPLE (each repo's true read-reference total is on the lines above). The write lists are complete. Narrow with: cs fields '$field' <repo>"
 
   # An empty result REFUSES rather than reporting zero. tokensave's field_sites
   # returns write_count 0 / read_count 0 with exit 0 for a field that does not
@@ -3819,6 +3853,7 @@ fields_via_tokensave() {  # <field> [only-repo]
   # So "nothing reads this field" here would be a negative nobody established,
   # about the question people delete a field on. The two commands that actually
   # disambiguate are named instead.
+  [[ -z "$out" && -n "$qual_unmatched" ]] && die "$(fields_qualifier_unmatched_msg "$field")"
   if [[ -z "$out" ]]; then
     die "cs fields: no read or write site for '$field' in $n_graph graph(s) — this is NOT 'nothing uses it'
   tokensave returns the same empty answer for a field that does not exist as

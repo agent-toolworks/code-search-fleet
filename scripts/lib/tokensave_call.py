@@ -260,47 +260,140 @@ def defs(project, repo, symbol):
 # rather than a short answer. Measured: ~200 bytes per site, so this trips at
 # roughly 75 sites and the reported 160-site case would hit it every time.
 #
-# `--limit N` bounds read_sites only; write_sites is never capped by it. That
-# asymmetry decides the ladder below -- reads can be sacrificed to get an
-# answer, writes cannot, and if the writes alone overflow there is nothing
-# trustworthy to return.
+# Reads can be sacrificed to get an answer, writes cannot, and if the writes
+# alone overflow there is nothing trustworthy to return. So on a cut the two
+# halves are fetched SEPARATELY:
 #
-# The cost of using --limit is that `read_count` comes back as the CAPPED
-# number, not the true one, so the true read total is unrecoverable. That is
-# disclosed rather than papered over: a read total that silently reads as
-# complete would understate a blast radius, which is the failure this verb
-# exists to prevent.
+#   - the writes with `--writes-only true`, and checked complete against the
+#     engine's own write total -- never assumed;
+#   - a sample of the reads with `--limit N`, smaller until it fits.
+#
+# Separately, because what `--limit` does to the WRITES changed under us: it
+# bounded read_sites only before tokensave 7.11, and caps both kinds from 7.11
+# (write_returned/read_returned and `truncated` disclose it). Leaning on the
+# old asymmetry is what printed 30 of 41 writes under "the write list is
+# complete" (#44). Taking writes from their own query makes the answer the same
+# on both sides of that change.
+#
+# The read TOTAL is not lost to the sampling: the counts precede the arrays, so
+# the head of the first, cut, output still carries the graph's true totals
+# (before 7.11 a --limit reply reports the capped number instead, so the head is
+# the only place to read it). They are references, not sites -- the listing
+# dedupes to file:line -- and are stated as such.
 TRUNCATION_MARK = "[... truncated at"
-READ_LIMITS = (None, 30, 10, 1)
+READ_LIMITS = (30, 10, 1)
+
+
+def _writes_complete(doc):
+    """False when the engine SAYS it listed fewer writes than exist."""
+    returned = doc.get("write_returned")
+    total = doc.get("write_count")
+    return not (isinstance(returned, int) and isinstance(total, int)
+                and returned < total)
+
+
+def _field_json(args):
+    """(doc, None) | (None, "truncated") | (None, reason)."""
+    out, err = _run(args)
+    if out is None:
+        return None, err
+    try:
+        doc = json.loads(out)
+    except json.JSONDecodeError:
+        # Only the engine's own truncation is worth retrying smaller. Any
+        # other unparseable output is a different fault and is reported as
+        # one rather than retried.
+        return None, ("truncated" if TRUNCATION_MARK in out
+                      else "returned no parseable JSON")
+    if not isinstance(doc, dict):
+        return None, "returned JSON that is not an object"
+    return doc, None
 
 
 def _field_doc(project, field):
-    """(doc, applied_read_limit) -- or (None, reason) if nothing usable came back.
+    """(doc, applied_read_limit, head) -- or (None, reason, head).
 
-    applied_read_limit is None when the full answer parsed, and an int when
-    reads had to be capped to make the output fit.
+    applied_read_limit is None when the full answer came back, and an int when
+    reads are a sample. head holds the graph's true write_count/read_count
+    whenever they were read, so a sample or a refusal can state them.
     """
-    for limit in READ_LIMITS:
-        args = ["tokensave", "tool", "field_sites", "--field", field,
-                "--project", project]
-        if limit is not None:
-            args += ["--limit", str(limit)]
-        out, err = _run(args)
-        if out is None:
-            return None, err
-        try:
-            doc = json.loads(out)
-        except json.JSONDecodeError:
-            # Only the engine's own truncation is worth retrying smaller. Any
-            # other unparseable output is a different fault and is reported as
-            # one rather than retried three more times.
-            if TRUNCATION_MARK in out:
-                continue
-            return None, "returned no parseable JSON"
+    base = ["tokensave", "tool", "field_sites", "--field", field,
+            "--project", project]
+    out, err = _run(base)
+    if out is None:
+        return None, err, {}
+    head = {}
+    for key, pat in _NUM.items():
+        m = pat.search(out)
+        if m:
+            head[key] = int(m.group(1))
+    try:
+        doc = json.loads(out)
+    except json.JSONDecodeError:
+        if TRUNCATION_MARK not in out:
+            return None, "returned no parseable JSON", head
+        doc = None
+    if doc is not None:
         if not isinstance(doc, dict):
-            return None, "returned JSON that is not an object"
-        return doc, limit
-    return None, "truncated"
+            return None, "returned JSON that is not an object", head
+        # Uncut -- unless the engine's default per-kind limit (200) applied,
+        # which 7.11+ says in write_returned/read_returned.
+        if _writes_complete(doc):
+            rr, rc = doc.get("read_returned"), doc.get("read_count")
+            sampled = isinstance(rr, int) and isinstance(rc, int) and rr < rc
+            return doc, (rr if sampled else None), head
+
+    wdoc, why = _field_json(base + ["--writes-only", "true"])
+    if wdoc is None:
+        return None, why, head
+    if not _writes_complete(wdoc):
+        return None, "truncated", head
+    for limit in READ_LIMITS:
+        rdoc, why = _field_json(base + ["--limit", str(limit)])
+        if rdoc is None:
+            if why == "truncated":
+                continue
+            return None, why, head
+        rdoc["write_sites"] = wdoc.get("write_sites") or []
+        return rdoc, limit, head
+    return None, "truncated", head
+
+
+def _totals(head):
+    if "write_count" in head and "read_count" in head:
+        return (f" The graph's own totals: {head['write_count']} write and "
+                f"{head['read_count']} read references.")
+    return ""
+
+
+def _qualifier_unmatched(doc):
+    """The engine APPLIED a Type::field qualifier and it matched nothing.
+
+    From 7.11 the qualifier narrows to sites whose receiver resolves to the
+    type -- and a zero from that says nothing about who uses the field. Two
+    measured ways to get it for a field that is plainly used: a Python
+    attribute that is only assigned (`self._x = ...`) has no declaration for
+    the type to own (DiscountEngine::_threshold in the fixture), and a C#
+    field used without `this.` is not a `.field` reference the scan matches.
+    """
+    return (doc.get("qualifier") and doc.get("qualifier_applied")
+            and not doc.get("write_count") and not doc.get("read_count"))
+
+
+def _unattributed(doc):
+    """How many sites a narrowed answer dropped because their receiver could
+    not be typed (a call's return value, a container read). 7.11+ counts them
+    and does not list them, so any above zero makes the answer a lower bound."""
+    n = doc.get("unattributed_count") if doc.get("qualifier_applied") else 0
+    return n if isinstance(n, int) and n > 0 else 0
+
+
+def _say_lower_bound(doc, repo, n):
+    bare = (doc.get("field") or "").split("::")[-1]
+    print(f"tokensave: narrowed to '{doc.get('qualifier')}' in {repo}, {n} "
+          f"site(s) whose receiver could not be typed are NOT included, so "
+          f"these are a LOWER BOUND; the bare name '{bare}' gives the "
+          f"unnarrowed answer", file=sys.stderr)
 
 
 def field_sites(project, repo, field):
@@ -314,18 +407,20 @@ def field_sites(project, repo, field):
     Exit: 0 sites found, 1 no sites at all, 3 a qualifier that was not applied,
     4 the tool failed, 5 sites found but the engine truncated its own output so
     the reads are a sample, 6 too many sites to list at all (use the count
-    mode -- the counts survive the truncation that destroys the arrays). `1` is deliberately NOT treated as an answer by the
-    caller -- see below.
+    mode -- the counts survive the truncation that destroys the arrays), 7 a
+    qualifier the engine applied that matched no site, 8 sites found under an
+    applied qualifier that dropped some it could not type (a lower bound). `1`
+    is deliberately NOT treated as an answer by the caller -- see below.
     """
-    doc, read_limit = _field_doc(project, field)
+    doc, read_limit, head = _field_doc(project, field)
     if doc is None:
         # read_limit carries the reason when doc is None.
         if read_limit == "truncated":
             print("tokensave truncated its own output at 15000 CHARACTERS even "
-                  "with reads limited to 1, so the write list's snippets alone "
-                  "overflow it and no complete list can be read from this "
-                  "graph. The limit is bytes, not a number of sites: a few "
-                  "dozen long lines are enough.", file=sys.stderr)
+                  "for the write list alone, so no complete list can be read "
+                  "from this graph. The limit is bytes, not a number of sites: "
+                  "a few dozen long lines are enough." + _totals(head),
+                  file=sys.stderr)
             # 6, not 4: the graph answered fine and the SITE LIST is what does
             # not fit. Counting still works, because the counts precede the
             # arrays in the JSON and survive the cut -- so the caller has an
@@ -348,7 +443,7 @@ def field_sites(project, repo, field):
     # So a qualified query whose qualifier was dropped is refused rather than
     # answered. Answering would return the broader question's result under the
     # narrower question's heading, and the caller asked to narrow precisely
-    # because they did not want that. If a later tokensave applies it, this
+    # because they did not want that. From 7.11 tokensave applies it, and this
     # path simply stops triggering.
     if doc.get("qualifier") and not doc.get("qualifier_applied"):
         print(f"tokensave: the qualifier '{doc['qualifier']}' was parsed but "
@@ -356,6 +451,10 @@ def field_sites(project, repo, field):
               f"name '{doc.get('field', field).split('::')[-1]}' — the broad "
               f"answer under a narrow heading", file=sys.stderr)
         return 3
+    # Not printed here: this runs once per repo, and every repo without the
+    # type answers the same way. The caller says it once, if no repo matched.
+    if _qualifier_unmatched(doc):
+        return 7
 
     found = 0
     # write before read: the two have different blast radii and the writes are
@@ -385,15 +484,21 @@ def field_sites(project, repo, field):
             found += 1
     if not found:
         return 1
+    lost = _unattributed(doc)
+    if lost:
+        _say_lower_bound(doc, repo, lost)
     if read_limit is not None:
         # Exit 5, not 0: the caller has to mark this PARTIAL, and a warning on
         # stderr alone would be a fact the porcelain envelope does not carry.
-        print(f"tokensave: output was truncated by the engine, so reads were "
-              f"re-requested with --limit {read_limit}. The read sites below "
-              f"are a SAMPLE and the true read total is not recoverable from "
-              f"this graph; the write list is complete.", file=sys.stderr)
+        # "Complete" is said of the writes only because _field_doc checked it.
+        total = head.get("read_count", doc.get("read_count"))
+        print(f"tokensave: output was truncated by the engine, so the reads "
+              f"were re-requested with --limit {read_limit}. The read sites "
+              f"below are a SAMPLE of {total} read references (the graph's "
+              f"true total); the write list is complete, checked against the "
+              f"graph's write total.", file=sys.stderr)
         return 5
-    return 0
+    return 8 if lost else 0
 
 
 
@@ -408,10 +513,12 @@ def field_sites(project, repo, field):
 # unanswerable. The scalars are matched individually so a cut anywhere after
 # them costs nothing.
 #
-# Critically, this is called with NO --limit. --limit rewrites read_count to the
-# capped number, so counting through it would report the limit back as if it
-# were a total -- the same silent cap the union graph has, and the reason the
-# per-repo fan-out is used here instead.
+# Critically, this is called with NO --limit. Before 7.11, --limit rewrites
+# read_count to the capped number, so counting through it would report the
+# limit back as if it were a total -- the same silent cap the union graph has,
+# and the reason the per-repo fan-out is used here instead. (7.11 reports true
+# totals under --limit, but the arrays the site count is derived from are then
+# capped, so the unlimited call is still the right one.)
 _NUM = {k: re.compile(r'"%s"\s*:\s*(\d+)' % k) for k in ("write_count", "read_count")}
 _QUAL = re.compile(r'"qualifier"\s*:\s*(?:"([^"]*)"|null)')
 _QUAL_OK = re.compile(r'"qualifier_applied"\s*:\s*(true|false)')
@@ -433,7 +540,9 @@ def field_counts(project, repo, field):
 
     Exit: 0 counted as sites, 1 no sites at all, 3 a qualifier that was not
     applied, 4 the tool failed, 5 counted as REFERENCES because the output was
-    truncated and sites could not be derived.
+    truncated and sites could not be derived, 7 a qualifier the engine applied
+    that matched no site, 8 counted under an applied qualifier that dropped
+    sites it could not type (a lower bound).
     """
     out, err = _run(["tokensave", "tool", "field_sites", "--field", field,
                      "--project", project])
@@ -461,6 +570,14 @@ def field_counts(project, repo, field):
         refs[key] = int(m.group(1))
 
     if refs["write_count"] == 0 and refs["read_count"] == 0:
+        # Zero output is short, so it parses; the applied-qualifier case has
+        # its own refusal, for the reason _qualifier_unmatched gives.
+        try:
+            doc = json.loads(out)
+        except json.JSONDecodeError:
+            return 1
+        if isinstance(doc, dict) and _qualifier_unmatched(doc):
+            return 7
         return 1
 
     # Sites, when the arrays are all there. Same dedupe key as the listing path,
@@ -493,6 +610,10 @@ def field_counts(project, repo, field):
         line += (f" (refs: {refs['write_count']} write, "
                  f"{refs['read_count']} read)")
     print(line)
+    lost = _unattributed(doc)
+    if lost:
+        _say_lower_bound(doc, repo, lost)
+        return 8
     return 0
 
 

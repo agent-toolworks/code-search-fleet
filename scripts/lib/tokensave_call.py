@@ -92,8 +92,14 @@ def _run(args):
 
 
 def _search(project, symbol, limit):
+    # Both asked for explicitly: from tokensave 7.13 `search` defaults to a
+    # text format ("count: N", one line per hit) and leaves node ids out, and
+    # every caller here parses JSON and follows the ids. Earlier versions
+    # (7.9, 7.11 measured) accept both flags and already behave that way.
+    # `--json` is NOT the same thing -- it wraps the reply in an MCP envelope.
     out, err = _run(["tokensave", "tool", "search", symbol,
-                     "--project", project, "--limit", str(limit)])
+                     "--project", project, "--limit", str(limit),
+                     "--format", "json", "--ids", "true"])
     if out is None:
         print(f"tokensave search failed: {err}", file=sys.stderr)
         return None

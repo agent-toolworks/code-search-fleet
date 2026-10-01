@@ -23,6 +23,7 @@ FLEET_CONFIG_DIR="${FLEET_CONFIG_DIR:-${HOME}/.config/repo-fleet}"
 _env_FLEET_ROOT="${FLEET_ROOT:-}"
 _env_TICKETS_ROOT="${TICKETS_ROOT:-}"
 _env_BRANCH_PREFIX="${BRANCH_PREFIX:-}"
+_env_WORKSPACE_ROOTS="${WORKSPACE_ROOTS:-}"
 
 # shellcheck disable=SC1091
 [[ -f "$FLEET_CONFIG_DIR/fleet.env" ]] && source "$FLEET_CONFIG_DIR/fleet.env"
@@ -30,10 +31,14 @@ _env_BRANCH_PREFIX="${BRANCH_PREFIX:-}"
 [[ -n "$_env_FLEET_ROOT" ]]    && FLEET_ROOT="$_env_FLEET_ROOT"
 [[ -n "$_env_TICKETS_ROOT" ]]  && TICKETS_ROOT="$_env_TICKETS_ROOT"
 [[ -n "$_env_BRANCH_PREFIX" ]] && BRANCH_PREFIX="$_env_BRANCH_PREFIX"
-unset _env_FLEET_ROOT _env_TICKETS_ROOT _env_BRANCH_PREFIX
+[[ -n "$_env_WORKSPACE_ROOTS" ]] && WORKSPACE_ROOTS="$_env_WORKSPACE_ROOTS"
+unset _env_FLEET_ROOT _env_TICKETS_ROOT _env_BRANCH_PREFIX _env_WORKSPACE_ROOTS
 
 FLEET_ROOT="${FLEET_ROOT:-${HOME}/code/fleet}"
 TICKETS_ROOT="${TICKETS_ROOT:-${HOME}/tickets}"
+# Further workspace roots, colon-separated (_reviews/ beside _tickets/, say).
+# TICKETS_ROOT is always one of them; a scope must lie under one.
+WORKSPACE_ROOTS="${WORKSPACE_ROOTS:-}"
 BRANCH_PREFIX="${BRANCH_PREFIX:-feature/}"
 
 if [[ -t 2 ]]; then

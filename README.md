@@ -116,6 +116,7 @@ Put the location in `~/.config/repo-fleet/fleet.env`:
 ```sh
 export FLEET_ROOT="$HOME/code/fleet"     # one clone per repo
 export TICKETS_ROOT="$HOME/tickets"      # per-ticket worktree workspaces (optional)
+export WORKSPACE_ROOTS="$HOME/reviews"   # more workspace roots, colon-separated (optional)
 ```
 
 **This file is what the MCP server reads.** The server that the plugin registers

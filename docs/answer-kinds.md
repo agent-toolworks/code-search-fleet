@@ -125,12 +125,18 @@ answer kind and the four warnings that must not be swallowed. `--porcelain` (or
 `CS_JSON=1`) puts one JSON object on stdout instead of the result lines:
 
 ```json
-{"cs":1,"subcommand":"uses","query":"…","scope":"PROJ-123",
- "view":"PROJ-123 (2 repo(s), your branch) + fleet (8 repo(s), main)",
+{"cs":1,"subcommand":"uses","query":"…","scope":"/home/me/tickets/PROJ-123",
+ "view":"/home/me/tickets/PROJ-123 (2 repo(s), your branch) + fleet (8 repo(s), main)",
  "exit":0,"refused":false,"kind":"heuristic","engine":"ripgrep","hits":2,
  "repos":2,"degraded":null,"partial":false,"truncated":false,"returned":2,
+ "bytes":214,"elided":null,"notes":[],
  "engine_errors":[],"results":[{"repo":"…","path":"…","line":7,"text":"…"}]}
 ```
+
+`bytes` is the size of the results, and `elided` says how many hit lines were
+cut to `CS_MAX_LINE` and how many bytes that removed (`null` when none were).
+`notes` carries answer-level notices that would otherwise exist only on stderr —
+a manifest `cs versions` found but could not read, for one.
 
 Refusals carry the envelope too, with `refused: true` and the reason — the case
 with no result stream to attach anything to. `hits` is how many exist and
@@ -382,7 +388,12 @@ keep it worth trusting:
   literals is readable; a value passed to a framework, split on a separator, or
   normalised first is not. Undeterminable is reported as `UNDETERMINABLE` and
   the mismatch line does not fire at all — a guessed enumeration would turn this
-  into a generator of false findings about values that are fine.
+  into a generator of false findings about values that are fine. Only a real
+  test counts: `for name in ("KEY", "KEY_USERNAME"):` is a loop, not a
+  membership test, and a token that names a key is dropped. A comparison in a
+  **test file** (`assert settings.URL == "https://fake-host"`) is listed apart
+  and never counted as accepted, because a fixture value shows what a test
+  expects, not what production accepts.
 - **A templated set-site is named, not resolved.** `{{ .Values.x }}` is reported
   as templated and never compared. Naming *which* sites are opaque is the useful
   part: those are the ones a human has to open.
@@ -454,7 +465,26 @@ $ cs uses OrderLineItem --fleet
 `--source-only` is the opt-in narrowing, and it is **not** the default: a route
 in an `appsettings.json` is a real seam, and dropping it silently would be the
 same class of error in the other direction. When used, it is declared in the
-porcelain envelope's `exclusions`, not only on stderr.
+porcelain envelope's `exclusions`, not only on stderr. Generated assets count
+as data too: `.svg`, `.map`, `.min.js` and `.min.css`. A match inside a
+committed SVG diagram is a label, not a seam.
+
+### One hit line is not the whole answer
+
+A 27-hit answer once came to 110 KB, and 96% of that was six lines of a
+generated SVG. The longest line was 62 KB. The count gave no warning, because
+the cost was in line *length*. So each hit's text is now cut to `CS_MAX_LINE`
+bytes (default 400) **around the match**, with the bytes removed written where
+they were:
+
+```
+docs/arch.svg:1:…(49828 bytes elided)…<text>/api/orders</text>…(29824 bytes elided)
+! 1 line(s) longer than 400 bytes were cut around the match (79652 bytes elided) — --full-lines prints them whole
+```
+
+The `repo/path:line:` address is never cut. Once an answer is over 20 KB, the
+`answer:` line also gives its size, so the cost shows before you re-run.
+`--full-lines` (or `CS_MAX_LINE=0`) prints lines whole.
 
 The line is **data vs source, never test vs production**. A test file is often
 the single most informative hit for an impact question — a test constructing a

@@ -88,11 +88,16 @@ PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 # has its own per-engine CS_TIMEOUT; this is the backstop for the whole call.
 CALL_TIMEOUT = int(os.environ.get("CS_MCP_TIMEOUT", "600"))
 
-# A scope is a directory name under TICKETS_ROOT, or the literal "fleet".
-# Anything else is rejected before it reaches `cs`, because a scope is
-# interpolated into an argument and a path separator or a leading dash would
-# make it something other than a workspace id.
+# A scope is "fleet", a workspace id (a folder name, looked up under every
+# workspace root), or an ABSOLUTE path to a workspace or anywhere inside one --
+# so an agent can pass its own working directory. A path is one argv element
+# (run_cs builds a list, never a shell string), so this is not about injection;
+# `cs` validates it as a subtree of a configured root and refuses otherwise.
+# What is rejected here is what cs would misread: a leading dash (a flag), a
+# relative path (resolved against this server's cwd, which is not the
+# caller's), and control characters.
 SCOPE_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+SCOPE_PATH_RE = re.compile(r"\A/[^\x00-\x1f]*\Z")
 
 # `cs` has no `--` end-of-options marker, so a positional argument spelled like
 # one of its flags would be eaten by the flag loop and silently change the
@@ -100,7 +105,7 @@ SCOPE_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 CS_FLAGS = {
     "--fleet", "--why", "--quiet", "-q", "--all", "--touched",
     "--refresh", "--porcelain", "--json", "--word", "-w",
-    "--source-only", "--count", "--suggest-clone",
+    "--source-only", "--count", "--suggest-clone", "--full-lines",
 }
 
 
@@ -123,11 +128,13 @@ def arg(name, desc, required=True, type_="string", enum=None):
 
 SCOPE_ARG = arg(
     "scope",
-    'Which workspace to search: a ticket workspace id, or "fleet" for the '
-    "fleet alone. REQUIRED — this server is not running in your working "
-    "directory and cannot infer it. Call cs_scopes for the valid values. "
-    'Naming a ticket layers that ticket\'s branch state over the fleet; '
-    '"fleet" answers from main only.',
+    "Which workspace to search: the ABSOLUTE PATH of a workspace or of any "
+    "directory inside one (your own working directory works, at any depth), "
+    'a workspace folder name when it is unique, or "fleet" for the fleet '
+    "alone. REQUIRED — this server is not running in your working directory "
+    "and cannot infer it. cs_scopes lists the workspaces by path. Naming a "
+    "workspace layers its branch state over the fleet; \"fleet\" answers "
+    "from main only.",
 )
 
 # `word` is declared on every verb that takes an identifier, not just cs_text.
@@ -153,8 +160,8 @@ SCOPE_ARG = arg(
 # question, so test code stays in scope. The line is data vs source.
 SOURCE_ONLY_ARG = arg(
     "source_only",
-    "Exclude data and doc files (.csv .json .txt .tsv .lock .log .rst .md) from "
-    "the hits. Off by default, because a route in an appsettings.json is a real "
+    "Exclude data, doc and generated files (.csv .json .txt .tsv .lock .log "
+    ".rst .md .svg .map .min.js .min.css) from the hits. Off by default, because a route in an appsettings.json is a real "
     "seam. Composition is reported either way. Observability definitions "
     "(dashboard panels, alert and recording rules) are kept even when their "
     "extension is on that list — they are consumers of an identifier, and this "
@@ -431,8 +438,9 @@ TOOLS = [
 
     # --- what am I searching, and how much is it worth ----------------------
     ("cs_scopes", "scopes",
-     "Which workspaces exist to be searched — the fleet, and every ticket "
-     "workspace. Call this first: every other tool needs a scope.",
+     "Which workspaces exist to be searched — the fleet, and every workspace "
+     "under every workspace root (nested ones included), by path. The path "
+     "is the scope value. Call this first: every other tool needs a scope.",
      []),
 
     ("cs_repos", "repos",
@@ -467,9 +475,10 @@ that spans more than one repo — who calls an endpoint, where a symbol is \
 defined, what implements an interface, which repo publishes a package, who \
 owns it, which version each repo pins. Reach for grep only after cs.
 
-Every tool needs a `scope`: a ticket workspace id, or "fleet". This server has \
-no working directory to infer it from, and guessing would answer from main \
-while the user edits a branch. Call cs_scopes once to see the valid values.
+Every tool needs a `scope`: the absolute path of the workspace you are working \
+in (your own working directory, at any depth, works), or "fleet". This server \
+has no working directory to infer it from, and guessing would answer from main \
+while the user edits a branch. cs_scopes lists the workspaces by path.
 
 Every answer is labelled with the KIND of evidence behind it, which is what \
 decides how much a NEGATIVE is worth: a `resolved` no is strong, a `textual` \
@@ -517,11 +526,13 @@ def scope_flag(scope):
     scope = scope.strip()
     if scope == "fleet":
         return "--fleet"
-    if not SCOPE_RE.match(scope):
+    if not (SCOPE_RE.match(scope) or SCOPE_PATH_RE.match(scope)):
         raise ToolError(
             f"not a usable scope: {scope!r}\n"
-            "  A scope is a ticket workspace id (a single directory name under "
-            'TICKETS_ROOT) or the literal "fleet".\n'
+            "  A scope is the absolute path of a workspace (or of any directory "
+            'inside one), a workspace folder name, or the literal "fleet". A '
+            "relative path cannot be used: this server's working directory is "
+            "not yours.\n"
             "  Call cs_scopes for the valid values."
         )
     return "--ticket=" + scope
@@ -701,6 +712,18 @@ def render(env):
         warnings.append(f"could not read: {shown}{more}")
     if env.get("exclusions"):
         warnings.append("non-default exclusion list in force: " + env["exclusions"])
+    # A hit whose text was cut is still the right hit -- the address is whole --
+    # but the line shown is not the line in the file, and a caller quoting it
+    # should know.
+    elided = env.get("elided")
+    if elided:
+        warnings.append(
+            f"{elided.get('lines')} hit line(s) longer than {elided.get('max_line')} "
+            f"bytes were cut around the match ({elided.get('bytes')} bytes elided). "
+            "Open the file at the line shown for the rest."
+        )
+    for n in env.get("notes") or []:
+        warnings.append(n)
     lines.extend(warnings)
 
     results = env.get("results") or []

@@ -8,3 +8,4 @@
 # .NET build output in fixtures
 bin/
 obj/
+__pycache__/

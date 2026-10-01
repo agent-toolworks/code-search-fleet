@@ -84,7 +84,7 @@ def assigned_value(key, text):
         v = m.group(1).strip()
         # Trailing comment, but only when it is not inside the quotes.
         if v[:1] not in "\"'":
-            v = re.split(r"\s+#", v, 1)[0].strip()
+            v = re.split(r"\s+#", v, maxsplit=1)[0].strip()
         v = v.rstrip(",")
         if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
             v = v[1:-1]
@@ -108,14 +108,60 @@ CASE_RES = [
 SWITCH_RE = re.compile(r'\b(?:switch|when|match)\b')
 
 
+# `in (...)` is a membership test only where its result is USED as a boolean.
+# `for name in ("KEY", "KEY_USERNAME"):` is a loop, and reading it as a test
+# made three key NAMES the accepted VALUES of a URL key -- so every real URL in
+# dev, stg and prd was reported as accepted by no read site. A comprehension
+# (`[x for x in (...)]`) is the same loop in another spelling.
+_LOOP_BEFORE_IN = re.compile(r'\bfor\b')
+_BOOLEAN_BEFORE_IN = re.compile(
+    r'\b(?:if|elif|while|and|or|not|assert|return|unless)\b'
+    r'|[^=!<>]=(?!=)|\?|&&|\|\||!\s*$|^\s*$'   # `!in`; a Kotlin `in setOf(..) ->` label
+)
+
+
 def compare_tokens(text):
     out = []
     for rx in COMPARE_RES[:3]:
         out += rx.findall(text)
-    m = COMPARE_RES[3].search(text)
-    if m:
+    for m in COMPARE_RES[3].finditer(text):
+        before = text[:m.start()]
+        if _LOOP_BEFORE_IN.search(before) or not _BOOLEAN_BEFORE_IN.search(before):
+            continue
         out += re.findall(r'["\']([^"\']+)["\']', m.group(1))
     return out
+
+
+# A test file's literal is evidence of what a TEST expects -- usually a fixture
+# value -- not of what the production reader accepts. Counting
+# `assert settings.URL == "https://fake-host/release"` as accepted turned every
+# deployed URL into a "SET but not accepted" finding, the kind of false alarm
+# someone acts on. They are listed apart, never mixed into the accepted set.
+_TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "testing", "testdata",
+              "fixtures", "e2e", "it"}
+_TEST_FILE_RE = re.compile(
+    r'(?:^test_.*\.py$|_test\.(?:py|go|rb|exs?)$|^conftest\.py$'
+    r'|(?:Test|Tests|Spec|IT)\.(?:java|kt|kts|scala|groovy|cs|swift)$'
+    r'|\.(?:test|spec)\.[cm]?[jt]sx?$|_spec\.rb$)'
+)
+
+
+def is_test_path(path):
+    parts = path.split("/")
+    # parts[0] is the repo; a repo NAMED "tests" is not a test directory.
+    if any(p.lower() in _TEST_DIRS for p in parts[1:-1]):
+        return True
+    return bool(_TEST_FILE_RE.search(parts[-1]))
+
+
+def names_the_key(key, tok):
+    """A token that is the key's own NAME, or a sibling key's (`KEY_USERNAME`),
+    is an identifier, not a value the key can hold."""
+    if tok == key:
+        return True
+    if not re.fullmatch(r'[A-Z][A-Z0-9_]*', tok):
+        return False
+    return tok.startswith(key + "_") or tok.endswith("_" + key)
 
 
 def switch_tokens(lines, idx):
@@ -179,6 +225,7 @@ def main():
 
     sets, reads, docs, others = [], [], [], []
     accepted, accept_sites = [], []
+    test_tokens, test_sites, key_names = set(), [], set()
     file_cache = {}
 
     for raw in sys.stdin.read().splitlines():
@@ -213,7 +260,16 @@ def main():
                 if 0 <= lineno - 1 < len(lines):
                     toks = switch_tokens(lines, lineno - 1)
             note = ""
-            if toks:
+            names = sorted({t for t in toks if names_the_key(key, t)})
+            toks = [t for t in toks if t not in names]
+            if names:
+                key_names.update(names)
+            if toks and is_test_path(path):
+                test_tokens.update(toks)
+                test_sites.append("%s:%d" % (path, lineno))
+                note = "test compares against (not counted as accepted): " \
+                    + " | ".join(sorted(set(toks)))
+            elif toks:
                 accepted += toks
                 accept_sites.append("%s:%d" % (path, lineno))
                 note = "compares against: " + " | ".join(sorted(set(toks)))
@@ -272,6 +328,15 @@ def main():
               "can enumerate — a value passed to a framework, split on a "
               "separator, or normalised first is not readable here, and "
               "guessing an enumeration would invent findings", file=e)
+    if test_tokens:
+        print("  test files compare against %d token(s), NOT counted as accepted "
+              "(a fixture value is what a test expects, not what production "
+              "accepts): %s   at %s"
+              % (len(test_tokens), " | ".join(sorted(test_tokens)),
+                 " ".join(test_sites[:5])), file=e)
+    if key_names:
+        print("  dropped %d token(s) that name a key rather than a value: %s"
+              % (len(key_names), " | ".join(sorted(key_names))), file=e)
 
     # THE finding. Everything above it is context. Fires only when the read side
     # is genuinely enumerable, and never on a templated set-site.

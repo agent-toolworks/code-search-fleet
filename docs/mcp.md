@@ -146,13 +146,19 @@ is the worst failure available here — a confident wrong answer arriving throug
 a new door.
 
 So `scope` is a **required** argument on every tool that reads the fleet, with
-no default and no detection. `cs_scopes` lists the valid values, `"fleet"` is
+no default and no detection. It is the **absolute path** of a workspace or of
+any directory inside one (an agent can pass its own working directory, from any
+depth), a workspace folder name when that is unique, or `"fleet"`. A path must
+lie under a configured workspace root (`TICKETS_ROOT`, `WORKSPACE_ROOTS`) and
+outside the fleet root, or the call is refused with the roots named; a relative
+path is refused, because the server's working directory is not yours.
+`cs_scopes` lists the workspaces by path, nested ones included, `"fleet"` is
 spelled out as one of them so that searching `main` alone is a choice rather
 than a fallback, and every result carries the same provenance line the CLI
 prints:
 
 ```
-searching: PROJ-123 (2 repo(s), your branch) + fleet (8 repo(s), main)
+searching: /home/me/tickets/PROJ-123 (2 repo(s), your branch) + fleet (8 repo(s), main)
 answer: heuristic via ripgrep (literal, prose filtered) · 2 hit(s) · 2 repo(s)
 ```
 

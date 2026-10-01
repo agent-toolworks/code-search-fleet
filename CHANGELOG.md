@@ -8,6 +8,58 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.16.0 — 2026-10-01
+
+- A scope can be a path (#59). `--ticket=` and the MCP `scope` take the absolute
+  path of a workspace or of any directory inside one, so an agent can pass its own
+  working directory. The path must lie under a workspace root, which is
+  `TICKETS_ROOT` plus the new colon-separated `WORKSPACE_ROOTS`, and outside the
+  fleet root. Otherwise it is refused, with the roots named. Inside a repo, the
+  workspace is that repo's parent, worktrees included, so nested layouts such as
+  `_tickets/on-call/<id>/` and a second root such as `_reviews/` resolve. A bare id
+  still works: it is looked up under every root, nested workspaces included, and
+  refused if it is ambiguous. `cs scopes` lists workspaces by path and no longer
+  lists grouping folders. The `searching:` line, `scope` and `view` name the path.
+  Three layouts that answered from main without saying so are fixed. Running from
+  a repo outside every root now warns. A nested workspace now resolves. A
+  workspace repo cloned under another folder name (matched by `origin`) now stands
+  in for its fleet repo, with a warning, instead of being searched beside it and
+  counted as a second repo. An explicit scope that holds no repos is refused.
+- Hit lines are capped (#58). Each hit's text is cut to `CS_MAX_LINE` bytes
+  (default 400) around the match, and the bytes removed are named in the line.
+  The `repo/path:line:` address is never cut, and a cut never splits a UTF-8
+  character. A warning names the lines that were cut. The porcelain envelope
+  gains `bytes` and `elided`, and the MCP result says when lines were cut.
+  `--full-lines` (or `CS_MAX_LINE=0`) prints lines whole. Once an answer is over
+  20 KB, the `answer:` line gives its size. `--source-only` now also drops `.svg`,
+  `.map`, `.min.js` and `.min.css`.
+- `cs values` no longer reads a `for … in (…)` loop or a comprehension as a
+  membership test, and drops tokens that name a key rather than a value (#56).
+  Comparisons in test files are listed apart and never counted as accepted values.
+  A free-form key whose only "accepted" tokens came from those shapes now reports
+  `accepts: UNDETERMINABLE` instead of flagging every real value as "SET but not
+  accepted".
+- `cs values` no longer prints a Python 3.13+ `DeprecationWarning` into its output
+  (#57). `verify-search` now reads the source for `re.split`/`sub`/`subn` with a
+  positional `maxsplit` or `count`, so the next one fails a check on any
+  interpreter. It also runs `cs values` with warnings as errors.
+- `pyproject.toml` is parsed as TOML, and each requirement is split as PEP 508
+  says (#55). A requirement with `[extras]` keeps its version instead of reading
+  UNPINNED, and a quoted word in a `#` comment inside the array is no longer a
+  package. `[project.optional-dependencies]`, `[dependency-groups]` and Poetry's
+  dependency tables are read too. Without `tomllib` (Python < 3.11), a
+  comment-aware scanner feeds the same split.
+- `cs versions`, `cs deps` and `cs provides` read Gradle version catalogs
+  (`gradle/*.versions.toml`, including `version.ref` and bundles) and NuGet
+  `packages.config` (#54). A catalog row names the build files that reference it.
+  A `PackageReference` with no version takes it from `Directory.Packages.props`.
+  A manifest the readers find but do not parse (`go.mod`, `requirements.txt`,
+  `setup.py`, …) is named on the answer as **not read**, and so is one that failed
+  to parse. The same notices reach the porcelain envelope as `notes`, which the
+  MCP result shows. `cs versions` now names the publisher of a coordinate declared
+  in another spelling (`kit-service`), as `cs provides` already did, instead of
+  calling it `external`.
+
 ## 1.15.1 — 2026-09-29
 
 - The README is short and ordered for use (#53): install (plugin first), fleet setup,

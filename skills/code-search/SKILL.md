@@ -288,12 +288,12 @@ object. Everything you would otherwise have to scrape off stderr is a field:
 cs uses '/api/v1/inventory/reserve' --porcelain
 ```
 ```json
-{"cs":1,"subcommand":"uses","query":"…","scope":"PROJ-123",
- "view":"PROJ-123 (2 repo(s), your branch) + fleet (8 repo(s), main)",
+{"cs":1,"subcommand":"uses","query":"…","scope":"/home/me/tickets/PROJ-123",
+ "view":"/home/me/tickets/PROJ-123 (2 repo(s), your branch) + fleet (8 repo(s), main)",
  "exit":0,"refused":false,"reason":null,"kind":"heuristic",
  "engine":"ripgrep","note":"literal, prose filtered","hits":2,"repos":2,
  "degraded":null,"partial":false,"truncated":false,"returned":2,
- "engine_errors":[],"hints":[],
+ "bytes":214,"elided":null,"notes":[],"engine_errors":[],"hints":[],
  "results":[{"repo":"…","path":"…","line":7,"text":"…"}]}
 ```
 
@@ -359,17 +359,21 @@ files you are editing. Both answers are wrong in ways that do not announce
 themselves.
 
 - `--fleet` ignores the ticket workspace entirely.
-- `--ticket=<id>` layers a named ticket instead of the one you are standing in,
-  and **fails** if no such workspace exists rather than falling back to the
-  fleet. That fallback would be the same mistake inverted — you asked for branch
-  state and would have been handed main. If you get that error, check the id
-  against `ls $TICKETS_ROOT` (the message lists what is there) instead of
-  dropping the flag.
+- `--ticket=<path>` layers a named workspace instead of the one you are standing
+  in. Pass the absolute path of the workspace or of any directory inside it
+  (your own working directory works); a bare folder name also works when it is
+  unique. It **fails** if the path is outside every workspace root
+  (`TICKETS_ROOT`, `WORKSPACE_ROOTS`), inside the fleet, or holds no repos,
+  rather than falling back to the fleet. That fallback would be the same mistake
+  inverted — you asked for branch state and would have been handed main. If you
+  get that error, run `cs scopes` instead of dropping the flag.
+- Run from a repo outside every workspace root, `cs` answers from the fleet and
+  warns that the repo you are in is not searched. Take that warning at its word.
 
 Always read the `searching:` line before trusting a layered answer. If it is
 absent, no ticket was layered and every hit came from the fleet.
 
-`cs scopes` lists the fleet and every ticket workspace with its repo count. Use
+`cs scopes` lists the fleet and every workspace, by path, with its repo count. Use
 it when you are **not** standing in a workspace — the layering is resolved from
 the working directory, so anything invoking `cs` from somewhere else has to
 choose a scope explicitly rather than let it be inferred.
@@ -433,7 +437,11 @@ this code": it is who is required to review, which is a different claim, and the
 team named may no longer exist.
 
 **`cs versions [coordinate]`** — which version each repo pins, flagged `AGREED`,
-`DRIFT`, or `UNPINNED`. A shared contract library at two versions across a seam
+`DRIFT`, or `UNPINNED`. It reads Gradle (inline and `gradle/libs.versions.toml`),
+Maven, npm, `pyproject.toml` (parsed as TOML, PEP 508 extras and all), and NuGet
+(`PackageReference`, `Directory.Packages.props`, `packages.config`). A manifest
+it finds but does not parse (`go.mod`, `requirements.txt`, …) is named on the
+answer as **not read**. That repo's absence is not a finding. A shared contract library at two versions across a seam
 is a real bug shape, and it is invisible to every search engine here because the
 evidence is in manifests rather than in code:
 

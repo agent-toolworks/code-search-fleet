@@ -34,7 +34,7 @@ _fleet_override=""
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 # After sourcing, so neither the inherited environment nor the config file can
 # reach `cs` or any check through the ambient value.
-unset FLEET_ROOT TICKETS_ROOT
+unset FLEET_ROOT TICKETS_ROOT WORKSPACE_ROOTS
 # CS_LOG is unset for the same reason, and for one more: the suite asserts that
 # the query log is OFF unless asked for, and an ambient CS_LOG -- which the
 # README now tells people to export -- would make that check fail on exactly
@@ -500,6 +500,87 @@ else
   err "cs versions missed a real version drift"; fail=$((fail + 1))
   failed_ids+=("versions-drift")
 fi
+
+# Manifest shapes the fixture fleet does not carry, in a probe fleet of their
+# own so no scored count moves. Each one was a confident wrong answer on a real
+# fleet: a requirement with [extras] lost its version and read UNPINNED; a
+# quoted word in a `#` comment inside the array became a package; a Gradle
+# version catalog and a NuGet packages.config gave their repos ZERO rows; and a
+# manifest cs cannot read was not mentioned, so its repo looked like one that
+# declares nothing.
+man_fleet=$(mktemp -d)/fleet
+mkdir -p "$man_fleet"/{android-app/gradle,android-app/app,legacy-dotnet/Web,py-a,py-b,go-svc}
+cat > "$man_fleet/android-app/gradle/libs.versions.toml" <<'TOML'
+[versions]
+okhttp = "4.12.0"
+
+[libraries]
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
+some-lib-java = "com.acme:some-lib:0.26.0"
+
+[bundles]
+network = ["okhttp", "okhttp-logging"]
+TOML
+printf 'dependencies {\n    implementation(libs.bundles.network)\n    implementation(libs.some.lib.java)\n}\n' \
+  > "$man_fleet/android-app/app/build.gradle.kts"
+cat > "$man_fleet/legacy-dotnet/Web/packages.config" <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<packages>
+  <package id="Newtonsoft.Json" version="12.0.3" targetFramework="net472" />
+</packages>
+XML
+cat > "$man_fleet/py-a/pyproject.toml" <<'TOML'
+[project]
+name = "py-a"
+dependencies = [
+    # decoding the other-service's token 401s with "unable to
+    # "unused in a service with no database" crash-loops
+    "some-lib[extra-a,extra-b]>=0.26.0,<1.0.0",
+]
+TOML
+printf '[project]\nname = "py-b"\ndependencies = ["some-lib[extra-a]>=0.24.0,<1.0.0"]\n' \
+  > "$man_fleet/py-b/pyproject.toml"
+printf 'module example.com/go-svc\n' > "$man_fleet/go-svc/go.mod"
+for _r in "$man_fleet"/*/; do git -C "$_r" init -q 2>/dev/null; done
+man_out=$(cd "$man_fleet" && FLEET_ROOT="$man_fleet" "$here/cs" versions --fleet 2>&1)
+
+if matches "$man_out" 'py-a[[:space:]]+>=0\.26\.0,<1\.0\.0' \
+   && matches "$man_out" 'some-lib[[:space:]]+DRIFT' \
+   && ! matches "$man_out" '^(s|unable|unused)[[:space:]]'; then
+  ok "pyproject [extras] keep their version, and comment words are not packages"
+  pass=$((pass + 1))
+else
+  err "cs versions misread a pyproject.toml (extras or comments):"
+  printf '%s\n' "$man_out" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("versions-pyproject-pep508")
+fi
+
+if matches "$man_out" 'android-app[[:space:]]+4\.12\.0[[:space:]]+gradle/libs\.versions\.toml <- app/build\.gradle\.kts' \
+   && matches "$man_out" 'com\.squareup\.okhttp3:logging-interceptor' \
+   && matches "$man_out" 'android-app[[:space:]]+0\.26\.0'; then
+  ok "a Gradle version catalog is read, version.ref and bundles included"
+  pass=$((pass + 1))
+else
+  err "cs versions did not read gradle/libs.versions.toml"
+  fail=$((fail + 1)); failed_ids+=("versions-gradle-catalog")
+fi
+
+if matches "$man_out" 'legacy-dotnet[[:space:]]+12\.0\.3[[:space:]]+Web/packages\.config'; then
+  ok "a NuGet packages.config is read"; pass=$((pass + 1))
+else
+  err "cs versions did not read packages.config"
+  fail=$((fail + 1)); failed_ids+=("versions-packages-config")
+fi
+
+if matches "$man_out" 'not read: 1 manifest' && matches "$man_out" 'go-svc/go\.mod'; then
+  ok "a manifest cs cannot parse is named on the answer, not silently absent"
+  pass=$((pass + 1))
+else
+  err "cs versions left out a repo whose manifest it cannot read, without saying so"
+  fail=$((fail + 1)); failed_ids+=("versions-unread-named")
+fi
+rm -rf "$(dirname "$man_fleet")"
 
 # ---- refusals --------------------------------------------------------------
 # Everything above tests that cs ANSWERS. This section tests that it REFUSES.
@@ -2329,6 +2410,35 @@ else
   fail=$((fail + 1)); failed_ids+=("emits-helper")
 fi
 
+# Python 3.13 deprecated passing maxsplit/count/flags to re.split/sub/subn
+# positionally, and a warning from cs's own code lands in the user's answer.
+# The interpreter only says so at RUN time, on 3.13+, and on the one path that
+# reaches the call -- so this reads the source instead, on any interpreter.
+re_positional=$(python3 - "$here/cs-mcp" "$here"/lib/*.py <<'PY'
+import ast, sys
+LIMIT = {"split": 2, "sub": 3, "subn": 3}   # positional args allowed
+for path in sys.argv[1:]:
+    try:
+        tree = ast.parse(open(path, encoding="utf-8").read(), path)
+    except (OSError, SyntaxError) as exc:
+        print(f"{path}: unreadable ({exc})"); continue
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "re"
+                and node.func.attr in LIMIT and len(node.args) > LIMIT[node.func.attr]):
+            print(f"{path}:{node.lineno}: re.{node.func.attr} with a positional "
+                  f"{'maxsplit' if node.func.attr == 'split' else 'count'}")
+PY
+)
+if [[ -z "$re_positional" ]]; then
+  ok "no re.split/sub/subn passes maxsplit or count positionally (3.13 deprecation)"
+  pass=$((pass + 1))
+else
+  err "a positional re argument will print a DeprecationWarning on Python 3.13+:"
+  printf '%s\n' "$re_positional" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("re-positional-args")
+fi
+
 # ---- the harness owns its fleet scope --------------------------------------
 # Both harnesses used to treat an exported FLEET_ROOT as "run against this
 # fleet". Every check asserts FIXTURE content, so that could only report
@@ -2948,6 +3058,48 @@ else
   err "cs values invented an enumeration the read side does not support"
   fail=$((fail + 1)); failed_ids+=("values-undeterminable")
 fi
+
+# A free-form key (a URL) has no enumerable read side, and must say so. Two
+# shapes used to invent one: a `for name in ("KEY", "KEY_USERNAME"):` loop read
+# as a membership test, so key NAMES became accepted VALUES; and a test's
+# `assert settings.KEY == "<fixture>"`, counted as what production accepts. Both
+# together made every real deployed URL a "SET but not accepted" finding.
+# The stg value carries a trailing `# comment`, the path that printed a Python
+# 3.13+ DeprecationWarning into the answer; run with warnings as errors, it
+# refuses rather than answering if that ever comes back.
+mkdir -p "$FLEET_ROOT/fulfillment-worker-python/deploy"
+printf 'VALPROBE_URL: "https://dev.internal/release"\n' \
+  > "$FLEET_ROOT/fulfillment-worker-python/deploy/valprobe-dev.yaml"
+printf 'VALPROBE_URL: https://stg.internal/release   # staging\n' \
+  > "$FLEET_ROOT/fulfillment-worker-python/deploy/valprobe-stg.yaml"
+cat > "$FLEET_ROOT/fulfillment-worker-python/fulfillment/valprobe.py" <<'PROBE'
+import os
+
+def creds():
+    for name in ("VALPROBE_URL", "VALPROBE_URL_USERNAME", "VALPROBE_URL_PASSWORD"):
+        yield os.environ.get(name)
+PROBE
+cat > "$FLEET_ROOT/fulfillment-worker-python/tests/test_valprobe.py" <<'PROBE'
+def test_url(settings):
+    assert settings.VALPROBE_URL == "https://fake-host/release"
+PROBE
+url_out=$(PYTHONWARNINGS=error::DeprecationWarning "$here/cs" values VALPROBE_URL --fleet 2>&1); url_rc=$?
+if [[ $url_rc -eq 0 ]] \
+   && matches "$url_out" 'accepts: UNDETERMINABLE' \
+   && ! matches "$url_out" 'SET but not accepted' \
+   && matches "$url_out" 'test files compare against 1 token.*fake-host' \
+   && matches "$url_out" 'valprobe-stg\.yaml:[0-9]+: \[set\] "https://stg\.internal/release"' \
+   && ! matches "$url_out" 'DeprecationWarning'; then
+  ok "a loop and a test assert are not read as accepted values"
+  pass=$((pass + 1))
+else
+  err "cs values counted a for-loop or a test assertion as an accepted value (exit $url_rc)"
+  printf '%s\n' "$url_out" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("values-loop-test-tokens")
+fi
+rm -rf "$FLEET_ROOT/fulfillment-worker-python/deploy" \
+       "$FLEET_ROOT/fulfillment-worker-python/fulfillment/valprobe.py" \
+       "$FLEET_ROOT/fulfillment-worker-python/tests/test_valprobe.py"
 
 rm -f "$FLEET_ROOT/inventory-api-dotnet/deploy/valprobe-dev.yaml" \
       "$FLEET_ROOT/inventory-api-dotnet/deploy/valprobe-prod.yaml" \
@@ -3634,6 +3786,65 @@ rm -rf "$FLEET_ROOT/web-monorepo-node/compositionprobe" \
        "$FLEET_ROOT/web-monorepo-node/src/compositionprobe.ts" \
        "$FLEET_ROOT/web-monorepo-node/src/__tests__"
 
+# ---- one hit line is not allowed to be the whole answer --------------------
+# A 27-hit answer was 110 KB: six lines of a committed SVG diagram were 96% of
+# it, the longest 62 KB, and --source-only kept them. The count gave no warning,
+# because the cost was in line LENGTH. A line is now cut around the match with
+# the elided bytes named, the envelope says so, and .svg is data.
+info ""
+info "${C_BOLD}long hit lines${C_OFF}"
+mkdir -p "$FLEET_ROOT/web-monorepo-node/docs"
+python3 - "$FLEET_ROOT/web-monorepo-node/docs/arch-longprobe.svg" <<'PY'
+import sys
+# Multibyte padding on both sides, so a cut that split a UTF-8 sequence would
+# make the porcelain envelope undecodable below.
+body = "é" * 15000 + "x" * 20000 + "<text>/api/longprobe-route</text>" + "ü" * 15000
+open(sys.argv[1], "w", encoding="utf-8").write("<svg>" + body + "</svg>\n")
+PY
+printf 'fetch("/api/longprobe-route")\n' > "$FLEET_ROOT/web-monorepo-node/docs/longprobe-client.ts"
+
+lp_out=$("$here/cs" uses '/api/longprobe-route' --fleet 2>/dev/null)
+lp_err=$("$here/cs" uses '/api/longprobe-route' --fleet 2>&1 >/dev/null)
+lp_svg=$(grep 'arch-longprobe\.svg' <<< "$lp_out" || true)
+if [[ -n "$lp_svg" && ${#lp_svg} -lt 1000 ]] \
+   && matches "$lp_svg" '^web-monorepo-node/docs/arch-longprobe\.svg:1:…\([0-9]+ bytes elided\)…' \
+   && matches "$lp_svg" '/api/longprobe-route' \
+   && matches "$lp_err" 'cut around the match'; then
+  ok "a 80 KB hit line is cut around the match, and the cut is named"
+  pass=$((pass + 1))
+else
+  err "a very long hit line was printed whole, or cut without the match (${#lp_svg} chars)"
+  fail=$((fail + 1)); failed_ids+=("long-line-cap")
+fi
+
+if "$here/cs" uses '/api/longprobe-route' --fleet --porcelain 2>/dev/null | python3 -c '
+import json, sys
+d = json.loads(sys.stdin.buffer.read().decode("utf-8"))   # strict: no split UTF-8
+e = d["elided"]
+assert e and e["lines"] == 1 and e["bytes"] > 70000, e
+assert all(len(r["text"].encode()) < 1000 for r in d["results"]), "a long text survived"
+assert d["bytes"] < 2000, d["bytes"]
+' 2>/dev/null; then
+  ok "the porcelain envelope carries the elision, and stays valid UTF-8"
+  pass=$((pass + 1))
+else
+  err "the envelope did not report the line cap, or a cut split a character"
+  fail=$((fail + 1)); failed_ids+=("long-line-envelope")
+fi
+
+lp_full=$("$here/cs" uses '/api/longprobe-route' --fleet --full-lines 2>/dev/null | wc -c | tr -d ' ')
+lp_so=$("$here/cs" uses '/api/longprobe-route' --fleet --source-only 2>/dev/null)
+if [[ "$lp_full" -gt 80000 ]] && ! matches "$lp_so" '\.svg:' && matches "$lp_so" 'longprobe-client\.ts'; then
+  ok "--full-lines prints the whole line, and --source-only drops .svg"
+  pass=$((pass + 1))
+else
+  err "--full-lines did not restore the line ($lp_full bytes), or --source-only kept the .svg"
+  fail=$((fail + 1)); failed_ids+=("long-line-flags")
+fi
+rm -rf "$FLEET_ROOT/web-monorepo-node/docs/arch-longprobe.svg" \
+       "$FLEET_ROOT/web-monorepo-node/docs/longprobe-client.ts"
+rmdir "$FLEET_ROOT/web-monorepo-node/docs" 2>/dev/null || true
+
 # ---- observability definitions are consumers, and they fail silently -------
 # When a workload is renamed or split, the emitted job name is a contract with
 # every SAVED QUERY that names it -- dashboard panels, alert and recording
@@ -4120,7 +4331,7 @@ if [[ $mcp_wt_ok -eq 1 ]]; then
   named=$(mcp_req cs_text '{"pattern":"mcp-cwd-probe","scope":"MCP-1"}' \
     | mcp_drive "$FLEET_ROOT" "$mcp_tickets")
   if printf '%s' "$named" | grep -q 'inventory-api-dotnet' \
-     && printf '%s' "$named" | grep -q 'searching: MCP-1 (1 repo(s), your branch)'; then
+     && printf '%s' "$named" | grep -q 'searching: /.*/MCP-1 (1 repo(s), your branch)'; then
     ok "a named MCP scope layers the ticket and says so in the result"
     pass=$((pass + 1))
   else
@@ -4285,6 +4496,125 @@ else
 fi
 rm -f "$FLEET_ROOT/inventory-api-dotnet/src/AccessionUpdateIn.cs"
 rm -rf "$FLEET_ROOT/web-monorepo-node/schemas"
+
+# ---- a scope is a path ------------------------------------------------------
+# A workspace was reachable only as TICKETS_ROOT/<id>/. Grouped workspaces
+# (_tickets/on-call/<id>/) and a second root (_reviews/<id>/) were unreachable,
+# and three layouts answered from main: run from a real workspace outside the
+# root (no warning at all), run from a nested one (the grouping folder taken as
+# the workspace), and a workspace clone under another folder name (both copies
+# searched, one repo counted twice).
+info ""
+info "${C_BOLD}scope by path${C_OFF}"
+sp_tmp=$(cd "$(mktemp -d)" && pwd -P)
+mkdir -p "$sp_tmp/_tickets/on-call/OC-7" "$sp_tmp/_tickets/_done" \
+         "$sp_tmp/_reviews/RV-7" "$sp_tmp/elsewhere"
+sp_ok=1
+git -C "$FLEET_ROOT/inventory-api-dotnet" worktree add --quiet \
+    "$sp_tmp/_tickets/on-call/OC-7/inventory-api-dotnet" -b verify/scope-path >/dev/null 2>&1 || sp_ok=0
+git clone --quiet "$FLEET_ROOT/inventory-api-dotnet" "$sp_tmp/_reviews/RV-7/inventory-v2" >/dev/null 2>&1 || sp_ok=0
+git clone --quiet "$FLEET_ROOT/pricing-lib-java" "$sp_tmp/elsewhere/pricing-lib-java" >/dev/null 2>&1 || sp_ok=0
+if [[ $sp_ok -eq 1 ]]; then
+  # Same origin as the fleet copy, under another folder name.
+  git -C "$sp_tmp/_reviews/RV-7/inventory-v2" remote set-url origin \
+      "$(git -C "$FLEET_ROOT/inventory-api-dotnet" config --get remote.origin.url)"
+  oc_wt="$sp_tmp/_tickets/on-call/OC-7/inventory-api-dotnet"
+  perl -pi -e 's/\[HttpPost\("reserve"\)\]/[HttpPost("scope-path-probe")]/' \
+      "$oc_wt/src/Controllers/ReservationController.cs"
+  perl -pi -e 's/\[HttpPost\("reserve"\)\]/[HttpPost("scope-path-probe")]/' \
+      "$sp_tmp/_reviews/RV-7/inventory-v2/src/Controllers/ReservationController.cs"
+  sp_env=(env TICKETS_ROOT="$sp_tmp/_tickets" WORKSPACE_ROOTS="$sp_tmp/_reviews")
+
+  sp_nested=$(cd / && "${sp_env[@]}" "$here/cs" uses scope-path-probe \
+              --ticket="$oc_wt/src/Controllers" 2>&1)
+  sp_cwd=$(cd "$oc_wt/src" && "${sp_env[@]}" "$here/cs" uses scope-path-probe 2>&1)
+  if matches "$sp_nested" "searching: $sp_tmp/_tickets/on-call/OC-7 \(1 repo\(s\), your branch\)" \
+     && matches "$sp_nested" 'inventory-api-dotnet/src/Controllers/ReservationController\.cs' \
+     && matches "$sp_cwd" "searching: $sp_tmp/_tickets/on-call/OC-7 \(1 repo" \
+     && ! matches "$sp_cwd" 'holds no repos'; then
+    ok "a path inside a nested workspace resolves to that workspace, passed or detected"
+    pass=$((pass + 1))
+  else
+    err "a nested workspace was not resolved from a path inside it:"
+    printf '%s\n%s\n' "$sp_nested" "$sp_cwd" | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("scope-path-nested")
+  fi
+
+  # A bare id keeps working, nested and under the second root.
+  if emits err "searching: $sp_tmp/_tickets/on-call/OC-7 " \
+       "${sp_env[@]}" "$here/cs" uses scope-path-probe --ticket=OC-7 \
+     && emits err "searching: $sp_tmp/_reviews/RV-7 " \
+       "${sp_env[@]}" "$here/cs" uses scope-path-probe --ticket=RV-7; then
+    ok "a bare workspace id still resolves, nested and under WORKSPACE_ROOTS"
+    pass=$((pass + 1))
+  else
+    err "a bare workspace id stopped resolving"
+    fail=$((fail + 1)); failed_ids+=("scope-bare-id")
+  fi
+
+  refuses "a scope path outside every workspace root refuses, naming the roots" \
+    "_reviews" "${sp_env[@]}" "$here/cs" uses x --ticket="$sp_tmp/elsewhere/pricing-lib-java"
+  refuses "a scope path inside the fleet root refuses" "inside the fleet root" \
+    "${sp_env[@]}" "$here/cs" uses x --ticket="$FLEET_ROOT/inventory-api-dotnet"
+  refuses "a grouping folder is not a workspace" "holds no repos" \
+    "${sp_env[@]}" "$here/cs" uses x --ticket="$sp_tmp/_tickets/_done"
+
+  sp_scopes=$(cd / && "${sp_env[@]}" "$here/cs" scopes 2>/dev/null)
+  if matches "$sp_scopes" "  1  $sp_tmp/_tickets/on-call/OC-7\$" \
+     && matches "$sp_scopes" "  1  $sp_tmp/_reviews/RV-7\$" \
+     && ! matches "$sp_scopes" '(on-call|_done)$'; then
+    ok "cs scopes lists nested workspaces by path, and no grouping folders"
+    pass=$((pass + 1))
+  else
+    err "cs scopes did not list workspaces by path, or listed a grouping folder:"
+    printf '%s\n' "$sp_scopes" | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("scopes-by-path")
+  fi
+
+  # The renamed clone stands in for the fleet repo instead of being added to it.
+  sp_rv=$(cd / && "${sp_env[@]}" "$here/cs" uses scope-path-probe --ticket=RV-7 2>&1)
+  sp_rv_view=$(cd / && "${sp_env[@]}" "$here/cs" repos --ticket=RV-7 2>/dev/null)
+  if matches "$sp_rv" "inventory-v2 is the fleet's inventory-api-dotnet under another name" \
+     && matches "$sp_rv" 'inventory-v2/src/Controllers' \
+     && ! matches "$sp_rv_view" '^inventory-api-dotnet '; then
+    ok "a workspace clone under another name shadows its fleet repo, and says so"
+    pass=$((pass + 1))
+  else
+    err "a renamed workspace clone was searched beside its fleet copy, silently"
+    fail=$((fail + 1)); failed_ids+=("scope-renamed-clone")
+  fi
+
+  # Standing in a repo outside every root: answered from main, but SAID.
+  if emits err 'not in a workspace root, so it is not searched' \
+       bash -c "cd '$sp_tmp/elsewhere/pricing-lib-java' && TICKETS_ROOT='$sp_tmp/_tickets' '$here/cs' uses pricing"; then
+    ok "running from a repo outside every workspace root warns instead of answering from main silently"
+    pass=$((pass + 1))
+  else
+    err "a run from a repo outside the workspace roots answered from main without a word"
+    fail=$((fail + 1)); failed_ids+=("scope-outside-root-warns")
+  fi
+
+  # And over MCP: an absolute path is a scope; a relative one is not.
+  sp_mcp=$(mcp_req cs_text "{\"pattern\":\"scope-path-probe\",\"scope\":\"$oc_wt/src\"}" \
+           | mcp_drive / "$sp_tmp/_tickets")
+  sp_mcp_rel=$(mcp_req cs_text '{"pattern":"x","scope":"_tickets/on-call/OC-7"}' \
+               | mcp_drive / "$sp_tmp/_tickets")
+  if matches "$sp_mcp" "^ok.*searching: $sp_tmp/_tickets/on-call/OC-7 " \
+     && matches "$sp_mcp" 'ReservationController' \
+     && matches "$sp_mcp_rel" '^isError.*relative path'; then
+    ok "an MCP scope can be an absolute path inside a workspace; a relative one is refused"
+    pass=$((pass + 1))
+  else
+    err "the MCP server did not take an absolute-path scope: $sp_mcp / $sp_mcp_rel"
+    fail=$((fail + 1)); failed_ids+=("mcp-scope-path")
+  fi
+
+  git -C "$FLEET_ROOT/inventory-api-dotnet" worktree remove --force "$oc_wt" >/dev/null 2>&1 || true
+  git -C "$FLEET_ROOT/inventory-api-dotnet" branch -D verify/scope-path >/dev/null 2>&1 || true
+else
+  skip "scope by path" "could not create worktrees or clones here"
+fi
+rm -rf "$sp_tmp"
 
 # ---- query log -------------------------------------------------------------
 # An opt-in JSONL line per query, recording the outcome. Two of the properties

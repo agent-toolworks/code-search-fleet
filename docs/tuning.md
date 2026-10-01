@@ -8,6 +8,8 @@
 |---|---|
 | `FLEET_ROOT` | the directory holding your repos — **required**, no useful default |
 | `TICKETS_ROOT` | where per-ticket workspaces live |
+| `WORKSPACE_ROOTS` | further workspace roots, colon-separated (`_reviews/` beside `_tickets/`); `TICKETS_ROOT` is always one of them |
+| `CS_MAX_LINE` | bytes of text kept per hit line, cut around the match, default 400 (`0` or `--full-lines` for whole lines) |
 | `CS_MAX_RESULTS` | result cap, default 200 (`0` or `--all` for none) |
 | `CS_TIMEOUT` | per-engine wall-clock limit in seconds, default 120 |
 | `CS_TAGS_TTL` | how long `cs def` reuses its symbol index; default 60s with a ticket workspace layered, and unbounded for a fleet-only view, where the fingerprint is already a complete key |
@@ -74,18 +76,34 @@ containing worktrees of only the repos being changed. Run `cs` inside a ticket
 workspace and it layers that ticket's branch state over the rest of the fleet:
 
 ```
-searching: PROJ-123 (2 repo(s), your branch) + fleet (8 repo(s), main)
+searching: /home/me/tickets/on-call/PROJ-123 (2 repo(s), your branch) + fleet (8 repo(s), main)
 ```
 
 Searching only the ticket would miss callers in repos the ticket does not
 contain — the failure that makes renaming a shared route look safe.
 
-`--ticket=<id>` searches a named workspace instead of the one you are standing
-in, and **fails** if that workspace does not exist. Falling back to the fleet
+A workspace is any directory under a **workspace root** (`TICKETS_ROOT`, plus
+any in `WORKSPACE_ROOTS`) whose immediate children are git repos, at any depth:
+`tickets/PROJ-123/`, `tickets/on-call/PROJ-123/` and `reviews/PR-88/` all work,
+and a grouping folder such as `on-call/` is not one. From anywhere inside a
+repo, the workspace is that repo's parent (worktrees included), so `cs` finds it
+from any depth. Run from a repo **outside** every root (and outside the fleet),
+`cs` answers from the fleet and says so, rather than silently answering from
+main while you edit something it cannot see. A workspace repo cloned under
+another folder name (`lims-v2` from the fleet's `lims`, matched by `origin`)
+stands in for the fleet repo, and the answer says so, instead of both being
+searched and counted as two repos.
+
+`--ticket=<path>` searches a named workspace instead of the one you are standing
+in: the absolute path of the workspace or of any directory inside one. It is
+refused if the path is outside every workspace root, inside the fleet root, or
+holds no repos. `--ticket=<id>` still works, looked up by folder name under
+every root, and is refused if two workspaces share the name. Either form
+**fails** if that workspace does not exist. Falling back to the fleet
 would be the same mistake inverted: you asked for your branch state and would
 have been handed main, with no `searching:` line to reveal the substitution.
 `--fleet` is how you ask for the fleet on purpose, and `cs scopes` lists what
-there is to choose between — which is what anything calling `cs` without a
+there is to choose between, by path — which is what anything calling `cs` without a
 working directory to stand in has to do first.
 
 ## Measuring what it actually did — opt-in, off by default

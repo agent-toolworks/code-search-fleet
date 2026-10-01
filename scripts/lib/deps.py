@@ -21,6 +21,12 @@ import json
 import pathlib
 import re
 import sys
+import xml.etree.ElementTree as ET
+
+try:
+    import tomllib  # 3.11+
+except ImportError:  # pragma: no cover - older interpreters take the scanner
+    tomllib = None
 
 
 def _read(path):
@@ -61,6 +67,256 @@ def normalize_coord(name, eco):
     if eco in ("npm", "nuget"):
         return name.lower()
     return name  # maven, and anything unrecognised: compare exactly
+
+
+# ---- pyproject.toml ----------------------------------------------------------
+# One regex over the raw `dependencies = [...]` text gave two wrong answers. The
+# name class stopped at `[`, so `"lib[extra]>=0.26.0,<1.0.0"` lost its version
+# and a shared library pulled in with extras read UNPINNED in nine repos that
+# all pin it -- hiding the very drift `cs versions` exists to show. And any
+# quote in a `#` comment inside the array started a "package": `service's`,
+# `"unable to` and `"unused in` became three phantom UNPINNED coordinates.
+#
+# So the file is parsed as TOML, and each requirement string is split as PEP
+# 508 says: name, extras, specifier, marker. Only where tomllib is missing (or
+# the file is not valid TOML) does a scanner take over -- one that skips
+# comments and respects quotes, feeding the same PEP 508 split.
+PEP508_RE = re.compile(
+    r"^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"   # name
+    r"\s*(?:\[[^\]]*\])?"                                  # [extras], dropped
+    r"\s*(@\s*\S+|\(?[^;@]*?\)?)?"                         # specifier or @ url
+    r"\s*(?:;.*)?$"                                        # ; marker, dropped
+)
+
+
+def split_requirement(req):
+    """PEP 508 requirement -> (name, version-or-placeholder), or None."""
+    m = PEP508_RE.match(req or "")
+    if not m:
+        return None
+    spec = (m.group(2) or "").strip()
+    if spec.startswith("@"):
+        return m.group(1), "(direct reference)"
+    spec = re.sub(r"\s+", "", spec.strip("()"))
+    return m.group(1), spec or "(unpinned)"
+
+
+def _toml_arrays_scanned(text, keys):
+    """String items of each top-level `key = [ ... ]` array, without TOML.
+
+    Comment-aware and quote-aware, so `[extras]` inside a string does not close
+    the array and a quote inside a `#` comment does not open a string.
+    """
+    out = []
+    for m in re.finditer(r"^\s*(%s)\s*=\s*\[" % "|".join(map(re.escape, keys)), text, re.M):
+        i, depth, items, buf, quote = m.end(), 1, [], None, None
+        while i < len(text) and depth:
+            c = text[i]
+            if quote:
+                if c == "\\" and quote == '"':
+                    buf.append(text[i + 1:i + 2]); i += 2; continue
+                if c == quote:
+                    items.append("".join(buf)); quote = None
+                else:
+                    buf.append(c)
+            elif c in "\"'":
+                quote, buf = c, []
+            elif c == "#":
+                nl = text.find("\n", i)
+                i = len(text) if nl < 0 else nl
+                continue
+            elif c == "[":
+                depth += 1
+            elif c == "]":
+                depth -= 1
+            i += 1
+        out += items
+    return out
+
+
+def pyproject_requirements(path, problems=None):
+    """[(name, version)] from [project] dependencies, optional-dependencies,
+    [dependency-groups] and Poetry's dependency tables."""
+    text = _read(path)
+    reqs, poetry = [], {}
+    data = None
+    if tomllib is not None:
+        try:
+            data = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:
+            if problems is not None:
+                problems.append((path, f"not valid TOML ({exc}); read by a fallback scanner"))
+    if data is not None:
+        project = data.get("project") or {}
+        reqs += [r for r in project.get("dependencies") or [] if isinstance(r, str)]
+        for group in (project.get("optional-dependencies") or {}).values():
+            reqs += [r for r in group or [] if isinstance(r, str)]
+        for group in (data.get("dependency-groups") or {}).values():
+            # `{include-group = "x"}` entries name another group, not a package.
+            reqs += [r for r in group or [] if isinstance(r, str)]
+        tool_poetry = (data.get("tool") or {}).get("poetry") or {}
+        tables = [tool_poetry.get("dependencies") or {}, tool_poetry.get("dev-dependencies") or {}]
+        tables += [(g or {}).get("dependencies") or {}
+                   for g in (tool_poetry.get("group") or {}).values()]
+        for table in tables:
+            for name, spec in table.items():
+                if name.lower() == "python":
+                    continue
+                if isinstance(spec, dict):
+                    spec = spec.get("version") or ("(direct reference)" if (
+                        spec.get("git") or spec.get("path") or spec.get("url")) else "")
+                poetry[name] = str(spec) if spec and spec != "*" else "(unpinned)"
+    else:
+        reqs = _toml_arrays_scanned(text, ["dependencies", "dev", "test", "docs"])
+    out = [r for r in (split_requirement(q) for q in reqs) if r]
+    out += list(poetry.items())
+    return out
+
+
+# ---- Gradle version catalogs -------------------------------------------------
+# Gradle's recommended layout keeps every coordinate and version in
+# gradle/libs.versions.toml and has build files say `libs.foo.bar`. Reading
+# only inline "group:artifact:version" strings in build.gradle(.kts) gave such
+# a repo ZERO rows -- silently, so "which version does each repo pin" got a
+# confident answer with the repo missing.
+_SKIP_DIRS = {".git", "node_modules", "build", ".gradle", "bin", "obj", "target",
+              "dist", ".venv", "venv", "__pycache__", ".tokensave"}
+
+
+def _walk(repo, pattern):
+    for path in repo.rglob(pattern):
+        try:
+            rel = path.relative_to(repo).parts
+        except ValueError:
+            rel = path.parts
+        if not any(part in _SKIP_DIRS for part in rel[:-1]):
+            yield path
+
+
+def _catalog_version(entry, versions):
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        if "ref" in entry:
+            return versions.get(entry["ref"])
+        for k in ("strictly", "require", "prefer"):
+            if entry.get(k):
+                return entry[k]
+    return None
+
+
+def catalog_libraries(path, problems=None):
+    """([(coordinate, version-or-placeholder, accessor)], {bundle: [accessor]})."""
+    text = _read(path)
+    if tomllib is None:
+        if problems is not None:
+            problems.append((path, "a Gradle version catalog, and this Python has no tomllib (3.11+)"))
+        return [], {}
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        if problems is not None:
+            problems.append((path, f"not valid TOML ({exc})"))
+        return [], {}
+    versions = {k: _catalog_version(v, {}) for k, v in (data.get("versions") or {}).items()}
+    out = []
+    for alias, lib in (data.get("libraries") or {}).items():
+        coord = ver = None
+        if isinstance(lib, str):
+            parts = lib.split(":")
+            if len(parts) >= 2:
+                coord = ":".join(parts[:2])
+                ver = parts[2] if len(parts) > 2 else None
+        elif isinstance(lib, dict):
+            if lib.get("module"):
+                coord = lib["module"]
+            elif lib.get("group") and lib.get("name"):
+                coord = f"{lib['group']}:{lib['name']}"
+            if "version.ref" in lib:            # tomllib keeps a dotted key nested,
+                ver = versions.get(lib["version.ref"])   # but be safe either way
+            elif "version" in lib:
+                ver = _catalog_version(lib["version"], versions)
+        if not coord:
+            continue
+        # A missing version is managed elsewhere (a BOM, a platform), the
+        # same thing pom.xml's "(inherited)" means.
+        out.append((coord, str(ver) if ver else "(inherited)",
+                    re.sub(r"[-_.]", ".", alias)))
+    bundles = {name: [re.sub(r"[-_.]", ".", a) for a in (members or [])]
+               for name, members in (data.get("bundles") or {}).items()}
+    return out, bundles
+
+
+def catalogs(repo):
+    return sorted(set(_walk(repo, "gradle/*.versions.toml")))
+
+
+def catalog_usage(repo, catalog_path, libraries, bundles):
+    """{accessor: [build files referencing it]} for a catalog's libraries."""
+    prefix = catalog_path.name.split(".")[0]          # libs.versions.toml -> libs
+    texts = {}
+    for build in list(_walk(repo, "*.gradle.kts")) + list(_walk(repo, "*.gradle")):
+        texts[build] = _read(build)
+    used = {}
+    for _coord, _ver, acc in libraries:
+        rx = re.compile(r"\b%s\.%s\b(?!\.[a-z])" % (re.escape(prefix), re.escape(acc)))
+        used[acc] = [b for b, t in texts.items() if rx.search(t)]
+    for bundle, members in bundles.items():
+        rx = re.compile(r"\b%s\.bundles\.%s\b" % (
+            re.escape(prefix), re.escape(re.sub(r"[-_.]", ".", bundle))))
+        users = [b for b, t in texts.items() if rx.search(t)]
+        for acc in members:
+            used.setdefault(acc, [])
+            used[acc] += [b for b in users if b not in used[acc]]
+    return used
+
+
+# ---- NuGet packages.config ---------------------------------------------------
+# The default for every .NET Framework project that was never migrated to
+# PackageReference -- so the repos it misses are the older, central ones.
+def packages_config(path, problems=None):
+    text = _read(path)
+    try:
+        root = ET.fromstring(text)
+        return [(p.get("id"), p.get("version") or "(inherited)")
+                for p in root.iter("package") if p.get("id")]
+    except ET.ParseError as exc:
+        if problems is not None:
+            problems.append((path, f"not valid XML ({exc}); read by a fallback pattern"))
+        out = []
+        for m in re.finditer(r"<package\b([^>]*)>", text):
+            attrs = dict(re.findall(r'(\w+)\s*=\s*"([^"]*)"', m.group(1)))
+            if attrs.get("id"):
+                out.append((attrs["id"], attrs.get("version") or "(inherited)"))
+        return out
+
+
+def central_package_versions(repo):
+    """NuGet central package management: Directory.Packages.props versions."""
+    out = {}
+    for props in _walk(repo, "Directory.Packages.props"):
+        for m in re.finditer(r'<PackageVersion\s+Include="([^"]+)"\s+Version="([^"]+)"',
+                             _read(props)):
+            out.setdefault(m.group(1), m.group(2))
+    return out
+
+
+# ---- what was NOT read -------------------------------------------------------
+# A repo whose manifest cs cannot read used to show zero rows and nothing else:
+# indistinguishable from a repo that declares nothing. Naming the file is the
+# same fail-closed rule as naming the corpus bound on a zero-hit text answer.
+UNREAD_MANIFESTS = (
+    "requirements.txt", "requirements-dev.txt", "setup.py", "setup.cfg", "Pipfile",
+    "go.mod", "Cargo.toml", "Gemfile", "build.sbt", "composer.json", "pubspec.yaml",
+    "Package.swift", "mix.exs", "deps.edn", "project.clj", "*.fsproj", "*.vbproj",
+)
+
+
+def unread_manifests(repo):
+    out = []
+    for pattern in UNREAD_MANIFESTS:
+        out += [p for p in repo.glob(pattern) if p.is_file()]
+    return sorted(out)
 
 
 def publishes_tagged(repo):
@@ -107,45 +363,17 @@ def publishes(repo):
     return sorted({coord for coord, _eco, _path in publishes_tagged(repo)})
 
 
-def consumes(repo):
-    """Coordinates this repo declares a dependency on."""
-    out = []
+def consumes(repo, problems=None):
+    """Coordinates this repo declares a dependency on.
 
-    for gradle in list(repo.glob("build.gradle.kts")) + list(repo.glob("build.gradle")):
-        for m in re.finditer(r'["\']([\w.\-]+:[\w.\-]+):[\w.\-]+["\']', _read(gradle)):
-            out.append(m.group(1))
-
-    for pom in repo.glob("pom.xml"):
-        text = _read(pom)
-        for dep in re.finditer(
-            r"<dependency>\s*<groupId>([^<]+)</groupId>\s*<artifactId>([^<]+)</artifactId>",
-            text,
-        ):
-            out.append(f"{dep.group(1)}:{dep.group(2)}")
-
-    for pkg in list(repo.glob("package.json")) + list(repo.glob("*/package.json")):
-        try:
-            data = json.loads(_read(pkg) or "{}")
-        except json.JSONDecodeError:
-            continue
-        for section in ("dependencies", "devDependencies", "peerDependencies"):
-            out.extend((data.get(section) or {}).keys())
-
-    for pyproject in repo.glob("pyproject.toml"):
-        text = _read(pyproject)
-        block = re.search(r"dependencies\s*=\s*\[(.*?)\]", text, re.S)
-        if block:
-            for m in re.finditer(r'["\']([A-Za-z0-9_.\-]+)', block.group(1)):
-                out.append(m.group(1))
-
-    for csproj in repo.rglob("*.csproj"):
-        for m in re.finditer(r'PackageReference\s+Include="([^"]+)"', _read(csproj)):
-            out.append(m.group(1))
-
-    return sorted(set(out))
+    The same reader as consumes_versioned, minus the version: two parsers of one
+    manifest drift apart, and the edge graph and the version table then
+    disagree about what a repo depends on.
+    """
+    return sorted({coord for coord, _ver, _manifest in consumes_versioned(repo, problems)})
 
 
-def consumes_versioned(repo):
+def consumes_versioned(repo, problems=None):
     """[(coordinate, version, manifest-relative-path)] this repo declares.
 
     consumes() deliberately drops the version, because "who depends on what" does
@@ -178,25 +406,44 @@ def consumes_versioned(repo):
     for pkg in list(repo.glob("package.json")) + list(repo.glob("*/package.json")):
         try:
             data = json.loads(_read(pkg) or "{}")
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            if problems is not None:
+                problems.append((pkg, f"not valid JSON ({exc})"))
             continue
         for section in ("dependencies", "devDependencies", "peerDependencies"):
             for name, ver in (data.get(section) or {}).items():
                 out.append((name, str(ver), rel(pkg)))
 
     for pyproject in repo.glob("pyproject.toml"):
-        block = re.search(r"dependencies\s*=\s*\[(.*?)\]", _read(pyproject), re.S)
-        if block:
-            for m in re.finditer(
-                r'["\']([A-Za-z0-9_.\-]+)\s*([=<>!~^]*\s*[0-9][\w.\-*]*)?', block.group(1)
-            ):
-                out.append((m.group(1), (m.group(2) or "(unpinned)").strip(), rel(pyproject)))
+        for name, ver in pyproject_requirements(pyproject, problems):
+            out.append((name, ver, rel(pyproject)))
 
-    for csproj in repo.rglob("*.csproj"):
+    for catalog in catalogs(repo):
+        libraries, bundles = catalog_libraries(catalog, problems)
+        used = catalog_usage(repo, catalog, libraries, bundles)
+        for coord, ver, acc in libraries:
+            # Every catalog entry is a declaration of this repo, used or not --
+            # but which build file pulls it in is the attribution a reader
+            # needs, so it is named where it can be found.
+            users = used.get(acc) or []
+            where = rel(catalog)
+            if users:
+                where += " <- " + ", ".join(sorted(rel(u) for u in users))
+            else:
+                where += " (no build file references libs.%s)" % acc
+            out.append((coord, ver, where))
+
+    central = central_package_versions(repo)
+    for csproj in _walk(repo, "*.csproj"):
         for m in re.finditer(
             r'PackageReference\s+Include="([^"]+)"(?:\s+Version="([^"]+)")?', _read(csproj)
         ):
-            out.append((m.group(1), m.group(2) or "(inherited)", rel(csproj)))
+            out.append((m.group(1), m.group(2) or central.get(m.group(1)) or "(inherited)",
+                        rel(csproj)))
+
+    for config in _walk(repo, "packages.config"):
+        for pkg_id, ver in packages_config(config, problems):
+            out.append((pkg_id, ver, rel(config)))
 
     return out
 
@@ -215,6 +462,30 @@ def normalize_version(v):
 
 def repos(root):
     return sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
+
+
+def report_unread(root, problems, scanned):
+    """On stderr: manifests that were present and not (fully) read.
+
+    Printed whenever there are any, because a repo that is missing from the
+    answer for this reason looks exactly like a repo that declares nothing.
+    """
+    def rel(p):
+        try:
+            return str(p.relative_to(root))
+        except ValueError:
+            return str(p)
+
+    unread = [p for repo in scanned for p in unread_manifests(repo)]
+    if unread:
+        print(f"! not read: {len(unread)} manifest(s) in a format this does not "
+              f"parse, so what they declare is NOT in this answer:", file=sys.stderr)
+        for p in unread[:20]:
+            print(f"    {rel(p)}", file=sys.stderr)
+        if len(unread) > 20:
+            print(f"    … and {len(unread) - 20} more", file=sys.stderr)
+    for path, why in problems:
+        print(f"! {rel(path)}: {why}", file=sys.stderr)
 
 
 def main():
@@ -290,14 +561,15 @@ def main():
             print(name)
             return 0
         print(f"no fleet repo publishes '{want}' (external dependency?)", file=sys.stderr)
+        report_unread(root, [], repos(root))
         return 1
 
     if cmd == "deps":
         only = sys.argv[3] if len(sys.argv) > 3 else None
-        for repo in repos(root):
-            if only and repo.name != only:
-                continue
-            for coord in consumes(repo):
+        problems = []
+        scanned = [r for r in repos(root) if not only or r.name == only]
+        for repo in scanned:
+            for coord in consumes(repo, problems):
                 # Same resolution as `provides`, so an intra-fleet edge is not
                 # invisible purely because the two manifests spell the name
                 # differently. Without this, any edge involving a
@@ -305,16 +577,18 @@ def main():
                 owner, _note = resolve(coord)
                 if owner and owner != repo.name:
                     print(f"{repo.name}\t->\t{owner}\t({coord})")
+        report_unread(root, problems, scanned)
         return 0
 
     if cmd == "versions":
         want = sys.argv[3] if len(sys.argv) > 3 else None
-        rows = []
+        rows, problems = [], []
         for repo in repos(root):
-            for coord, ver, manifest in consumes_versioned(repo):
+            for coord, ver, manifest in consumes_versioned(repo, problems):
                 if want and coord != want and coord.split(":")[-1] != want:
                     continue
                 rows.append((repo.name, coord, ver, manifest))
+        report_unread(root, problems, repos(root))
         if not rows:
             if want:
                 print(f"no repo in the fleet declares a dependency on '{want}'",
@@ -343,9 +617,10 @@ def main():
             else:
                 flag, detail = "UNPINNED", "no explicit version"
 
-            owner = publisher.get(coord) or next(
-                (o for c, o in publisher.items() if c.split(":")[-1] == coord), None
-            )
+            # The same resolution as `provides`, so a name declared in another
+            # spelling (`Kit Service`) is not labelled external here while
+            # `cs provides` names its publisher.
+            owner, _note = resolve(coord)
             line = f"{coord}\t{flag}\t{detail}"
             line += f"\tpublished by {owner}" if owner else "\texternal"
             if unknown and flag != "UNPINNED":

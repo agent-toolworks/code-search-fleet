@@ -90,6 +90,12 @@ info ""
 _engines_probe=$("$here/cs" engines 2>/dev/null || true)
 
 pass=0; fail=0; failed_ids=()
+# Only a SCORED query can be re-run alone: score-seams scores one cs answer
+# against expectations.json. Every other check is a block of this script, and
+# its failure id is not a score-seams query -- the hint sent you to a tool that
+# answered "unknown query id". So a scored failure records the whole re-run
+# command, and the rest are named as checks of this suite.
+rerun_hints=()
 
 # A check that cannot run is not a check that passed, and it is not a failure
 # either. Both mistakes cost the same thing -- credibility. Failing where a
@@ -148,7 +154,8 @@ check() {
   if printf '%s\n' "$out" | "$here/score-seams" "$id" - >/dev/null 2>&1; then
     ok "$id"; pass=$((pass + 1))
   else
-    err "$id"; fail=$((fail + 1)); failed_ids+=("$id")
+    err "$id"; fail=$((fail + 1))
+    rerun_hints+=("FLEET_ROOT=$FLEET_ROOT $(printf '%q ' "$@")| $here/score-seams $id -")
   fi
 }
 
@@ -184,7 +191,8 @@ else
   if printf '%s\n' "$refs_out" | "$here/score-seams" reserve-implementation - >/dev/null 2>&1; then
     ok "reserve-implementation"; pass=$((pass + 1))
   else
-    err "reserve-implementation"; fail=$((fail + 1)); failed_ids+=("reserve-implementation")
+    err "reserve-implementation"; fail=$((fail + 1))
+    rerun_hints+=("FLEET_ROOT=$FLEET_ROOT $here/cs refs IInventoryStore inventory-api-dotnet src/Domain/IInventoryStore.cs | sed 's|\"\\([a-z]*\\)/|\"inventory-api-dotnet/\\1/|g' | $here/score-seams reserve-implementation -")
   fi
 fi
 
@@ -2193,12 +2201,12 @@ else
       if printf '%s' "$sym_sub" | python3 -c '
 import json, sys
 env = json.load(sys.stdin)
-assert env["scope"] == "SYM-1", env["scope"]
+assert env["scope"] == sys.argv[1], (env["scope"], sys.argv[1])
 assert env["degraded"], "a fleet-index answer to a ticket-scoped question was not degraded"
 assert "FLEET" in env["degraded"], env["degraded"]
 assert "fleet layer" in (env["note"] or ""), env["note"]
 assert env["hits"], "no hits to attach the warning to"
-' 2>/dev/null; then
+' "$(cd "$sym_tick/SYM-1" && pwd -P)" 2>/dev/null; then
         ok "a ticket-scoped question answered from the fleet index says so, as data"
         pass=$((pass + 1))
       else
@@ -3841,8 +3849,53 @@ else
   err "--full-lines did not restore the line ($lp_full bytes), or --source-only kept the .svg"
   fail=$((fail + 1)); failed_ids+=("long-line-flags")
 fi
+
+# The prose-filter notice is about the hits in the answer. It named .svg as
+# "NOT filtered" after --source-only had dropped every .svg hit.
+lp_so_err=$("$here/cs" uses '/api/longprobe-route' --fleet --source-only 2>&1 >/dev/null)
+lp_all_err=$("$here/cs" uses '/api/longprobe-route' --fleet 2>&1 >/dev/null)
+if ! matches "$lp_so_err" 'NOT filtered in: .*\.svg|filtered except: .*\.svg' \
+   && matches "$lp_all_err" 'NOT filtered in: .*\.svg'; then
+  ok "--source-only drops .svg from the 'NOT filtered' notice, which still names it otherwise"
+  pass=$((pass + 1))
+else
+  err "the 'NOT filtered' notice named an extension with no hit left in the answer:"
+  printf '%s\n' "$lp_so_err" | grep -iE 'filtered' | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("source-only-unfiltered-notice")
+fi
 rm -rf "$FLEET_ROOT/web-monorepo-node/docs/arch-longprobe.svg" \
        "$FLEET_ROOT/web-monorepo-node/docs/longprobe-client.ts"
+
+# cs values writes its side tag and the literal it read BETWEEN the address and
+# the raw line. The cut protected only the address and centred on the key in
+# the raw text, so on a long line the [set]/[read] tag and the value -- the
+# whole point of the verb -- were the first bytes to go.
+python3 - "$FLEET_ROOT/web-monorepo-node/docs" <<'PY'
+import sys
+d = sys.argv[1]
+pad = "w" * 2000
+open(d + "/longprobe.tf", "w").write(
+    'notes = "%s"; LONGPROBE_MODE = "strict"\n' % pad)
+open(d + "/longprobe_read.py", "w").write(
+    'NOTE = "%s"; ok = os.environ["LONGPROBE_MODE"] == "strict"\n' % pad)
+PY
+lv_out=$("$here/cs" values LONGPROBE_MODE --fleet 2>/dev/null)
+lv_err=$("$here/cs" values LONGPROBE_MODE --fleet 2>&1 >/dev/null)
+lv_set=$(grep 'longprobe\.tf:' <<< "$lv_out" || true)
+lv_read=$(grep 'longprobe_read\.py:' <<< "$lv_out" || true)
+if [[ -n "$lv_set" && ${#lv_set} -lt 1000 && -n "$lv_read" && ${#lv_read} -lt 1000 ]] \
+   && matches "$lv_set" ':1: \[set\] "strict"   …\([0-9]+ bytes elided\)….*LONGPROBE_MODE' \
+   && matches "$lv_read" ':1: \[read\] compares against: strict   …\([0-9]+ bytes elided\)…' \
+   && matches "$lv_err" '2 line\(s\) longer than [0-9]+ bytes were cut'; then
+  ok "a long cs values line is cut in its raw text, keeping the [set]/[read] tag and the value"
+  pass=$((pass + 1))
+else
+  err "a long cs values line lost its side tag or value to the cut, or the cut went uncounted:"
+  printf '%s\n%s\n' "$lv_set" "$lv_read" | cut -c1-300 | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("values-long-line-tag")
+fi
+rm -f "$FLEET_ROOT/web-monorepo-node/docs/longprobe.tf" \
+      "$FLEET_ROOT/web-monorepo-node/docs/longprobe_read.py"
 rmdir "$FLEET_ROOT/web-monorepo-node/docs" 2>/dev/null || true
 
 # ---- observability definitions are consumers, and they fail silently -------
@@ -4571,6 +4624,31 @@ if [[ $sp_ok -eq 1 ]]; then
     fail=$((fail + 1)); failed_ids+=("scopes-by-path")
   fi
 
+  # A grouping folder holding one stray clone beside real workspaces. Discovery
+  # stopped at the first directory holding a repo, so _old/ was taken to BE the
+  # workspace and OLD-9 inside it could be scoped by path but neither listed
+  # nor named.
+  mkdir -p "$sp_tmp/_tickets/_old/OLD-9"
+  git init --quiet "$sp_tmp/_tickets/_old/scratch" >/dev/null 2>&1 || true
+  git clone --quiet "$FLEET_ROOT/pricing-lib-java" \
+      "$sp_tmp/_tickets/_old/OLD-9/pricing-lib-java" >/dev/null 2>&1 || true
+  if [[ -d "$sp_tmp/_tickets/_old/scratch/.git" && -d "$sp_tmp/_tickets/_old/OLD-9/pricing-lib-java/.git" ]]; then
+    sp_old=$(cd / && "${sp_env[@]}" "$here/cs" scopes 2>&1)
+    if matches "$sp_old" "  1  $sp_tmp/_tickets/_old/OLD-9\$" \
+       && matches "$sp_old" "  1  $sp_tmp/_tickets/_old   \(mixed: 1 repo\(s\) and 1 workspace\(s\) below" \
+       && emits err "searching: $sp_tmp/_tickets/_old/OLD-9 " \
+            "${sp_env[@]}" "$here/cs" text pricing --ticket=OLD-9; then
+      ok "a workspace beside a stray clone in a grouping folder is listed, and its bare id resolves"
+      pass=$((pass + 1))
+    else
+      err "a stray clone in a grouping folder hid the workspaces beside it:"
+      printf '%s\n' "$sp_old" | sed 's/^/    /' >&2
+      fail=$((fail + 1)); failed_ids+=("scopes-stray-clone")
+    fi
+  else
+    skip "stray clone in a grouping folder" "could not create the repos here"
+  fi
+
   # The renamed clone stands in for the fleet repo instead of being added to it.
   sp_rv=$(cd / && "${sp_env[@]}" "$here/cs" uses scope-path-probe --ticket=RV-7 2>&1)
   sp_rv_view=$(cd / && "${sp_env[@]}" "$here/cs" repos --ticket=RV-7 2>/dev/null)
@@ -4783,9 +4861,15 @@ if [[ $skipped -gt 0 ]]; then
 else
   info "${C_BOLD}$pass passed, $fail failed${C_OFF}"
 fi
-for f in "${failed_ids[@]:-}"; do
-  [[ -n "$f" ]] && info "  re-run one: $here/score-seams $f -"
+for f in "${rerun_hints[@]:-}"; do
+  [[ -n "$f" ]] && info "  re-run one: $f"
 done
+if [[ ${#rerun_hints[@]} -gt 0 && $owned_fleet -eq 1 && $keep -eq 0 ]]; then
+  info "  (the fixture fleet is removed on exit: run verify-search --keep to re-run against it)"
+fi
+_checks=""
+for f in "${failed_ids[@]:-}"; do [[ -n "$f" ]] && _checks="${_checks:+$_checks, }$f"; done
+[[ -n "$_checks" ]] && info "  failed checks: $_checks — re-run with $here/verify-search (a check runs as part of the suite)"
 
 rm -rf "$_verify_cache"
 

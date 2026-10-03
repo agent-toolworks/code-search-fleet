@@ -85,7 +85,9 @@ contain — the failure that makes renaming a shared route look safe.
 A workspace is any directory under a **workspace root** (`TICKETS_ROOT`, plus
 any in `WORKSPACE_ROOTS`) whose immediate children are git repos, at any depth:
 `tickets/PROJ-123/`, `tickets/on-call/PROJ-123/` and `reviews/PR-88/` all work,
-and a grouping folder such as `on-call/` is not one. From anywhere inside a
+and a grouping folder such as `on-call/` is not one. A grouping folder that also
+holds a repo directly (a stray clone in `_old/`) is a workspace of its own, and
+the workspaces inside it are still found; `cs scopes` marks it `mixed`. From anywhere inside a
 repo, the workspace is that repo's parent (worktrees included), so `cs` finds it
 from any depth. Run from a repo **outside** every root (and outside the fleet),
 `cs` answers from the fleet and says so, rather than silently answering from

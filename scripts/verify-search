@@ -772,6 +772,19 @@ else
 fi
 refuses "a Kotlin query without a JDK still refuses" "needs java" \
   env PATH="$notc:$PATH" "$here/cs" impls CheckoutResult checkout-service-kotlin
+
+# The refusal is where an agent learns what to do, so it must give advice that
+# works: the JDK version the build asks for (the fixture's is 21), not a fixed
+# `openjdk@21`, and the setup check that explains the rest (#70).
+kt_refusal=$(env PATH="$notc:$PATH" "$here/cs" impls CheckoutResult checkout-service-kotlin 2>&1)
+if matches "$kt_refusal" 'fix: .*(JDK 21|openjdk@21)' && matches "$kt_refusal" 'check: +cs doctor'; then
+  ok "the Kotlin refusal names the build's JDK version and points at cs doctor"
+  pass=$((pass + 1))
+else
+  err "the Kotlin refusal's advice is generic or points elsewhere:"
+  printf '%s\n' "$kt_refusal" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("refusal-kotlin-advice")
+fi
 rm -rf "$notc"
 
 # ---- cs doctor -------------------------------------------------------------
@@ -791,11 +804,14 @@ for _r in kt-svc java-lib; do
   git -C "$doc_fleet/$_r" init -q && git -C "$doc_fleet/$_r" add -A \
     && git -C "$doc_fleet/$_r" -c user.email=t@t -c user.name=t commit -qm init
 done
-doc_out=$(FLEET_ROOT="$doc_fleet" "$here/cs" doctor 2>&1); doc_rc=$?
+# SHELL is pinned so the profile a fix is pasted into is deterministic: a fix
+# has to be a command, not "put it in your shell profile" (#70).
+doc_out=$(SHELL=/bin/bash FLEET_ROOT="$doc_fleet" "$here/cs" doctor 2>&1); doc_rc=$?
 if [[ $doc_rc -eq 3 ]] && matches "$doc_out" '^  ! Kotlin .*JDK 99' \
    && matches "$doc_out" '^  ✓ Java .*no JDK needed' \
-   && matches "$doc_out" 'fix: '; then
-  ok "cs doctor flags a Kotlin build whose JDK is not findable, with a fix, and exits 3"
+   && matches "$doc_out" "echo 'export JAVA_HOME=.*' >> ~/\.bash" \
+   && matches "$doc_out" '^  ✓ cs +[0-9]+\.[0-9]+\.[0-9]+ at .*/cs$'; then
+  ok "cs doctor flags a Kotlin build whose JDK is not findable, with a paste-able fix, and exits 3"
   pass=$((pass + 1))
 else
   err "cs doctor did not flag the unsatisfiable Kotlin toolchain (exit $doc_rc):"

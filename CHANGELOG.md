@@ -8,6 +8,30 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.17.2 — 2026-10-03
+
+- **`docs/install.md`: installing on a new machine, step by step** (#70). It is
+  written so a person or an agent can follow it top to bottom: install the
+  plugins, find the installed copy, `bootstrap`, `fleet.env`, fix what
+  `cs doctor` flags, restart, and check `cs_doctor` over MCP. It adds a
+  troubleshooting table (doctor line → fix), the rule that an agent hands
+  profile edits to the user rather than working around a permission, and
+  "If you already use cs: what changed in 1.16–1.17". The README's install
+  section is now that list in short. Its fleet step writes `fleet.env`, where
+  it had shown a shell `export` the MCP server never sees.
+- Refusals point at `cs doctor`, not `cs engines` (#70). The Kotlin refusal
+  names the JDK version the Gradle build declares and, when that JDK is
+  installed but keg-only, gives the `JAVA_HOME` line rather than
+  `brew install openjdk@21`, which reinstalled a JDK that was already there.
+- `cs doctor` prints fixes ready to paste for the user's shell (`~/.zprofile`
+  for `PATH`, `~/.zshrc` / `~/.bashrc` for `JAVA_HOME`), and Homebrew's
+  `brew shellenv` line when a newer Python is Homebrew's. Its first row names
+  cs's version and the path it runs from, which is how a plugin install finds
+  `cs`. The tokensave row shows graph age, and a footer says which environment
+  the report describes.
+- Skill: install and new-machine triggers, the install procedure, and a note on
+  what changed for agents that learned cs before 1.16.
+
 ## 1.17.1 — 2026-10-03
 
 - The MCP server's standing instructions tell the agent to call `cs_doctor`

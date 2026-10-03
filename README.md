@@ -32,41 +32,36 @@ Committing to one engine means accepting its blind spot permanently.
 
 ### As a Claude Code plugin
 
-Install from the agent-toolworks catalog. It lists this plugin next to
-`fleet-workspace`, which builds and maintains the fleet (see
-[Setting up a fleet](#setting-up-a-fleet)):
+**New machine? Follow [docs/install.md](docs/install.md).** It is a numbered
+checklist, with a check after each step, that a person or an agent can follow
+top to bottom. In short:
 
-```sh
-claude plugin marketplace add agent-toolworks/plugins
-claude plugin install code-search@agent-toolworks
-claude plugin install fleet-workspace@agent-toolworks   # optional: fleet-init, ticket workspaces
-```
+1. Install: `claude plugin marketplace add agent-toolworks/plugins`, then
+   `claude plugin install code-search@agent-toolworks`, and
+   `fleet-workspace@agent-toolworks` for building the fleet.
+2. Find the installed copy (`$CS_ROOT`, a one-liner in the guide), and run
+   `"$CS_ROOT/scripts/bootstrap"` to install the engines.
+3. Put the fleet's location in `~/.config/repo-fleet/fleet.env`, not in a shell
+   `export`, because the MCP server reads that file and not your shell:
+   `export FLEET_ROOT="$HOME/code/fleet"`. `fleet-init` from fleet-workspace
+   writes it and clones the repos.
+4. Run `"$CS_ROOT/scripts/cs" doctor` and fix every line it flags. Each one
+   prints its fix, ready to paste.
+5. Restart Claude Code from a new terminal, ask it to run `cs_doctor`, and check
+   that it agrees with the terminal.
 
 This repo is also its own marketplace, if you want only this plugin:
-
-```sh
-claude plugin marketplace add agent-toolworks/code-search-fleet
-claude plugin install code-search@code-search-fleet
-```
+`claude plugin marketplace add agent-toolworks/code-search-fleet`, then
+`claude plugin install code-search@code-search-fleet`.
 
 **`repo-fleet` is the legacy catalog.** Installs made as `code-search@repo-fleet`
 keep working. The catalog calls itself deprecated, so do not use it for a new
 install. To move an existing install, run
 `claude plugin uninstall code-search@repo-fleet` and then use the commands above.
 
-Then tell it where the fleet is. `~/.config/repo-fleet/fleet.env` is the one
-place both the CLI and the MCP server read (see
-[Setting up a fleet](#setting-up-a-fleet)):
-
-```sh
-export FLEET_ROOT=~/code/fleet     # the directory holding your repos
-```
-
-Then check the setup against your repos: ask Claude to run `cs_doctor`, or run
-`cs doctor` from a terminal (see [What needs what](#what-needs-what)).
-
 Updating, the plugin cache, and running the installed scripts from a terminal:
-[docs/updating.md](docs/updating.md).
+[docs/updating.md](docs/updating.md). **Already using cs?** See
+[what changed in 1.16–1.17](docs/install.md#if-you-already-use-cs-what-changed-in-116117).
 
 ### From a clone
 
@@ -288,6 +283,7 @@ The long version, with the incident behind each behaviour, is
 
 | | |
 |---|---|
+| [docs/install.md](docs/install.md) | **start here on a new machine**: step by step, what `cs doctor` flags and the fix, what changed for existing users |
 | [docs/answer-kinds.md](docs/answer-kinds.md) | every answer kind, refusal and disclosure, and why each exists |
 | [docs/mcp.md](docs/mcp.md) | the MCP server: tool names, calling the tools, the required scope, manual registration |
 | [docs/updating.md](docs/updating.md) | updating the plugin, version mechanics, `CS_ROOT`, the version gate, cutting a release |

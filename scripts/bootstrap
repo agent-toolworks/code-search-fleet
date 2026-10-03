@@ -105,8 +105,8 @@ for entry in "${ENGINES[@]}"; do
 done
 
 # Serena is deliberately last and separable: it is the only engine needing a
-# working toolchain per language (a .NET SDK for C#, a JVM for Java/Kotlin), and
-# it is only reached for `cs impls` and `cs refs`.
+# working toolchain per language (a .NET SDK for C#, a JDK for Kotlin; its Java
+# server ships its own JRE), and it is only reached for `cs impls` and `cs refs`.
 if [[ $minimal -eq 0 ]]; then
   info ""
   if have uvx; then
@@ -123,7 +123,10 @@ if [[ $minimal -eq 0 ]]; then
       if have "$tc" && [[ "$runs" == 1 ]]; then
         ok "  $tc toolchain present"
       else
-        warn "  $tc missing or not runnable — Serena cannot analyse that language;"
+        case "$tc" in
+          dotnet) langs="C#" ;; java) langs="Kotlin (Java needs no JDK)" ;; node) langs="TypeScript/JavaScript" ;;
+        esac
+        warn "  $tc missing or not runnable — Serena cannot analyse $langs;"
         info "      cs impls / cs refs now REFUSE there rather than reporting 'resolved · 0 hit(s)'"
       fi
     done

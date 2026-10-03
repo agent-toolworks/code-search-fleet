@@ -58,7 +58,7 @@ machine can produce is, because that is what the negative results are worth:
 ANSWER KIND  STATUS
 structural   UNAVAILABLE — needs ast-grep or semgrep, and universal-ctags — none installed → cs calls and cs def both refuse; no tokensave → cs callers / cs callees / cs impact refuse
                backs: cs calls, cs def, cs impls (graph fallback), cs callers, cs callees, cs impact
-resolved     DEGRADED — dotnet ok, java MISSING (Java/Kotlin), node ok → cs impls / cs refs refuse for the missing languages
+resolved     DEGRADED — dotnet ok, java MISSING (Kotlin), node ok → cs impls / cs refs refuse for the missing languages
                backs: cs impls, cs refs
 ```
 
@@ -229,8 +229,8 @@ resolves the name to a node id first and refuses when it cannot.
 
 That last one is worth naming, because it is the strongest label on the weakest
 evidence: Serena is a *driver* for a language server, and a language server
-needs a .NET SDK to load a C# project, a JVM for Java or Kotlin, node for
-TypeScript. Without it the server loads nothing and returns nothing, which used
+needs a .NET SDK to load a C# project, a JDK for Kotlin, node for TypeScript
+(the Java server ships its own runtime, so Java needs nothing installed). Without it the server loads nothing and returns nothing, which used
 to print as `answer: resolved via serena (LSP) · 0 hit(s)` — "no reference,
 within that repo", asserted about a repo where nothing had been read. `cs` now
 refuses, and never labels `resolved` a result the server did not affirmatively
@@ -505,8 +505,8 @@ installed.
   to turn that silence into an error.
 - **`resolved` needs a language toolchain, not just Serena.** `cs impls` and
   `cs refs` preflight the repo's dominant language against the runtime its
-  server needs (C# → `dotnet`, Java/Kotlin → `java`, TS/JS → `node`) and refuse
-  when it is absent — **unless** a tokensave graph exists for that repo, in
+  server needs (C# → `dotnet`, Kotlin → `java`, TS/JS → `node`; Java needs
+  none, its server bundles a JRE) and refuse when it is absent — **unless** a tokensave graph exists for that repo, in
   which case `cs impls` falls back to it and labels the answer `structural`.
   The toolchain question is asked about the **symbol's** language (found via the
   ctags index), not the repo's most-common one, so a mostly-JavaScript repo with
@@ -595,11 +595,12 @@ Run both after upgrading any tool. `verify-engines` compares against
 not as a failure. `--update` records a new baseline once you have reviewed the
 results.
 
-It also probes **known limitations**, not just capabilities. tokensave is
-checked for whether its C# `implements` edges have appeared; if a release fixes
-that, the probe reports `IMPROVED` and the routing should be reconsidered.
-Upgrades can remove the reason a tool was rejected, and nothing else would
-notice.
+It can also probe **known limitations**, not just capabilities: a probe that
+starts passing reports `IMPROVED`, because upgrades can remove the reason a tool
+was rejected and nothing else would notice. There are none at present. tokensave's
+C# interface edges were one until the routing was revisited and `cs impls` began
+falling back to the graph; they are now a capability, and losing them is a
+regression. The same goes for Serena's Java server running without a JDK.
 
 ## Reporting results
 

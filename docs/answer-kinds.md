@@ -162,7 +162,7 @@ per-kind view from the same probes:
 ANSWER KIND  STATUS
 structural   UNAVAILABLE — needs ast-grep or semgrep, neither installed → cs calls and cs def both refuse
                backs: cs calls, cs def
-resolved     DEGRADED — dotnet ok, java MISSING (Java/Kotlin), node ok → cs impls / cs refs refuse for the missing languages
+resolved     DEGRADED — dotnet ok, java MISSING (Kotlin), node ok → cs impls / cs refs refuse for the missing languages
                backs: cs impls, cs refs
 textual      ok — ripgrep
                backs: cs text, cs seam

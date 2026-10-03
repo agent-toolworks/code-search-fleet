@@ -8,6 +8,20 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.17.1 — 2026-10-03
+
+- The MCP server's standing instructions tell the agent to call `cs_doctor`
+  when a tool refuses for a missing engine or toolchain, or `cs_impls` /
+  `cs_refs` come back empty. Agents on other machines learn it from the tool
+  list without loading the skill. The skill also triggers on setup questions
+  ("is cs working", "why did cs refuse").
+- `docs/updating.md`: an "After updating: run `cs doctor`" section listing the
+  one-time machine fixes (Python 3.11+ first on `PATH`, `JAVA_HOME` for a
+  keg-only Homebrew JDK, the .NET SDK, tokensave graphs), and why Claude Code
+  must be restarted after changing `PATH` or `JAVA_HOME`.
+- `fixtures/verified-versions.tsv` re-recorded with a JDK 21 present: every
+  probe passes, `java` included.
+
 ## 1.17.0 — 2026-10-03
 
 - `cs doctor` (`cs_doctor` over MCP): checks this machine against this fleet

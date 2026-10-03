@@ -1,6 +1,6 @@
 ---
 name: code-search
-description: Search across many repositories at once — find who calls an endpoint, where a symbol is defined, what implements an interface, which repo publishes a package, who owns the code (CODEOWNERS), and whether every repo pins the same version of a shared package. Use whenever a question spans more than one repo, or when grep alone gives noisy or incomplete answers. Trigger phrases: "who calls", "where is X defined", "what implements", "across the repos", "which repo", "find usages", "is this endpoint dead", "impact of changing", "who owns", "which team owns", "what version of", "version drift".
+description: Search across many repositories at once — find who calls an endpoint, where a symbol is defined, what implements an interface, which repo publishes a package, who owns the code (CODEOWNERS), and whether every repo pins the same version of a shared package. Use whenever a question spans more than one repo, or when grep alone gives noisy or incomplete answers. Trigger phrases: "who calls", "where is X defined", "what implements", "across the repos", "which repo", "find usages", "is this endpoint dead", "impact of changing", "who owns", "which team owns", "what version of", "version drift", "set up code search", "is cs working", "why did cs refuse".
 ---
 
 # Searching a fleet of repositories

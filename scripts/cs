@@ -122,6 +122,9 @@
 #   CS_EXCLUDE_REMOVE directories to STOP skipping, e.g. "bin vendor" when a
 #                    repo keeps hand-written source there (`cs engines` prints
 #                    the effective list)
+#   CS_NO_GRAPH      repos kept without a tokensave graph on purpose, space-
+#                    separated (usually in fleet.env): cs doctor names them
+#                    rather than flagging them, and a graph refusal says why
 #   CS_CTAGS_BIN     use exactly this universal-ctags, and treat ctags as absent
 #                    if it does not validate (cs def then falls back to a
 #                    tokensave graph, or refuses)
@@ -1640,7 +1643,7 @@ have_toolchain() {
   command -v "$1" >/dev/null 2>&1 || return 1
   case "$1" in
     java) java -version >/dev/null 2>&1 ;;   # JDK 8 has no --version
-    *)    "$1" --version >/dev/null 2>&1 ;;
+    *)    "$1" --version </dev/null >/dev/null 2>&1 ;;  # stdin: dotnet writes a keypad escape to the terminal
   esac
 }
 
@@ -1662,14 +1665,13 @@ language_toolchain() {  # <language> -> the binary its language server needs
 # it ("Using bundled JRE for Gradle"), so `cs impls DiscountRule` resolves on a
 # machine whose only java is the macOS stub. Java used to share Kotlin's `java`
 # entry, and on that machine cs refused a query that would have been answered
-# correctly. Kotlin keeps the gate: its server bundles a runtime to RUN, but its
-# Gradle import needs a JDK matching the project's toolchain, and without one it
-# returns `[]` with exit 0 -- the silent negative the gate exists for (#65).
+# correctly. Kotlin is gated by what its BUILD asks for, not by `java` (#72):
+# see kotlin_jdk_unmet.
 runtime_bundled() { [[ "$1" == java ]]; }
 toolchain_languages() {  # <toolchain> -> the languages it unblocks, for messages
   case "$1" in
     dotnet) echo "C#" ;;
-    java)   echo "Kotlin" ;;
+    java)   echo "Kotlin builds that request a Gradle toolchain" ;;
     node)   echo "TypeScript/JavaScript" ;;
   esac
 }
@@ -1689,26 +1691,150 @@ CS_TOOLCHAINS="dotnet java node"
 # refusal used to say `brew install openjdk@21` whatever the build asked for, and
 # even when that JDK was installed already, merely keg-only (#70).
 
-# Toolchain versions a repo's Gradle build declares, one per line, ascending.
+# Toolchain versions a repo's Gradle build declares, one per line, ascending --
+# including those of builds it pulls in with includeBuild(...). A composite
+# build imports as one, so an included build's jvmToolchain(21) is this repo's
+# requirement too: the fixture's Kotlin service includes the sibling
+# pricing-lib-java whenever it is checked out beside it, as in a fleet, and the
+# import failed on THAT build's toolchain while the service itself asked for
+# none (#72).
+gradle_build_dirs() {  # <repo-dir> -> it, and every includeBuild(...) target that exists
+  local s inc
+  printf '%s\n' "$1"
+  while IFS= read -r s; do
+    [[ -n "$s" ]] || continue
+    grep -ohE 'includeBuild\([[:space:]]*["'"'"'][^"'"'"']+' "$s" 2>/dev/null \
+      | sed -E 's/.*["'"'"']//' | while IFS= read -r inc; do
+          [[ -d "${s%/*}/$inc" ]] && printf '%s\n' "${s%/*}/$inc"
+        done
+  done <<< "$(find "$1" -maxdepth 2 \( -name settings.gradle.kts -o -name settings.gradle \) -print 2>/dev/null)"
+}
 kotlin_toolchain_versions() {  # <repo-dir>
-  find "$1" -maxdepth 3 \( -name build.gradle.kts -o -name build.gradle \) \
-       -not -path '*/build/*' -print 2>/dev/null \
-    | xargs grep -ohE '(jvmToolchain|JavaLanguageVersion\.of)\(\s*[0-9]+' 2>/dev/null \
+  local d
+  gradle_build_dirs "$1" | while IFS= read -r d; do
+    find "$d" -maxdepth 3 \( -name build.gradle.kts -o -name build.gradle \) \
+         -not -path '*/build/*' -print 2>/dev/null
+  done | xargs grep -ohE '(jvmToolchain|JavaLanguageVersion\.of)\(\s*[0-9]+' 2>/dev/null \
     | grep -oE '[0-9]+$' | sort -un
 }
 
-# Java majors a Gradle toolchain request can be met from: JAVA_HOME, and on
-# macOS whatever /usr/libexec/java_home has registered. "<major> <where>" lines.
+# The Java major in a JDK home's `release` file ("1.8" counts as 8), or nothing.
+jdk_major_at() {  # <jdk-home>
+  local r
+  for r in "$1/release" "$1/Contents/Home/release"; do
+    [[ -f "$r" ]] || continue
+    sed -n 's/^JAVA_VERSION="\([0-9]*\)\.\{0,1\}\([0-9]*\).*/\1 \2/p' "$r" \
+      | awk '{print ($1 == "1" ? $2 : $1); exit}'
+    return 0
+  done
+  return 1
+}
+
+# Java majors a Gradle toolchain request can be met from: JAVA_HOME, what
+# macOS's java_home has registered, JDKs Gradle provisioned itself, SDKMAN's,
+# and org.gradle.java.installations.paths. "<major> <where>" lines.
 jdks_findable() {
-  local v
-  if [[ -n "${JAVA_HOME:-}" && -f "$JAVA_HOME/release" ]]; then
-    v=$(sed -n 's/^JAVA_VERSION="\([0-9]*\)\.\{0,1\}\([0-9]*\).*/\1 \2/p' "$JAVA_HOME/release" \
-        | awk '{print ($1 == "1" ? $2 : $1)}')
-    [[ -n "$v" ]] && printf '%s JAVA_HOME\n' "$v"
+  local v h p
+  if [[ -n "${JAVA_HOME:-}" ]] && v=$(jdk_major_at "$JAVA_HOME") && [[ -n "$v" ]]; then
+    printf '%s JAVA_HOME\n' "$v"
   fi
   if [[ -x /usr/libexec/java_home ]]; then
     /usr/libexec/java_home -V 2>&1 \
       | awk '/^[[:space:]]+[0-9]/ { split($1, p, "."); print (p[1] == "1" ? p[2] : p[1]), "java_home" }'
+  fi
+  for h in "$HOME"/.gradle/jdks/*/ "$HOME"/.sdkman/candidates/java/*/; do
+    [[ -d "$h" ]] && v=$(jdk_major_at "${h%/}") && [[ -n "$v" ]] && printf '%s %s\n' "$v" "${h%/}"
+  done
+  p=$(sed -n 's/^[[:space:]]*org\.gradle\.java\.installations\.paths[[:space:]]*=[[:space:]]*//p' \
+      "$HOME/.gradle/gradle.properties" 2>/dev/null | tr ',' '\n')
+  while IFS= read -r h; do
+    [[ -n "$h" ]] && v=$(jdk_major_at "$h") && [[ -n "$v" ]] && printf '%s gradle.properties\n' "$v"
+  done <<< "$p"
+  return 0
+}
+
+# Whether the build lets Gradle DOWNLOAD a missing toolchain (the foojay
+# resolver). Then no local JDK is needed, and refusing would block a query that
+# works.
+#
+# A loop, not `find | xargs grep -q`: given no input, BSD xargs runs nothing and
+# exits 0, so a repo with NO settings file read as "provisions toolchains" and
+# every jvmToolchain request in it was waved through on macOS.
+gradle_provisions_toolchains() {  # <repo-dir>
+  local f
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && grep -q 'foojay-resolver' "$f" 2>/dev/null && return 0
+  done <<< "$(find "$1" -maxdepth 2 \( -name settings.gradle.kts -o -name settings.gradle \) -print 2>/dev/null)"
+  return 1
+}
+
+# The lowest Java a Gradle build compiles for WITHOUT requesting a toolchain:
+# sourceCompatibility / targetCompatibility / jvmTarget. A FLOOR, not an exact
+# version, and the Kotlin server's Gradle import meets it from its own bundled
+# runtime: a build pinned this way to 21 imported under JDK 17, 21, 26 and with
+# no JDK at all (#72). Prints the highest such floor, or nothing.
+kotlin_jvm_floor() {  # <repo-dir>
+  find "$1" -maxdepth 3 \( -name build.gradle.kts -o -name build.gradle \) \
+       -not -path '*/build/*' -print 2>/dev/null \
+    | xargs grep -ohE '(VERSION|JVM)_[0-9_]+|(jvmTarget|sourceCompatibility|targetCompatibility)[^"=]*=[[:space:]]*["'"'"']?[0-9.]+' 2>/dev/null \
+    | grep -oE '[0-9][0-9._]*$' | sed -e 's/^1[._]//' -e 's/[._].*//' | sort -n | tail -1
+}
+
+# The Java major the Kotlin server's bundled runtime provides, once Serena has
+# downloaded it; nothing before that.
+kotlin_server_runtime() {
+  local r best=""
+  for r in "$HOME"/.serena/language_servers/static/KotlinLanguageServer/*/kotlin-server-*/jbr; do
+    [[ -d "$r" ]] && best=$(jdk_major_at "$r")
+  done
+  [[ -n "$best" ]] && printf '%s\n' "$best"
+}
+
+# What a Kotlin repo needs from this machine, decided from its build. The
+# Kotlin server runs Gradle on its own runtime, so a build that requests no
+# toolchain needs no JDK at all; one that requests jvmToolchain(N) needs a JDK
+# of EXACTLY N that Gradle can find -- with none, or another version, the
+# import fails and the server answers [] with exit 0 (#65, #72). `java` running
+# says nothing about either, which is why the gate used to refuse the first
+# kind of repo and wave through the silent empty of the second.
+# Prints the major that is needed and not findable, or fails if nothing is.
+kotlin_jdk_unmet() {  # <repo-dir>
+  local want have
+  gradle_provisions_toolchains "$1" && return 1
+  have=$(jdks_findable | awk '{print $1}')
+  for want in $(kotlin_toolchain_versions "$1"); do
+    printf '%s\n' "$have" | grep -qx "$want" || { printf '%s\n' "$want"; return 0; }
+  done
+  return 1
+}
+
+# ---- C# project styles ------------------------------------------------------
+# "<sdk> <framework>": how many of a repo's projects are SDK-style and how many
+# are legacy .NET Framework. Both load in Serena with the .NET SDK installed --
+# on macOS too, contrary to what cs used to say (#72). A Framework project loads
+# WITHOUT its reference assemblies, so types from the framework and from its
+# packages do not resolve, while the repo's own types, implementations and
+# references (across its projects) do.
+csharp_project_styles() {  # <repo-dir>
+  local f sdk=0 fw=0
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    if grep -qE '<Project[^>]*Sdk=' "$f" 2>/dev/null; then sdk=$((sdk + 1)); else fw=$((fw + 1)); fi
+  done <<< "$(find "$1" -name '*.csproj' -not -path '*/bin/*' -not -path '*/obj/*' 2>/dev/null)"
+  printf '%s %s\n' "$sdk" "$fw"
+}
+csharp_framework_note="it loads .NET Framework projects too, without their reference assemblies: framework and package types do not resolve, the repo's own types and references do"
+
+# ---- repos kept without a graph on purpose ------------------------------------
+# CS_NO_GRAPH in fleet.env: repos deliberately left unindexed. Without it a
+# fleet with one such repo could never pass cs doctor, and a gate that always
+# fails teaches people to skip it (#72).
+graph_excluded() { [[ " ${CS_NO_GRAPH:-} " == *" $1 "* ]]; }
+graph_hint() {  # <repo> <dir> -> how to get a graph there, or why there is none
+  if graph_excluded "$1"; then
+    printf '%s is kept without a graph on purpose (CS_NO_GRAPH in fleet.env), so no graph can answer there' "$1"
+  else
+    printf 'build one with: cd %s && tokensave init' "$(real_dir_of "$2" 2>/dev/null || printf '%s' "$2")"
   fi
 }
 
@@ -1741,10 +1867,17 @@ profile_line() {  # <path|env> <line, without single quotes>
   printf "echo '%s' >> %s" "$2" "$f"
 }
 
-toolchain_fix() {  # <toolchain> <repo-dir> -> the fix for this repo
-  local want keg
+toolchain_fix() {  # <toolchain> <repo-dir> [jdk major] -> the fix for this repo
+  local want="${3:-}" keg styles
+  if [[ "$1" == dotnet ]]; then
+    styles=$(csharp_project_styles "$2")
+    if [[ "${styles#* }" -gt 0 ]]; then
+      printf '%s — %s' "$(toolchain_install dotnet)" "$csharp_framework_note"
+      return
+    fi
+  fi
   if [[ "$1" == java ]]; then
-    want=$(kotlin_toolchain_versions "$2" | tail -1)
+    [[ -n "$want" ]] || want=$(kotlin_toolchain_versions "$2" | tail -1)
     if [[ -n "$want" ]] && keg=$(keg_jdk_home "$want"); then
       printf 'JDK %s is installed but keg-only, so nothing finds it: %s' "$want" \
         "$(profile_line env "export JAVA_HOME=\"$keg\"")"
@@ -1834,6 +1967,10 @@ serena_missing_toolchain() {  # <repo-dir> [symbol]
   # The symbol's language first; the repo census only as a fallback.
   if [[ -n "${2:-}" ]]; then lang=$(symbol_language "$2" "$1") || lang=""; fi
   [[ -n "${lang:-}" ]] || lang=$(repo_language "$1") || return 1
+  if [[ "$lang" == kotlin ]]; then
+    kotlin_jdk_unmet "$1" >/dev/null || return 1
+    printf 'java\n'; return 0
+  fi
   tc=$(language_toolchain "$lang") || return 1
   have_toolchain "$tc" && return 1
   printf '%s\n' "$tc"
@@ -1841,10 +1978,11 @@ serena_missing_toolchain() {  # <repo-dir> [symbol]
 
 # ---- the graph fallback ----------------------------------------------------
 # `resolved` needs a language server, and a language server needs its language's
-# toolchain. For .NET Framework C# that toolchain is Windows-only to build, so
-# on macOS or Linux the tier is unavailable BY CONSTRUCTION rather than for want
-# of installing something -- and cs had no answer at all for those repos, not a
-# degraded one.
+# toolchain. Where that toolchain is missing, or cannot be installed, cs had no
+# answer at all for those repos, not a degraded one. (This once said .NET
+# Framework C# was such a case BY CONSTRUCTION on macOS and Linux. It is not:
+# the .NET SDK loads Framework projects there too, minus their reference
+# assemblies -- #72.)
 #
 # A prebuilt graph is the profile the facade is otherwise missing: offline,
 # cross-repo, no per-language toolchain. It is NEVER labelled `resolved`: a
@@ -1995,6 +2133,24 @@ require_serena_toolchain() {
     return 0
   fi
   runtime_bundled "$lang" && return 0
+  local graph_now=""
+  tokensave_graph_at "$dir" && graph_now="
+  answer now:  $repo already has a tokensave graph — rerun with --engine=tokensave (structural)"
+  if [[ "$lang" == kotlin ]]; then
+    local want
+    want=$(kotlin_jdk_unmet "$dir") || return 0
+    die "cs $sub cannot analyse $repo: its Gradle build (or a build it includes) requests a JDK $want toolchain (jvmToolchain), and none is findable here$graph_now
+  the Kotlin server's Gradle import needs exactly that version: with none, or
+  another, it fails and the server answers [] — which cs would have labelled
+  'resolved · 0 hit(s)', the strongest negative in the taxonomy, about a repo
+  where nothing was read. Refusing instead.
+  fix:        $(toolchain_fix java "$dir" "$want")
+  check:      cs doctor   (which JDKs are findable, and the fix)
+  without it, a tokensave graph answers cs impls: $(graph_hint "$repo" "$dir")
+  weaker but available now:
+    cs def $sym $repo      (structural: ctags, matches spelling not identity)
+    cs uses '$sym'         (heuristic: text, comments filtered — cs why heuristic)"
+  fi
   if ! tc=$(language_toolchain "$lang"); then
     # Not preflighted rather than known-good. Said out loud, because silence
     # here would read as "checked and fine".
@@ -2002,16 +2158,14 @@ require_serena_toolchain() {
     return 0
   fi
   have_toolchain "$tc" && return 0
-  die "cs $sub cannot analyse $repo: it is $lang, and Serena needs $tc to load it
+  die "cs $sub cannot analyse $repo: it is $lang, and Serena needs $tc to load it$graph_now
   $tc is missing or not runnable, so the language server would start, fail to
   load the project, and return nothing — which cs would have labelled
   'resolved · 0 hit(s)', the strongest negative in the taxonomy, about a repo
   where nothing was read. Refusing instead.
   fix:        $(toolchain_fix "$tc" "$dir")
   check:      cs doctor   (what this machine lacks for the fleet's languages, and the fix)
-  where the toolchain cannot be installed at all (.NET Framework is Windows-only
-  to build), a tokensave graph answers cs impls without one:
-    cd $repo && tokensave init$(tokensave_graph_at "$dir" && printf '\n  NOTE: %s already has a graph — rerun with --engine=tokensave to use it' "$repo")
+  without the toolchain, a tokensave graph answers cs impls: $(tokensave_graph_at "$dir" && printf 'rerun with --engine=tokensave' || graph_hint "$repo" "$dir")
   weaker but available now:
     cs def $sym $repo      (structural: ctags, matches spelling not identity)
     cs uses '$sym'         (heuristic: text, comments filtered — cs why heuristic)"
@@ -3099,6 +3253,44 @@ fleet-init --config --fleet-root <dir> --tickets-root <dir>   (fleet-workspace p
   fi
 }
 
+# The roots --ticket= and an MCP scope resolve against (#59). A configured root
+# that does not exist, or holds no workspace, used to surface only as a refusal
+# in the middle of a task (#72). The default TICKETS_ROOT is not flagged when
+# absent: nobody asked for it.
+doc_workspaces() {
+  local r all n mixed names="" parts="" bad="" w v inner
+  all=$(discover_workspaces 2>/dev/null)
+  local IFS_save="$IFS" configured=""
+  [[ "${TICKETS_ROOT_DEFAULTED:-0}" -eq 1 && ! -d "$TICKETS_ROOT" ]] || configured="$TICKETS_ROOT"
+  IFS=:; for r in ${WORKSPACE_ROOTS:-}; do [[ -n "$r" ]] && configured="$configured
+$r"; done; IFS="$IFS_save"
+  if [[ -z "$(printf '%s' "$configured" | grep .)" ]]; then
+    doc_row ok workspaces "none configured — every scope is the fleet (TICKETS_ROOT / WORKSPACE_ROOTS in fleet.env add ticket workspaces)"
+    return
+  fi
+  while IFS= read -r r; do
+    [[ -n "$r" ]] || continue
+    if [[ ! -d "$r" ]]; then bad="$bad $r"; continue; fi
+    r=$(real_path_of "$r" 2>/dev/null || printf '%s' "$r")
+    n=0; mixed=0; names=""
+    while IFS=$'\t' read -r _ w; do
+      [[ -n "$w" ]] || continue
+      n=$((n + 1)); inner=0
+      while IFS=$'\t' read -r _ v; do [[ "$v" == "$w"/* ]] && inner=$((inner + 1)); done <<< "$all"
+      [[ $inner -gt 0 ]] && { mixed=$((mixed + 1)); names="$names${w#"$r"/}
+"; }
+    done <<< "$(printf '%s\n' "$all" | awk -F'\t' -v r="$r" '$1 == r')"
+    parts="${parts:+$parts; }$n under $r$([[ $mixed -gt 0 ]] && printf ' (%s mixed: %s)' "$mixed" "$(printf '%s' "$names" | doc_list)")"
+  done <<< "$configured"
+  if [[ -n "$bad" ]]; then
+    doc_row warn workspaces "configured but missing:$bad${parts:+; $parts}" \
+      "--ticket= and an MCP scope under it refuse mid-task" \
+      "create it (mkdir -p$bad), or correct TICKETS_ROOT / WORKSPACE_ROOTS in ~/.config/repo-fleet/fleet.env"
+  else
+    doc_row ok workspaces "$parts"
+  fi
+}
+
 doc_engines() {
   if have_rg_binary; then doc_row ok ripgrep "$(rg --version 2>/dev/null | head -1)"
   else doc_row warn ripgrep "absent — text search uses POSIX grep" \
@@ -3115,8 +3307,11 @@ doc_engines() {
   # Coverage, not presence: a graph answers only in the repo it was built in, and
   # a repo without one is a place cs callers/callees/impact cannot see into.
   if have_tokensave; then
-    local d total=0 without="" n_with=0 age oldest="" aged=""
+    local d total=0 without="" n_with=0 age oldest="" aged="" excluded=""
     for d in $(real_dirs); do
+      # Kept graph-less on purpose (CS_NO_GRAPH): named, not counted, not a fix.
+      if graph_excluded "${d##*/}" && ! tokensave_graph_at "$d"; then excluded="$excluded${d##*/}
+"; continue; fi
       total=$((total + 1))
       if tokensave_graph_at "$d"; then
         n_with=$((n_with + 1))
@@ -3128,6 +3323,7 @@ doc_engines() {
     # Age, because a graph answers about the code as of its last sync -- the
     # one engine here that can be confidently wrong rather than merely blind.
     [[ -n "$oldest" ]] && aged=", oldest last synced $(format_age "$oldest") ago"
+    [[ -n "$excluded" ]] && aged="$aged; without one on purpose (CS_NO_GRAPH): $(printf '%s' "$excluded" | doc_list)"
     if [[ $total -eq 0 ]]; then
       doc_row ok tokensave "installed (no repos to graph yet)"
     elif [[ $n_with -eq $total ]]; then
@@ -3135,7 +3331,8 @@ doc_engines() {
     else
       doc_row warn tokensave "graphs in $n_with of $total repo(s)$aged" \
         "cs callers / callees / impact refuse in the rest, and cs impls has no fallback there where a toolchain is missing: $(printf '%s' "$without" | doc_list)" \
-        "cd <repo> && tokensave init   (in each; fleet-workspace's refresh keeps them synced)"
+        "cd <repo> && tokensave init   (in each; fleet-workspace's refresh keeps them synced)
+or, for a repo left unindexed on purpose: add it to CS_NO_GRAPH=\"…\" in ~/.config/repo-fleet/fleet.env"
     fi
   else
     doc_row warn tokensave "MISSING" \
@@ -3187,10 +3384,20 @@ doc_languages() {
     n=$(printf '%s\n' "$repos" | grep -c .)
     case "$lang" in
       csharp)
-        if have_toolchain dotnet; then doc_row ok C# "$n repo(s) — dotnet $(dotnet --version 2>/dev/null | head -1)"
-        else doc_row warn C# "$n repo(s) — no runnable dotnet" \
-          "cs impls / cs refs refuse in: $(printf '%s\n' "$repos" | doc_list) (cs impls falls back to a tokensave graph where one exists)" \
-          "$(have brew && echo 'brew install --cask dotnet-sdk' || echo 'install the .NET SDK (https://dot.net)')"; fi ;;
+        local cd st fw_repos="" n_fw n_graph=0
+        while IFS= read -r cd; do
+          [[ -n "$cd" ]] || continue
+          st=$(csharp_project_styles "$cd")
+          [[ "${st#* }" -gt 0 ]] && fw_repos="$fw_repos${cd##*/}
+"
+          tokensave_graph_at "$cd" && n_graph=$((n_graph + 1))
+        done <<< "$(printf '%s\n' "$census" | awk -F'\t' '$1 == "csharp" { print $3 }')"
+        n_fw=$(printf '%s' "$fw_repos" | grep -c . || true)
+        if have_toolchain dotnet; then
+          doc_row ok C# "$n repo(s) — dotnet $(dotnet --version </dev/null 2>/dev/null | head -1)$([[ $n_fw -gt 0 ]] && printf '; %s with .NET Framework projects, which load without their reference assemblies (framework and package types do not resolve, the repo'"'"'s own do)' "$n_fw")"
+        else doc_row warn C# "$n repo(s) — no runnable dotnet$([[ $n_fw -gt 0 ]] && printf ' (%s with .NET Framework projects)' "$n_fw")" \
+          "cs impls / cs refs refuse in: $(printf '%s\n' "$repos" | doc_list); cs impls answers from a tokensave graph instead in $n_graph of them (--engine=tokensave)" \
+          "$(have brew && echo 'brew install --cask dotnet-sdk' || echo 'install the .NET SDK (https://dot.net)')$([[ $n_fw -gt 0 ]] && printf ' — %s' "$csharp_framework_note")"; fi ;;
       java)
         doc_row ok Java "$n repo(s) — no JDK needed: Serena's Java server ships its own runtime" ;;
       kotlin) doc_kotlin "$repos" "$n" "$(printf '%s\n' "$census" | awk -F'\t' '$1 == "kotlin" { print $3 }')" ;;
@@ -3210,49 +3417,67 @@ doc_languages() {
 # a JDK of the wrong version gets past it -- that case is named separately,
 # because there the cost is an empty answer rather than a refusal.
 doc_kotlin() {  # <repo names> <count> <repo dirs>, one per line
-  local repos="$1" n="$2" dirs="$3" r want wants="" have_majors miss="" where keg fixes="" home
-  while IFS= read -r r; do
-    [[ -n "$r" ]] || continue
-    wants="$wants$(kotlin_toolchain_versions "$r")
-"
-  done <<< "$dirs"
-  wants=$(printf '%s' "$wants" | grep -v '^$' | sort -un | tr '\n' ' ' | sed 's/ $//')
+  local n="$2" dirs="$3" d name want floor rt have_majors
+  local tc_repos="" tc_wants="" unmet_repos="" unmet_wants="" free_repos="" high_repos="" high_floor=""
   have_majors=$(jdks_findable)
-  if [[ -z "$wants" ]]; then
-    if have_toolchain java; then doc_row ok Kotlin "$n repo(s) — no toolchain version declared; java runs"
-    else doc_row warn Kotlin "$n repo(s) — no runnable JDK" \
-      "cs impls / cs refs refuse in: $(printf '%s\n' "$repos" | doc_list)" \
-      "$(doc_install openjdk 'a JDK'), then set JAVA_HOME to it (Homebrew's openjdk is keg-only)"; fi
-    return
-  fi
-  for want in $wants; do
-    where=$(printf '%s\n' "$have_majors" | awk -v m="$want" '$1 == m { print $2; exit }')
-    [[ -n "$where" ]] && continue
-    miss="$miss $want"
-    if keg=$(keg_jdk_home "$want"); then
-      fixes="${fixes}JDK $want is installed but keg-only, so nothing finds it. Paste:
+  rt=$(kotlin_server_runtime)
+  while IFS= read -r d; do
+    [[ -n "$d" ]] || continue
+    name=${d##*/}
+    want=$(kotlin_toolchain_versions "$d" | tail -1)
+    if [[ -n "$want" ]]; then
+      tc_repos="$tc_repos$name
+"; tc_wants="$tc_wants $want"
+      if want=$(kotlin_jdk_unmet "$d"); then
+        unmet_repos="$unmet_repos$name
+"; unmet_wants="$unmet_wants $want"
+      fi
+    else
+      floor=$(kotlin_jvm_floor "$d")
+      if [[ -n "$floor" && -n "$rt" && "$floor" -gt "$rt" ]]; then
+        high_repos="$high_repos$name
+"; high_floor="$floor"
+      else
+        free_repos="$free_repos$name
+"
+      fi
+    fi
+  done <<< "$dirs"
+  tc_wants=$(printf '%s\n' $tc_wants | sort -un | tr '\n' ' ' | sed 's/ $//')
+  unmet_wants=$(printf '%s\n' $unmet_wants | sort -un | tr '\n' ' ' | sed 's/ $//')
+
+  local parts="" n_free n_tc
+  n_free=$(printf '%s' "$free_repos" | grep -c . || true)
+  n_tc=$(printf '%s' "$tc_repos" | grep -c . || true)
+  [[ "$n_free" -gt 0 ]] && parts="$n_free request no Gradle toolchain: the Kotlin server builds them on its own runtime${rt:+ (Java $rt)}, no JDK needed"
+  if [[ -z "$unmet_wants" ]]; then
+    if [[ "$n_tc" -gt 0 ]]; then
+      local where
+      where=$(for want in $tc_wants; do printf '%s\n' "$have_majors" | awk -v m="$want" '$1 == m { print $2; exit }'; done | grep . | sort -u | paste -sd, - | sed 's/,/, /g')
+      parts="${parts:+$parts; }$n_tc request JDK $tc_wants: ${where:+findable ($where)}${where:-Gradle downloads it (foojay resolver)}"
+    fi
+    doc_row ok Kotlin "$n repo(s) — ${parts:-nothing to check}"
+  else
+    local fixes="" keg home
+    for want in $unmet_wants; do
+      if keg=$(keg_jdk_home "$want"); then
+        fixes="${fixes}JDK $want is installed but keg-only, so nothing finds it. Paste:
   $(profile_line env "export JAVA_HOME=\"$keg\"")
 "
-    else
-      home=$(have brew && echo "\$(brew --prefix openjdk@$want)/libexec/openjdk.jdk/Contents/Home" || echo "<its home>")
-      fixes="${fixes}$(doc_install "openjdk@$want" "a JDK $want"), then paste:
+      else
+        home=$(have brew && echo "\$(brew --prefix openjdk@$want)/libexec/openjdk.jdk/Contents/Home" || echo "<its home>")
+        fixes="${fixes}$(doc_install "openjdk@$want" "a JDK $want"), then paste:
   $(profile_line env "export JAVA_HOME=\"$home\"")
 "
-    fi
-  done
-  if [[ -z "$miss" ]]; then
-    doc_row ok Kotlin "$n repo(s) — JDK $wants findable ($(for want in $wants; do printf '%s\n' "$have_majors" | awk -v m="$want" '$1 == m { print $2; exit }'; done | sort -u | paste -sd, - | sed 's/,/, /g'))"
-    return
-  fi
-  fixes="${fixes}then open a new terminal, and restart Claude Code so the MCP server sees it"
-  if have_toolchain java; then
-    doc_row warn Kotlin "$n repo(s) — the builds ask for JDK$miss, and none is findable" \
-      "cs impls / cs refs return EMPTY rather than refusing in: $(printf '%s\n' "$repos" | doc_list) — java runs, so cs's own check passes, but the server's Gradle import fails and it answers []" \
+      fi
+    done
+    fixes="${fixes}then open a new terminal, and restart Claude Code so the MCP server sees it"
+    doc_row warn Kotlin "$n repo(s) — builds (or builds they include) request a JDK $unmet_wants toolchain (jvmToolchain), and none is findable${parts:+; $parts}" \
+      "cs impls / cs refs refuse in: $(printf '%s' "$unmet_repos" | doc_list) — the server's Gradle import needs exactly that version, and answers [] without it" \
       "$fixes"
-  else
-    doc_row warn Kotlin "$n repo(s) — the builds ask for JDK$miss, and none is findable" \
-      "cs impls / cs refs refuse in: $(printf '%s\n' "$repos" | doc_list)" "$fixes"
   fi
+  [[ -n "$high_repos" ]] && doc_row unchecked Kotlin "$(printf '%s' "$high_repos" | doc_list) compile for Java $high_floor, above the Kotlin server's own runtime (Java $rt) — not verified to import"
+  return 0
 }
 
 cmd_doctor() {
@@ -3264,6 +3489,7 @@ cmd_doctor() {
   doc_row ok cs "$(tr -d '[:space:]' < "$lib_dir/../../VERSION" 2>/dev/null || printf '?') at $(cd "$lib_dir/.." && pwd)/cs"
   doc_python
   doc_fleet
+  doc_workspaces
   printf '\n%sengines%s\n' "$D_B" "$D_O"
   doc_engines
   if [[ -d "$root" && "$(count_fleet_repos)" -gt 0 ]]; then
@@ -4215,7 +4441,7 @@ cmd_impls() {
     tokensave)
       have_tokensave || die "--engine=tokensave requested but tokensave is not installed"
       tokensave_graph_at "$repo_dir" || die "--engine=tokensave requested but $2 has no graph
-  build one with: cd $repo_dir && tokensave init"
+  $(graph_hint "$2" "$repo_dir")"
       impls_via_tokensave "$1" "$2" "$repo_dir" forced
       return $? ;;
     serena|lsp) ;;   # the default route below
@@ -4378,7 +4604,7 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
   else
     die "cs $mode: $repo has no tokensave graph, so the question was never asked
   nothing was read there, and an empty answer would read as 'nothing calls this'
-  build one with: cd $(real_dir_of "$dir") && tokensave init
+  $(graph_hint "$repo" "$dir")
   weaker but available now: cs uses '$sym', cs def $sym $repo"
   fi
 

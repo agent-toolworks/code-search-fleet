@@ -197,7 +197,7 @@ toolchain_runs() {
   command -v "$1" >/dev/null 2>&1 || return 1
   case "$1" in
     java) java -version >/dev/null 2>&1 ;;
-    *)    "$1" --version >/dev/null 2>&1 ;;
+    *)    "$1" --version </dev/null >/dev/null 2>&1 ;;
   esac
 }
 
@@ -237,6 +237,67 @@ probe_serena_java() {
   fi
 }
 
+# Two more claims cs's gate rests on (#72), probed for the same reason as Java's:
+# each is a fact about a third party's packaging, and a release can change it.
+#
+# A Kotlin build that requests NO Gradle toolchain -- pinned only by
+# sourceCompatibility / jvmTarget -- imports on the Kotlin server's own runtime,
+# so cs lets it through without a JDK. The fixture's service is copied OUTSIDE
+# the fleet, so the sibling build it includes (and that build's toolchain) is
+# absent, and its jvmToolchain is swapped for a floor; JAVA_HOME is unset.
+probe_serena_kotlin_floor() {
+  have uvx || { record serena-kt "-" capability MISSING "uv not installed"; return; }
+  local ver tmp out
+  ver=$(version_of serena)
+  tmp=$(mktemp -d)
+  cp -R "$F/checkout-service-kotlin" "$tmp/svc" && rm -rf "$tmp/svc/.serena" "$tmp/svc/build"
+  printf 'rootProject.name = "svc"\n' > "$tmp/svc/settings.gradle.kts"
+  sed -i.bak 's/jvmToolchain(21)/compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21) }/' \
+    "$tmp/svc/build.gradle.kts" && rm -f "$tmp/svc/build.gradle.kts.bak"
+  out=$(env -u JAVA_HOME python3 "$here/lib/serena_call.py" "$tmp/svc" find_implementations \
+        '{"name_path":"CheckoutResult","relative_path":"src/main/kotlin/com/acme/checkout/CheckoutService.kt"}' 2>/dev/null)
+  rm -rf "$tmp"
+  if printf '%s' "$out" | grep -q 'CheckoutResult/Accepted'; then
+    record serena-kt "${ver:-unknown}" capability PASS "Kotlin with no Gradle toolchain request, on the server's own runtime (no JAVA_HOME)"
+  else
+    record serena-kt "${ver:-unknown}" capability FAIL "a Kotlin build with no toolchain request did not resolve without JAVA_HOME — cs lets those through, so check the server's bundled runtime"
+  fi
+}
+
+# Legacy .NET Framework projects load with the .NET SDK on macOS and Linux too,
+# minus their reference assemblies; cs used to call that impossible. Two
+# non-SDK-style projects, the second implementing the first's interface through
+# a ProjectReference, because the cross-project edge is what a real solution has.
+probe_serena_csharp_framework() {
+  have uvx || { record serena-netfx "-" capability MISSING "uv not installed"; return; }
+  toolchain_runs dotnet || { record serena-netfx "-" capability SKIP "no .NET SDK here (see the dotnet row)"; return; }
+  local ver tmp out p
+  ver=$(version_of serena)
+  tmp=$(mktemp -d)
+  mkdir -p "$tmp/sln/Lims" "$tmp/sln/Web"
+  for p in Lims Web; do
+    {
+      printf '<?xml version="1.0" encoding="utf-8"?>\n<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
+      printf '  <PropertyGroup><OutputType>Library</OutputType><AssemblyName>%s</AssemblyName><TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion></PropertyGroup>\n' "$p"
+      printf '  <ItemGroup><Reference Include="System" /><Compile Include="*.cs" /></ItemGroup>\n'
+      [[ $p == Web ]] && printf '  <ItemGroup><ProjectReference Include="..\\Lims\\Lims.csproj" /></ItemGroup>\n'
+      printf '  <Import Project="$(MSBuildToolsPath)\\Microsoft.CSharp.targets" />\n</Project>\n'
+    } > "$tmp/sln/$p/$p.csproj"
+  done
+  printf 'namespace Lims { public interface IStore { string Get(int id); } }\n' > "$tmp/sln/Lims/IStore.cs"
+  printf 'namespace Lims { public class SqlStore : IStore { public string Get(int id) { return ""; } } }\n' > "$tmp/sln/Lims/SqlStore.cs"
+  printf 'namespace Web { public class AuditedStore : Lims.IStore { public string Get(int id) { return ""; } } }\n' > "$tmp/sln/Web/AuditedStore.cs"
+  git -C "$tmp/sln" init -q 2>/dev/null
+  out=$(python3 "$here/lib/serena_call.py" "$tmp/sln" find_implementations \
+        '{"name_path":"Lims/IStore","relative_path":"Lims/IStore.cs"}' 2>/dev/null)
+  rm -rf "$tmp"
+  if printf '%s' "$out" | grep -q 'SqlStore' && printf '%s' "$out" | grep -q 'AuditedStore'; then
+    record serena-netfx "${ver:-unknown}" capability PASS ".NET Framework projects load with the .NET SDK, across a ProjectReference"
+  else
+    record serena-netfx "${ver:-unknown}" capability FAIL "legacy .NET Framework projects did not resolve — cs tells Framework repos the SDK works, so re-check"
+  fi
+}
+
 # Serena is a DRIVER for a language server, and a language server needs its
 # language's toolchain. `probe_serena` above only exercises C#, so on a machine
 # with a .NET SDK and no JDK it reports PASS while `cs impls` on every Kotlin
@@ -254,7 +315,7 @@ probe_toolchains() {
   for tc in dotnet java node; do
     case "$tc" in
       dotnet) langs="C#" ;;
-      java)   langs="Kotlin" ;;
+      java)   langs="Kotlin builds that request a Gradle toolchain" ;;
       node)   langs="TypeScript/JavaScript" ;;
     esac
     if ! command -v "$tc" >/dev/null 2>&1; then
@@ -263,7 +324,7 @@ probe_toolchains() {
     fi
     case "$tc" in
       java) ver=$(java -version 2>&1 | head -1 | awk -F'"' '{print $2}') ;;
-      *)    ver=$("$tc" --version 2>/dev/null | head -1) ;;
+      *)    ver=$("$tc" --version </dev/null 2>/dev/null | head -1) ;;
     esac
     if [[ -n "$ver" ]]; then
       record "$tc" "$ver" capability PASS "Serena can analyse $langs"
@@ -347,6 +408,8 @@ probe_semgrep
 probe_tokensave
 probe_serena
 probe_serena_java
+probe_serena_kotlin_floor
+probe_serena_csharp_framework
 probe_toolchains
 
 # ---- report -----------------------------------------------------------------

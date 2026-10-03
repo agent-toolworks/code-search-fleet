@@ -770,14 +770,46 @@ else
   ok "a Java query is not refused for a missing JDK (its server bundles a JRE)"
   pass=$((pass + 1))
 fi
-refuses "a Kotlin query without a JDK still refuses" "needs java" \
-  env PATH="$notc:$PATH" "$here/cs" impls CheckoutResult checkout-service-kotlin
+# Kotlin is gated by what its BUILD asks for (#72): a jvmToolchain(N) build
+# needs a findable JDK of exactly N, and that includes the toolchain of a build
+# it pulls in with includeBuild; a build pinned only by sourceCompatibility /
+# jvmTarget needs no JDK at all (the Kotlin server builds it on its own
+# runtime). JDK 99 is findable on no machine, which makes these deterministic.
+tc_fleet=$(mktemp -d)/fleet
+mkdir -p "$tc_fleet"/{kt-svc,kt-floor,kt-comp,java-lib,cs-legacy}/src
+printf 'kotlin { jvmToolchain(99) }\n' > "$tc_fleet/kt-svc/build.gradle.kts"
+printf 'java { sourceCompatibility = JavaVersion.VERSION_21 }\n' > "$tc_fleet/kt-floor/build.gradle.kts"
+printf 'plugins { kotlin("jvm") }\n' > "$tc_fleet/kt-comp/build.gradle.kts"
+printf 'includeBuild("../kt-svc")\n' > "$tc_fleet/kt-comp/settings.gradle.kts"
+printf '<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n  <PropertyGroup><TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion></PropertyGroup>\n</Project>\n' \
+  > "$tc_fleet/cs-legacy/Legacy.csproj"
+for i in 1 2 3; do
+  for _r in kt-svc kt-floor kt-comp; do printf 'interface K%s\n' "$i" > "$tc_fleet/$_r/src/K$i.kt"; done
+  printf 'class J%s {}\n' "$i" > "$tc_fleet/java-lib/src/J$i.java"
+  printf 'class C%s {}\n' "$i" > "$tc_fleet/cs-legacy/src/C$i.cs"
+done
+for _r in kt-svc kt-floor kt-comp java-lib cs-legacy; do
+  git -C "$tc_fleet/$_r" init -q && git -C "$tc_fleet/$_r" add -A \
+    && git -C "$tc_fleet/$_r" -c user.email=t@t -c user.name=t commit -qm init
+done
+refuses "a Kotlin build requesting an unfindable JDK refuses" "requests a JDK 99 toolchain" \
+  env PATH="$notc:$PATH" FLEET_ROOT="$tc_fleet" "$here/cs" impls K1 kt-svc
+refuses "a toolchain requested by an included build counts" "requests a JDK 99 toolchain" \
+  env PATH="$notc:$PATH" FLEET_ROOT="$tc_fleet" "$here/cs" impls K1 kt-comp
+floor_out=$(env PATH="$notc:$PATH" FLEET_ROOT="$tc_fleet" "$here/cs" impls K1 kt-floor 2>&1)
+if matches "$floor_out" 'requests a JDK|needs java'; then
+  err "a Kotlin build with no toolchain request was refused for want of a JDK it does not need:"
+  printf '%s\n' "$floor_out" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("toolchain-kotlin-floor-gated")
+else
+  ok "a Kotlin build pinned only by sourceCompatibility is not refused for a missing JDK"
+  pass=$((pass + 1))
+fi
 
 # The refusal is where an agent learns what to do, so it must give advice that
-# works: the JDK version the build asks for (the fixture's is 21), not a fixed
-# `openjdk@21`, and the setup check that explains the rest (#70).
-kt_refusal=$(env PATH="$notc:$PATH" "$here/cs" impls CheckoutResult checkout-service-kotlin 2>&1)
-if matches "$kt_refusal" 'fix: .*(JDK 21|openjdk@21)' && matches "$kt_refusal" 'check: +cs doctor'; then
+# works: the JDK version the build asks for, and the setup check (#70).
+kt_refusal=$(env PATH="$notc:$PATH" FLEET_ROOT="$tc_fleet" "$here/cs" impls K1 kt-svc 2>&1)
+if matches "$kt_refusal" 'fix: .*(JDK 99|openjdk@99)' && matches "$kt_refusal" 'check: +cs doctor'; then
   ok "the Kotlin refusal names the build's JDK version and points at cs doctor"
   pass=$((pass + 1))
 else
@@ -793,32 +825,59 @@ rm -rf "$notc"
 # for JDK 99 cannot be satisfied on any machine, so the flag is deterministic;
 # it is the case where `java` may well run, cs's own gate passes, and the
 # server answers [] -- the one only a version check can catch.
-doc_fleet=$(mktemp -d)/fleet
-mkdir -p "$doc_fleet/kt-svc/src" "$doc_fleet/java-lib/src"
-printf 'kotlin { jvmToolchain(99) }\n' > "$doc_fleet/kt-svc/build.gradle.kts"
-for i in 1 2 3; do
-  printf 'class K%s\n' "$i" > "$doc_fleet/kt-svc/src/K$i.kt"
-  printf 'class J%s {}\n' "$i" > "$doc_fleet/java-lib/src/J$i.java"
-done
-for _r in kt-svc java-lib; do
-  git -C "$doc_fleet/$_r" init -q && git -C "$doc_fleet/$_r" add -A \
-    && git -C "$doc_fleet/$_r" -c user.email=t@t -c user.name=t commit -qm init
-done
+doc_fleet="$tc_fleet"
 # SHELL is pinned so the profile a fix is pasted into is deterministic: a fix
 # has to be a command, not "put it in your shell profile" (#70).
 doc_out=$(SHELL=/bin/bash FLEET_ROOT="$doc_fleet" "$here/cs" doctor 2>&1); doc_rc=$?
 if [[ $doc_rc -eq 3 ]] && matches "$doc_out" '^  ! Kotlin .*JDK 99' \
+   && matches "$doc_out" 'refuse in: kt-comp, kt-svc' \
+   && matches "$doc_out" '1 request no Gradle toolchain' \
    && matches "$doc_out" '^  ✓ Java .*no JDK needed' \
+   && matches "$doc_out" 'C# .*\.NET Framework' \
    && matches "$doc_out" "echo 'export JAVA_HOME=.*' >> ~/\.bash" \
    && matches "$doc_out" '^  ✓ cs +[0-9]+\.[0-9]+\.[0-9]+ at .*/cs$'; then
-  ok "cs doctor flags a Kotlin build whose JDK is not findable, with a paste-able fix, and exits 3"
+  ok "cs doctor reads Kotlin by build (toolchain, included build, floor) and C# by project style, with paste-able fixes"
   pass=$((pass + 1))
 else
   err "cs doctor did not flag the unsatisfiable Kotlin toolchain (exit $doc_rc):"
   printf '%s\n' "$doc_out" | sed 's/^/    /' >&2
   fail=$((fail + 1)); failed_ids+=("doctor-kotlin-jdk")
 fi
-rm -rf "$(dirname "$doc_fleet")"
+
+# A repo kept without a graph ON PURPOSE must not keep the doctor from coming
+# clean, and a refusal there must name the setting rather than prescribe
+# `tokensave init` (#72).
+if command -v tokensave >/dev/null 2>&1; then
+  ng_out=$(CS_NO_GRAPH="java-lib cs-legacy" FLEET_ROOT="$doc_fleet" "$here/cs" doctor 2>&1)
+  ng_ref=$(CS_NO_GRAPH="java-lib" FLEET_ROOT="$doc_fleet" "$here/cs" callers J1 java-lib 2>&1)
+  if matches "$ng_out" 'tokensave .*without one on purpose \(CS_NO_GRAPH\): (java-lib, cs-legacy|cs-legacy, java-lib)' \
+     && matches "$ng_out" 'graphs in 0 of 3 repo' && matches "$ng_ref" 'CS_NO_GRAPH'; then
+    ok "CS_NO_GRAPH repos are named, not counted as missing graphs, and their refusals say why"
+    pass=$((pass + 1))
+  else
+    err "CS_NO_GRAPH was not honoured:"
+    printf '%s\n%s\n' "$ng_out" "$ng_ref" | grep -iE 'tokensave|graph' | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("doctor-no-graph")
+  fi
+else
+  skip "CS_NO_GRAPH in cs doctor" "tokensave not installed"
+fi
+
+# Workspace roots (#59): a configured root that does not exist is flagged, and
+# a workspace that also holds workspaces is named as mixed.
+ws_tmp=$(mktemp -d)
+mkdir -p "$ws_tmp/tickets/T-1" "$ws_tmp/tickets/_old/T-0"
+for _w in T-1 _old/T-0 _old; do git init -q "$ws_tmp/tickets/$_w/svc"; done
+ws_out=$(TICKETS_ROOT="$ws_tmp/tickets" WORKSPACE_ROOTS="$ws_tmp/missing" FLEET_ROOT="$doc_fleet" "$here/cs" doctor 2>&1)
+if matches "$ws_out" '! workspaces +configured but missing: .*/missing' && matches "$ws_out" '1 mixed: _old'; then
+  ok "cs doctor checks workspace roots: a missing one is flagged, a mixed folder named"
+  pass=$((pass + 1))
+else
+  err "cs doctor's workspace row:"
+  printf '%s\n' "$ws_out" | grep -A2 workspaces | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("doctor-workspaces")
+fi
+rm -rf "$ws_tmp" "$(dirname "$tc_fleet")"
 
 # A setup too broken to search is what the doctor is FOR, so it must still run
 # there -- and its status says "flagged", not "did not run" (1).

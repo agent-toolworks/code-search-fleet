@@ -38,7 +38,7 @@ flagged and 3 when something is.
 
 Each flagged line prints its fix, ready to paste. The common ones, with what to
 do, are in [install.md](install.md#what-cs-doctor-says-and-what-to-do), and
-[what changed in 1.16–1.17](install.md#if-you-already-use-cs-what-changed-in-116117)
+[what changed](install.md#if-you-already-use-cs-what-changed)
 is there too.
 
 Java needs nothing; its language server ships its own runtime (since 1.16.2;

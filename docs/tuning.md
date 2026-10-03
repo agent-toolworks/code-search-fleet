@@ -18,6 +18,7 @@
 | `CS_EXCLUDE_REMOVE` | directories to **stop** skipping |
 | `CS_JSON` | `1` for one JSON object on stdout instead of result lines (same as `--porcelain`) |
 | `CS_CTAGS_BIN` | use exactly this universal-ctags; if it does not validate, ctags counts as absent |
+| `CS_NO_GRAPH` | repos kept without a tokensave graph on purpose, space-separated, usually in `fleet.env`. `cs doctor` names them instead of flagging them, and a graph refusal there says why instead of prescribing `tokensave init` |
 
 `CS_TAGS_TTL` is scoped, because the two scopes `cs def` answers for have
 different keys rather than different tastes in staleness. The symbol index is

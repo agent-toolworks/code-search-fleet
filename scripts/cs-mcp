@@ -532,8 +532,9 @@ def scope_flag(scope):
             "answering anyway would search the fleet (main) while you may be asking "
             "about a ticket branch — with nothing in the answer to reveal the "
             "substitution.\n"
-            '  Pass scope="fleet" to search the fleet on purpose, or a ticket '
-            "workspace id. Call cs_scopes for the valid values."
+            "  Pass the absolute path of the workspace you are working in (your "
+            "own working directory, at any depth, works), or scope=\"fleet\" to "
+            "search the fleet on purpose. cs_scopes lists the workspaces by path."
         )
     scope = scope.strip()
     if scope == "fleet":

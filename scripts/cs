@@ -64,6 +64,8 @@
 #   cs which                       decision table: which subcommand answers what
 #   cs why    [kind]               what each kind of answer cannot see
 #   cs engines                     which engines are available here
+#   cs doctor                      check this machine against this fleet: what
+#                                  will not work, what it costs, and the fix
 #
 #   --fleet          ignore the ticket workspace, search the fleet only
 #   --ticket=<path>  search a workspace layered over the fleet: the absolute
@@ -137,6 +139,7 @@
 #      dependency, an unknown workspace, unparseable arguments). Nothing was
 #      searched, so nothing was ruled out.
 #   2  the query ran honestly and found nothing.
+#   3  cs doctor only: the check ran and flagged something to fix.
 #
 # 1 and 2 are opposite facts and used to be the same number, which left the
 # distinction available only as prose on stderr -- so `if cs uses "$x"; then …`
@@ -889,7 +892,7 @@ detect_ticket() {
   # caller is standing in a repo, they are almost certainly working in it, and
   # answering from main without a word is the failure this exists to stop.
   # Not for the subcommands that explain the tool: they search nothing.
-  case "${sub:-}" in which|why|engines|scopes|-h|--help|help) return 1 ;; esac
+  case "${sub:-}" in which|why|engines|doctor|scopes|-h|--help|help) return 1 ;; esac
   if top=$(git_toplevel_of "$here_p"); then
     local froot; froot=$(real_path_of "$root" 2>/dev/null || true)
     if [[ -z "$froot" ]] || ! under "$top" "$froot"; then
@@ -2901,6 +2904,304 @@ cmd_engines() {
   # claimed to have refused is exactly the confusion the codes exist to remove.
   # What is missing is in the report; the status says only that reporting worked.
   [[ $n -gt 0 ]] || warn "no optional engine is installed — see the ANSWER KIND table above for what that costs"
+  return 0
+}
+
+# ---- cs doctor -------------------------------------------------------------
+# `cs engines` answers "what is installed". The question someone setting up
+# actually has is different -- "will cs work on MY repos, and if not, what do I
+# run?" -- and three of its answers were discoverable only by a query going
+# wrong (#67): a python3 too old for tomllib with a newer one later on PATH; a
+# Kotlin repo whose Gradle toolchain wants a JDK that is installed but invisible
+# (Homebrew's openjdk is keg-only, so /usr/bin/java stays the stub); and which
+# language needs which toolchain at all. So this reads the FLEET as well as the
+# machine: a toolchain is flagged only for a language the fleet contains, and
+# every line that is not ok says what it costs and what fixes it.
+#
+# Exit 0 when nothing is flagged and 3 when something is, so a script can gate
+# on it. Not 1: the diagnosis RAN, and 1 means "did not run". Not 2 either --
+# that is a query's honest zero.
+CS_EXIT_DOCTOR_FLAGGED=3
+doc_n_ok=0; doc_n_flagged=0; doc_n_unchecked=0
+
+doc_row() {  # <ok|warn|bad|unchecked> <item> <status> [costs] [fix, may be multi-line]
+  local mark line
+  case "$1" in
+    ok)        mark="${D_G}✓${D_O}"; doc_n_ok=$((doc_n_ok + 1)) ;;
+    warn)      mark="${D_Y}!${D_O}"; doc_n_flagged=$((doc_n_flagged + 1)) ;;
+    bad)       mark="${D_R}✗${D_O}"; doc_n_flagged=$((doc_n_flagged + 1)) ;;
+    unchecked) mark="?";             doc_n_unchecked=$((doc_n_unchecked + 1)) ;;
+  esac
+  printf '  %s %-12s %s\n' "$mark" "$2" "$3"
+  [[ -n "${4:-}" ]] && printf '    %-12s costs: %s\n' "" "$4"
+  if [[ -n "${5:-}" ]]; then
+    local first=1
+    while IFS= read -r line; do
+      if [[ $first -eq 1 ]]; then printf '    %-12s fix:   %s\n' "" "$line"; first=0
+      else printf '    %-12s        %s\n' "" "$line"; fi
+    done <<< "$5"
+  fi
+  return 0
+}
+
+doc_install() {  # <brew formula> <what to install, for other platforms>
+  if have brew; then printf 'brew install %s' "$1"; else printf 'install %s' "$2"; fi
+}
+
+# "a, b, c (+N more)" from one name per line.
+doc_list() {
+  local all n
+  all=$(grep -v '^$' || true)
+  n=$(printf '%s' "$all" | grep -c '' || true)
+  if [[ "$n" -le 4 ]]; then printf '%s' "$all" | paste -sd, - | sed 's/,/, /g'
+  else printf '%s' "$all" | head -4 | paste -sd, - | sed 's/,/, /g'; printf ' (+%s more)' "$((n - 4))"; fi
+}
+
+doc_python() {
+  if ! have_python3; then
+    doc_row bad python3 "MISSING or not runnable — REQUIRED" \
+      "uses, provides, deps, publishes, versions, owns, impls, refs, fields and symbol mode all refuse" \
+      "$(have brew && echo 'brew install python' || echo 'install Python 3.11+ from your OS')"
+    return
+  fi
+  local p v c cv better=""
+  p=$(command -v python3)
+  v=$(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)
+  if python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    doc_row ok python3 "$v ($p)"
+    return
+  fi
+  # A newer one is often installed already and merely later on PATH -- the
+  # case that was found, and the cheapest fix there is.
+  for c in $(type -ap python3 2>/dev/null) /opt/homebrew/bin/python3 /usr/local/bin/python3 \
+           /home/linuxbrew/.linuxbrew/bin/python3; do
+    [[ -x "$c" && "$c" != "$p" ]] || continue
+    cv=$("$c" -c 'import sys; sys.exit(1) if sys.version_info < (3, 11) else print("%d.%d" % sys.version_info[:2])' 2>/dev/null) || continue
+    better="$c ($cv)"; break
+  done
+  doc_row warn python3 "$v ($p) — older than 3.11, so no tomllib" \
+    "cs versions / cs deps cannot read Gradle version catalogs (gradle/libs.versions.toml), and read pyproject.toml with a fallback scanner" \
+    "$([[ -n "$better" ]] && echo "${better} is already installed: put ${better%%/python3*} before ${p%/python3} on PATH" \
+       || echo "install Python 3.11+ ($(have brew && echo 'brew install python' || echo 'from your OS')) and put it first on PATH")"
+}
+
+doc_fleet() {
+  local n
+  if [[ ! -d "$root" ]]; then
+    doc_row bad fleet "root does not exist: $root" "every search command refuses" \
+"set FLEET_ROOT in ~/.config/repo-fleet/fleet.env (or the environment)
+fleet-init --config --fleet-root <dir> --tickets-root <dir>   (fleet-workspace plugin)"
+    return
+  fi
+  local strays
+  n=$(count_fleet_repos)
+  strays=$(non_repo_entries | doc_list)
+  if [[ "$n" -eq 0 ]]; then
+    doc_row bad fleet "no repositories in $root${strays:+ (not git repos, so not searched: $strays)}" \
+      "every search command refuses" \
+      "clone some: fleet-init --clone <owner/repo> ...   (or git clone into $root)"
+  else
+    doc_row ok fleet "$n repo(s) in $root${strays:+; not git repos, so not searched: $strays}"
+  fi
+}
+
+doc_engines() {
+  if have_rg_binary; then doc_row ok ripgrep "$(rg --version 2>/dev/null | head -1)"
+  else doc_row warn ripgrep "absent — text search uses POSIX grep" \
+    "cs text / seam / uses are much slower on a large fleet" "$(doc_install ripgrep ripgrep)"; fi
+  if have ast-grep || have semgrep; then
+    doc_row ok structural "$(have ast-grep && printf 'ast-grep' || printf 'semgrep')$(have ast-grep && have semgrep && printf ' (semgrep as fallback)')"
+  else doc_row warn structural "neither ast-grep nor semgrep" "cs calls refuses" "$(doc_install ast-grep ast-grep)"; fi
+  if ctags_bin >/dev/null; then doc_row ok ctags "universal-ctags ($(ctags_bin))"
+  else doc_row warn ctags "no universal-ctags" "cs def falls back to tokensave graphs, or refuses where there are none" \
+    "$(doc_install universal-ctags universal-ctags)"; fi
+  if have git; then doc_row ok git "$(git --version 2>/dev/null)"
+  else doc_row warn git "MISSING" "cs history is unavailable" "$(doc_install git git)"; fi
+
+  # Coverage, not presence: a graph answers only in the repo it was built in, and
+  # a repo without one is a place cs callers/callees/impact cannot see into.
+  if have_tokensave; then
+    local d total=0 without="" n_with=0
+    for d in $(real_dirs); do
+      total=$((total + 1))
+      if tokensave_graph_at "$d"; then n_with=$((n_with + 1)); else without="$without${d##*/}
+"; fi
+    done
+    if [[ $total -eq 0 ]]; then
+      doc_row ok tokensave "installed (no repos to graph yet)"
+    elif [[ $n_with -eq $total ]]; then
+      doc_row ok tokensave "graphs in all $total repo(s)"
+    else
+      doc_row warn tokensave "graphs in $n_with of $total repo(s)" \
+        "cs callers / callees / impact refuse in the rest, and cs impls has no fallback there where a toolchain is missing: $(printf '%s' "$without" | doc_list)" \
+        "cd <repo> && tokensave init   (in each; fleet-workspace's refresh keeps them synced)"
+    fi
+  else
+    doc_row warn tokensave "MISSING" \
+      "cs callers / callees / impact refuse (nothing else answers a call graph), and cs impls loses its fallback where a toolchain is missing" \
+      "$(doc_install aovestdipaperino/tap/tokensave 'tokensave (github.com/aovestdipaperino/tokensave)')"
+  fi
+  if have uvx; then doc_row ok serena "via uvx — language servers download on first use"
+  else doc_row warn serena "uv MISSING, so Serena cannot run" "cs impls / cs refs refuse in every repo" "$(doc_install uv uv)"; fi
+  if have "${CS_FORGE_BIN:-gh}"; then
+    if have_forge; then doc_row ok forge "${CS_FORGE_BIN:-gh}, authenticated"
+    else doc_row warn forge "${CS_FORGE_BIN:-gh} present but not authenticated" "cs gaps refuses" "${CS_FORGE_BIN:-gh} auth login"; fi
+  else doc_row warn forge "no gh" "cs gaps refuses: a fleet-scoped negative cannot be checked org-wide" "$(doc_install gh 'the GitHub CLI'), then gh auth login"; fi
+  if timeout_bin >/dev/null; then doc_row ok timeout "$(command -v "$(timeout_bin)")"
+  else doc_row warn timeout "no timeout(1)" "a hung language server hangs cs with no upper bound" "$(doc_install coreutils coreutils)"; fi
+}
+
+# Languages a repo is written in: each with at least 3 tracked files, so one
+# stray build script does not make a Kotlin repo "need node".
+doc_repo_languages() {  # <repo-dir>
+  local n ext lang
+  { git -C "$1" ls-files 2>/dev/null || find "$1" -type f 2>/dev/null; } \
+    | sed -n 's/.*\.\([A-Za-z0-9_]\{1,\}\)$/\1/p' | tr 'A-Z' 'a-z' | sort | uniq -c \
+    | while read -r n ext; do
+        [[ "$n" -ge 3 ]] || continue
+        lang=$(ext_language "$ext") && printf '%s\n' "$lang"
+      done | sort -u
+}
+
+# Java majors a Gradle toolchain request can be met from: JAVA_HOME, and on
+# macOS whatever /usr/libexec/java_home has registered. "<major> <where>" lines.
+doc_jdks_findable() {
+  local v
+  if [[ -n "${JAVA_HOME:-}" && -f "$JAVA_HOME/release" ]]; then
+    v=$(sed -n 's/^JAVA_VERSION="\([0-9]*\)\.\{0,1\}\([0-9]*\).*/\1 \2/p' "$JAVA_HOME/release" \
+        | awk '{print ($1 == "1" ? $2 : $1)}')
+    [[ -n "$v" ]] && printf '%s JAVA_HOME\n' "$v"
+  fi
+  if [[ -x /usr/libexec/java_home ]]; then
+    /usr/libexec/java_home -V 2>&1 \
+      | awk '/^[[:space:]]+[0-9]/ { split($1, p, "."); print (p[1] == "1" ? p[2] : p[1]), "java_home" }'
+  fi
+}
+
+# A JDK of that major that is installed but that nothing can see -- Homebrew's
+# openjdk formulae are keg-only. Prints its home, or fails.
+doc_keg_jdk() {  # <major>
+  local h r
+  for h in /opt/homebrew/opt/openjdk@"$1" /opt/homebrew/opt/openjdk /usr/local/opt/openjdk@"$1" \
+           /usr/local/opt/openjdk /home/linuxbrew/.linuxbrew/opt/openjdk@"$1" /home/linuxbrew/.linuxbrew/opt/openjdk; do
+    for r in "$h/libexec/openjdk.jdk/Contents/Home" "$h/libexec"; do
+      [[ -f "$r/release" ]] || continue
+      grep -q "^JAVA_VERSION=\"$1[.\"]" "$r/release" && { printf '%s\n' "$r"; return 0; }
+    done
+  done
+  return 1
+}
+
+doc_languages() {
+  local d lang census langs repos n
+  census=$(for d in $(real_dirs); do
+             doc_repo_languages "$d" | awk -v n="${d##*/}" -v d="$d" '{ print $0 "\t" n "\t" d }'
+           done)
+  langs=$(printf '%s\n' "$census" | cut -f1 | grep -v '^$' | sort -u)
+  if [[ -z "$langs" ]]; then
+    doc_row unchecked languages "no source languages recognised in the fleet"
+    return
+  fi
+  have uvx || info "  (uv is missing, so no language below can be resolved until it is installed)"
+  local label
+  for lang in $langs; do
+    case "$lang" in
+      csharp) label="C#" ;; java) label="Java" ;; kotlin) label="Kotlin" ;; python) label="Python" ;;
+      typescript) label="TypeScript" ;; javascript) label="JavaScript" ;; go) label="Go" ;; rust) label="Rust" ;;
+      *) label="$lang" ;;
+    esac
+    repos=$(printf '%s\n' "$census" | awk -F'\t' -v l="$lang" '$1 == l { print $2 }')
+    n=$(printf '%s\n' "$repos" | grep -c .)
+    case "$lang" in
+      csharp)
+        if have_toolchain dotnet; then doc_row ok C# "$n repo(s) — dotnet $(dotnet --version 2>/dev/null | head -1)"
+        else doc_row warn C# "$n repo(s) — no runnable dotnet" \
+          "cs impls / cs refs refuse in: $(printf '%s\n' "$repos" | doc_list) (cs impls falls back to a tokensave graph where one exists)" \
+          "$(have brew && echo 'brew install --cask dotnet-sdk' || echo 'install the .NET SDK (https://dot.net)')"; fi ;;
+      java)
+        doc_row ok Java "$n repo(s) — no JDK needed: Serena's Java server ships its own runtime" ;;
+      kotlin) doc_kotlin "$repos" "$n" "$(printf '%s\n' "$census" | awk -F'\t' '$1 == "kotlin" { print $3 }')" ;;
+      typescript|javascript)
+        if have_toolchain node; then doc_row ok "$label" "$n repo(s) — node $(node --version 2>/dev/null)"
+        else doc_row warn "$label" "$n repo(s) — no runnable node" \
+          "cs impls / cs refs refuse in: $(printf '%s\n' "$repos" | doc_list)" "$(doc_install node node)"; fi ;;
+      *)
+        doc_row unchecked "$label" "$n repo(s) — cs does not check what Serena needs for $label; an empty cs impls / refs there is not proof of absence" ;;
+    esac
+  done
+}
+
+# Kotlin is the one whose requirement is a VERSION, not a binary: its server's
+# Gradle import needs a JDK at the toolchain version the build declares, and
+# without one it answers [] (#65). cs's own gate only sees that `java` runs, so
+# a JDK of the wrong version gets past it -- that case is named separately,
+# because there the cost is an empty answer rather than a refusal.
+doc_kotlin() {  # <repo names> <count> <repo dirs>, one per line
+  local repos="$1" n="$2" dirs="$3" r want wants="" have_majors miss="" where keg fixes="" home
+  while IFS= read -r r; do
+    [[ -n "$r" ]] || continue
+    want=$(find "$r" -maxdepth 3 \
+             \( -name build.gradle.kts -o -name build.gradle \) -not -path '*/build/*' -print 2>/dev/null \
+           | xargs grep -ohE '(jvmToolchain|JavaLanguageVersion\.of)\(\s*[0-9]+' 2>/dev/null \
+           | grep -oE '[0-9]+$' | sort -un)
+    wants="$wants$want
+"
+  done <<< "$dirs"
+  wants=$(printf '%s' "$wants" | grep -v '^$' | sort -un | tr '\n' ' ' | sed 's/ $//')
+  have_majors=$(doc_jdks_findable)
+  if [[ -z "$wants" ]]; then
+    if have_toolchain java; then doc_row ok Kotlin "$n repo(s) — no toolchain version declared; java runs"
+    else doc_row warn Kotlin "$n repo(s) — no runnable JDK" \
+      "cs impls / cs refs refuse in: $(printf '%s\n' "$repos" | doc_list)" \
+      "$(doc_install openjdk 'a JDK'), then set JAVA_HOME to it (Homebrew's openjdk is keg-only)"; fi
+    return
+  fi
+  for want in $wants; do
+    where=$(printf '%s\n' "$have_majors" | awk -v m="$want" '$1 == m { print $2; exit }')
+    [[ -n "$where" ]] && continue
+    miss="$miss $want"
+    if keg=$(doc_keg_jdk "$want"); then
+      fixes="${fixes}JDK $want is installed but invisible: export JAVA_HOME=\"$keg\"
+"
+    else
+      home=$(have brew && echo "\$(brew --prefix openjdk@$want)/libexec/openjdk.jdk/Contents/Home" || echo "<its home>")
+      fixes="${fixes}$(doc_install "openjdk@$want" "a JDK $want"), then: export JAVA_HOME=\"$home\"
+"
+    fi
+  done
+  if [[ -z "$miss" ]]; then
+    doc_row ok Kotlin "$n repo(s) — JDK $wants findable ($(for want in $wants; do printf '%s\n' "$have_majors" | awk -v m="$want" '$1 == m { print $2; exit }'; done | sort -u | paste -sd, - | sed 's/,/, /g'))"
+    return
+  fi
+  fixes="${fixes}put it in your shell profile, and restart Claude Code so the MCP server sees it"
+  if have_toolchain java; then
+    doc_row warn Kotlin "$n repo(s) — the builds ask for JDK$miss, and none is findable" \
+      "cs impls / cs refs return EMPTY rather than refusing in: $(printf '%s\n' "$repos" | doc_list) — java runs, so cs's own check passes, but the server's Gradle import fails and it answers []" \
+      "$fixes"
+  else
+    doc_row warn Kotlin "$n repo(s) — the builds ask for JDK$miss, and none is findable" \
+      "cs impls / cs refs refuse in: $(printf '%s\n' "$repos" | doc_list)" "$fixes"
+  fi
+}
+
+cmd_doctor() {
+  if [[ -t 1 ]]; then D_G=$'\033[32m'; D_Y=$'\033[33m'; D_R=$'\033[31m'; D_B=$'\033[1m'; D_O=$'\033[0m'
+  else D_G=''; D_Y=''; D_R=''; D_B=''; D_O=''; fi
+  printf '%ssetup%s\n' "$D_B" "$D_O"
+  doc_python
+  doc_fleet
+  printf '\n%sengines%s\n' "$D_B" "$D_O"
+  doc_engines
+  if [[ -d "$root" && "$(count_fleet_repos)" -gt 0 ]]; then
+    printf '\n%slanguages in this fleet%s — what cs impls / cs refs need for each\n' "$D_B" "$D_O"
+    doc_languages
+  fi
+  printf '\n%s%s ok, %s to fix, %s not checked%s\n' "$D_B" "$doc_n_ok" "$doc_n_flagged" "$doc_n_unchecked" "$D_O"
+  if [[ $doc_n_flagged -gt 0 ]]; then
+    printf 'each "!" or "✗" line above says what it costs and how to fix it; exit %s\n' "$CS_EXIT_DOCTOR_FLAGGED"
+    return "$CS_EXIT_DOCTOR_FLAGGED"
+  fi
+  printf 'everything cs can check here works\n'
   return 0
 }
 
@@ -5178,12 +5479,12 @@ CS_SUB="$sub"; CS_QUERY="${1:-}"
 # diagnosis. `cs engines` is deliberately in the exempt list and prints the root
 # it would have used.
 case "$sub" in
-  which|why|-h|--help|help) ;;
+  which|why|doctor|-h|--help|help) ;;
   engines|scopes) [[ -d "$root" ]] || warn "fleet root does not exist yet: $root" ;;
   *) require_fleet ;;
 esac
 build_view
-case "$sub" in engines|which|why|repos|scopes|-h|--help|help) ;; *) announce_view ;; esac
+case "$sub" in engines|doctor|which|why|repos|scopes|-h|--help|help) ;; *) announce_view ;; esac
 case "$sub" in
   text)    cmd_text "$@" ;;
   seam)    cmd_seam "$@" ;;
@@ -5212,6 +5513,7 @@ case "$sub" in
   which)   cmd_which ;;
   why)     cmd_why "$@" ;;
   engines) cmd_engines ;;
+  doctor)  cmd_doctor ;;
   -h|--help|help) usage 0 ;;
   *) err "unknown subcommand: $sub"; usage 1 ;;
 esac

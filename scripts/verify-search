@@ -774,6 +774,47 @@ refuses "a Kotlin query without a JDK still refuses" "needs java" \
   env PATH="$notc:$PATH" "$here/cs" impls CheckoutResult checkout-service-kotlin
 rm -rf "$notc"
 
+# ---- cs doctor -------------------------------------------------------------
+# The setup gaps that were found only by a query going wrong (#67) must be
+# named up front, per language the fleet actually holds. A Kotlin build asking
+# for JDK 99 cannot be satisfied on any machine, so the flag is deterministic;
+# it is the case where `java` may well run, cs's own gate passes, and the
+# server answers [] -- the one only a version check can catch.
+doc_fleet=$(mktemp -d)/fleet
+mkdir -p "$doc_fleet/kt-svc/src" "$doc_fleet/java-lib/src"
+printf 'kotlin { jvmToolchain(99) }\n' > "$doc_fleet/kt-svc/build.gradle.kts"
+for i in 1 2 3; do
+  printf 'class K%s\n' "$i" > "$doc_fleet/kt-svc/src/K$i.kt"
+  printf 'class J%s {}\n' "$i" > "$doc_fleet/java-lib/src/J$i.java"
+done
+for _r in kt-svc java-lib; do
+  git -C "$doc_fleet/$_r" init -q && git -C "$doc_fleet/$_r" add -A \
+    && git -C "$doc_fleet/$_r" -c user.email=t@t -c user.name=t commit -qm init
+done
+doc_out=$(FLEET_ROOT="$doc_fleet" "$here/cs" doctor 2>&1); doc_rc=$?
+if [[ $doc_rc -eq 3 ]] && matches "$doc_out" '^  ! Kotlin .*JDK 99' \
+   && matches "$doc_out" '^  ✓ Java .*no JDK needed' \
+   && matches "$doc_out" 'fix: '; then
+  ok "cs doctor flags a Kotlin build whose JDK is not findable, with a fix, and exits 3"
+  pass=$((pass + 1))
+else
+  err "cs doctor did not flag the unsatisfiable Kotlin toolchain (exit $doc_rc):"
+  printf '%s\n' "$doc_out" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("doctor-kotlin-jdk")
+fi
+rm -rf "$(dirname "$doc_fleet")"
+
+# A setup too broken to search is what the doctor is FOR, so it must still run
+# there -- and its status says "flagged", not "did not run" (1).
+doc_out=$(FLEET_ROOT="/nonexistent-fleet-$$" "$here/cs" doctor 2>&1); doc_rc=$?
+if [[ $doc_rc -eq 3 ]] && matches "$doc_out" '✗ fleet +root does not exist'; then
+  ok "cs doctor runs without a fleet, names it as the problem, and exits 3 rather than 1"
+  pass=$((pass + 1))
+else
+  err "cs doctor without a fleet root: exit $doc_rc"
+  fail=$((fail + 1)); failed_ids+=("doctor-no-fleet")
+fi
+
 # stdout is the scoreable result stream and nothing else. A zero-hit `cs uses`
 # still prints the comment-only mentions it excluded, which is useful context
 # and NOT a result -- on stdout those lines were indistinguishable from hits, so
@@ -4263,14 +4304,15 @@ else
 fi
 
 # The design constraint, asserted structurally rather than hoped for. Every
-# tool that READS the fleet must make scope required; the four that only
+# tool that READS the fleet must make scope required; the ones that only
 # explain the tool must not, or asking "which scopes exist" would itself need
-# a scope.
+# a scope. cs_doctor reads the fleet, like cs_engines, to report on the SETUP
+# (which languages need which toolchain), not to answer about a workspace.
 if printf '%s' "$mcp_list" | CS_HERE="$here" python3 -c '
 import json, sys
 lines = [l for l in sys.stdin.read().splitlines() if l.startswith("meta\t")]
 tools = json.loads(lines[1].split("\t", 1)[1])["tools"]
-explainers = {"cs_scopes", "cs_which", "cs_why", "cs_engines"}
+explainers = {"cs_scopes", "cs_which", "cs_why", "cs_engines", "cs_doctor"}
 for t in tools:
     req = t["inputSchema"].get("required", [])
     if t["name"] in explainers:
@@ -4853,10 +4895,10 @@ else
   fail=$((fail + 1)); failed_ids+=("qlog-write-failure")
 fi
 
-# cs which/why/engines/scopes/repos cannot hit, miss or refuse. Logging them
-# would dilute every rate in the file, refusal rate most of all.
+# cs which/why/engines/doctor/scopes/repos cannot hit, miss or refuse. Logging
+# them would dilute every rate in the file, refusal rate most of all.
 qlog_meta="$qlog_dir/meta.jsonl"
-for _s in which why engines scopes repos; do
+for _s in which why engines doctor scopes repos; do
   CS_LOG="$qlog_meta" "$here/cs" "$_s" >/dev/null 2>&1
 done
 if [[ ! -s "$qlog_meta" ]]; then

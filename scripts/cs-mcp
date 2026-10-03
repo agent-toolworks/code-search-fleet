@@ -464,6 +464,13 @@ TOOLS = [
      "Which engines and answer kinds are available on this machine — what the "
      "negatives here are worth.",
      []),
+
+    ("cs_doctor", "doctor",
+     "Check this machine against this fleet: for every engine, and for every "
+     "language the fleet contains, whether cs can answer here, what it costs "
+     "when it cannot, and the fix. Use it when a tool refused, or when an "
+     "empty cs_impls / cs_refs needs explaining.",
+     []),
 ]
 
 # The one place a search facade can tell an agent it exists, from inside the
@@ -621,7 +628,7 @@ def run_cs(sub, argv, scope=None, flags=()):
 # straight to stdout rather than through cs's result buffer, so `--porcelain`
 # would put the table and the envelope on the same stream and neither would
 # parse. Their stdout is passed through as written instead.
-PLAIN_SUBS = {"which", "why", "engines", "scopes", "repos"}
+PLAIN_SUBS = {"which", "why", "engines", "doctor", "scopes", "repos"}
 
 
 def run_cs_plain(sub, argv=(), scope=None):

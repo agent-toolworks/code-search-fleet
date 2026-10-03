@@ -20,9 +20,15 @@ found on a machine without ripgrep and missed on one with it. An answer that
 depends on which engine happens to be installed is worse than a slow one,
 because nothing tells you which answer you got.
 
-`verify-engines` also probes **known limitations**, not just capabilities, and
+`verify-engines` can also probe **known limitations**, not just capabilities, and
 reports `IMPROVED` when one disappears — an upgrade can remove the reason a
-tool was rejected, and nothing else would notice.
+tool was rejected, and nothing else would notice. None is probed at present:
+tokensave's C# interface edges were one until `cs impls` began relying on them,
+and are now a capability whose loss is a regression (#65).
+
+`verify-engines` checks the engines on a fixture fleet. `cs doctor` checks the
+other half, this machine against *your* fleet: which languages it holds, and
+whether each can be resolved here.
 
 And `verify-search` tests that `cs` **refuses**, not only that it answers. Those
 are different properties, and only the second protects the claim the tool makes.

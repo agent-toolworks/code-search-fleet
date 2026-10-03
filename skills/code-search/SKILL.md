@@ -31,6 +31,7 @@ readability; run `"$CS"`.
 
 ```sh
 "$CS" engines                        # what is installed here
+"$CS" doctor                         # what will not work on THESE repos, and the fix
 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/bootstrap"   # install missing engines
 export FLEET_ROOT=~/code/fleet       # the directory holding all the repos
 ```
@@ -38,6 +39,13 @@ export FLEET_ROOT=~/code/fleet       # the directory holding all the repos
 **`FLEET_ROOT` is required** and there is no useful default — without it `cs`
 searches the current directory, which is not a fleet. If it is unset, ask the
 user for the directory holding their repos rather than guessing.
+
+**When a command refuses for a missing engine or toolchain, or `cs impls` /
+`cs refs` comes back empty, run `cs doctor` (`cs_doctor` over MCP) before
+concluding anything.** It checks this machine against the languages the fleet
+actually contains, and hands the user the fix. A Kotlin repo with a JDK of the
+wrong version is the case to know: `cs` cannot refuse it, because `java` runs,
+and the server answers empty.
 
 Every *engine* is optional. `cs engines` reports what is present, and `cs` routes
 around whatever is missing rather than failing silently. **Two exceptions.**

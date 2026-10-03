@@ -136,12 +136,17 @@ if [[ $minimal -eq 0 ]]; then
   fi
 fi
 
+# The install above is about this machine; whether cs will work on YOUR repos
+# also depends on what languages they are in, which only cs doctor reads.
 info ""
-"$(dirname "${BASH_SOURCE[0]}")/cs" engines || true
+info "${C_BOLD}checking this machine against the fleet (cs doctor)…${C_OFF}"
+"$(dirname "${BASH_SOURCE[0]}")/cs" doctor
+doctor_rc=$?
 
 info ""
-if [[ $missing -eq 0 ]]; then
+if [[ $missing -eq 0 && $doctor_rc -eq 0 ]]; then
   ok "${C_BOLD}ready${C_OFF} — try: cs which"
 else
-  warn "$missing engine(s) unavailable; cs still works with the rest"
+  [[ $missing -gt 0 ]] && warn "$missing engine(s) unavailable; cs still works with the rest"
+  [[ $doctor_rc -ne 0 ]] && warn "cs doctor flagged something above; each flagged line has its fix (rerun: cs doctor)"
 fi

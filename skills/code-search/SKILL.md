@@ -71,6 +71,9 @@ MCP instructions name the running version. Details are in `docs/install.md`,
   `cs impls` / `cs refs` address was one line short, so an older answer
   you kept points one line above the symbol.
 - A `cs refs` line names its enclosing symbol (`[in Method Foo/Bar]`).
+- A C# or Kotlin `cs callers` / `cs callees` / `cs impact` answer says the graph
+  has no edges through property accessors (since 1.19.1), and a zero there is
+  `degraded`, not "unused".
 - An answer a language server gave before its project import finished is
   asked again, or refused. It is never reported as it came, so a
   `resolved · 0 hit(s)` is a real zero.
@@ -571,7 +574,10 @@ installed.
   no union*. So these cannot deliver what `cs uses` delivers — a caller in
   another repo of the fleet is a string, not an edge, and is invisible here.
   Always pair a symbol answer with `cs uses '<symbol>'` before telling anyone
-  something is unused. The answer line names **which** index answered and how
+  something is unused. **In C# and Kotlin this is not optional:** tokensave's
+  graph has no edges out of property accessors, so a method called only from a
+  getter shows no callers. `cs` names that on every such answer and marks a zero
+  `degraded`; `cs uses '<symbol>' --word` finds those calls. The answer line names **which** index answered and how
   old it is (`scoped to <repo>; ticket layer, synced 2d ago`); when the scope was
   a ticket workspace and the fleet index answered instead, `cs` reports that as
   `degraded` — the answer then describes `main`, not the branch being edited, and

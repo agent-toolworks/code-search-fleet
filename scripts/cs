@@ -2127,6 +2127,21 @@ graph_caveats() {  # <repo> <graph-dir> <substituted:0|1>
   warn "a graph index is per-repo: this answers about $repo alone. A caller in another repo of the fleet is a string, not an edge — cs uses '<symbol>' is the cross-repo half of the question."
 }
 
+# tokensave's C# and Kotlin extractors emit no edges out of property accessors
+# (get/set/init, a Kotlin `get() =`) and none into properties: a method called
+# only from a getter has no callers in the graph, and `cs callers` answered a
+# clean structural zero for it (#79). Measured on tokensave 7.9.0, 7.13.0 and
+# 7.14.1; TypeScript getters ARE edges. cs cannot add the edges, so it says
+# where they are missing -- verify-engines probes it, and reports IMPROVED the
+# day a release emits them.
+graph_accessor_gap() {  # <language> -> the language's name, if its graph has the gap
+  case "$1" in
+    csharp) printf 'C#' ;;
+    kotlin) printf 'Kotlin' ;;
+    *) return 1 ;;
+  esac
+}
+
 # The graph question nearest to the one a refusal could not answer, as a command
 # that will run. This was one line shared by cs impls and cs refs -- "rerun with
 # --engine=tokensave" -- and cs refs refuses that flag, so the advice sent a
@@ -2140,7 +2155,10 @@ graph_alternative() {  # <subcommand> <symbol> <repo> <repo-dir>
     refs)
       have_tokensave && { python3 "$lib_dir/tokensave_call.py" impls "$4" "$3" "$2" >/dev/null 2>&1; rc=$?; }
       if [[ $rc -eq 3 ]]; then
-        printf 'cs callers %s %s   (its call sites, from the tokensave graph: structural, and narrower than references — no DI registrations, no non-call uses)' "$2" "$3"
+        local gl gap=""
+        gl=$(symbol_language "$2" "$4" || repo_language "$4" || true)
+        gl=$(graph_accessor_gap "$gl") && gap=", nor any call made inside a $gl property accessor"
+        printf 'cs callers %s %s   (its call sites, from the tokensave graph: structural, and narrower than references — no DI registrations, no non-call uses%s)\n         and:  cs uses '"'"'%s'"'"' --word   (the text half: every mention of the name, calls the graph does not hold included; only the two together approximate references)' "$2" "$3" "$gap" "$2"
       else
         printf 'cs impls %s %s --engine=tokensave   (its implementations, from the tokensave graph: structural, and narrower than references — no DI registrations, no other uses)' "$2" "$3"
       fi ;;
@@ -2527,6 +2545,11 @@ kind that can be confidently wrong rather than merely blind. And a graph index
 is per-project: it covers ONE repo at ONE layer, with no union of your ticket
 workspace and the fleet -- so a caller in another repo is invisible to it, and
 `cs uses` is the other half of that question.
+
+In C# and Kotlin the graph also has a hole: no edges out of property accessors
+(get/set/init, a Kotlin `get() =`) and none into properties. A method called
+only from a getter has no callers there, so cs says so on every C# or Kotlin
+graph answer, and `cs uses '<name>' --word` finds those calls as text.
 X
 ;;
     historical) cat <<'X'
@@ -4663,12 +4686,16 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
   weaker but available now: cs uses '$sym', cs def $sym $repo"
   fi
 
-  local extra
+  local extra gap_lang=""
   case "$mode" in
     callers) extra="direct callers" ;;
     callees) extra="direct callees" ;;
     impact)  extra="dependents, transitively, depth ≤ 3" ;;
   esac
+  # In the provenance line, not only on stderr: it is the line an MCP caller
+  # reads, and a zero here is otherwise indistinguishable from "unused".
+  gap_lang=$(graph_accessor_gap "$(symbol_language "$sym" "$graph_dir" || repo_language "$graph_dir" || true)") \
+    && extra="$extra; calls inside $gap_lang property accessors are not in the graph"
   answer structural "tokensave (graph)" "$(graph_note "$repo" "$graph_dir" "$extra")"
 
   local out rc
@@ -4686,12 +4713,19 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
 
   graph_caveats "$repo" "$graph_dir" "$substituted"
   warn "this is a GRAPH answer, not a language server: it cannot see reflection, DI registration, or generated code. cs refs is the only thing here that bridges a DI registration."
+  [[ -n "$gap_lang" ]] && warn "tokensave's $gap_lang graph has no edges out of property accessors (get/set/init) or into properties: a call made inside a getter or setter is missing from this answer (cs uses '$sym' --word finds it as text)"
 
   if [[ $rc -ne 0 || -z "$out" ]]; then
+    # A zero from a graph with a known hole in it is not "nothing calls this".
+    [[ -n "$gap_lang" ]] && CS_DEGRADED="${CS_DEGRADED:+$CS_DEGRADED; }a $mode zero in $gap_lang is not 'unused': calls made inside property accessors are not edges in tokensave's $gap_lang graph — check cs uses '$sym' --word"
     report_answer 0 0
     case "$mode" in
-      callers) hint "cs uses '$sym'          (a caller in another repo is a string, not an edge)" \
-                    "cs refs $sym $repo <file>   (a language server sees a DI registration the graph cannot)" ;;
+      callers) if [[ -n "$gap_lang" ]]; then
+                 hint "cs uses '$sym' --word   (a call inside a $gap_lang property accessor is not in the graph; this finds it as text)" \
+                      "cs refs $sym $repo <file>   (a language server sees accessor calls and DI registrations the graph cannot)"
+               else hint "cs uses '$sym'          (a caller in another repo is a string, not an edge)" \
+                    "cs refs $sym $repo <file>   (a language server sees a DI registration the graph cannot)"
+               fi ;;
       callees) hint "cs def $sym $repo       (confirm the symbol is the one you mean)" \
                     "cs calls '<pattern>'    (a call shape the graph did not record)" ;;
       impact)  hint "cs callers $sym $repo   (impact walks dependents; start with the direct ones)" \

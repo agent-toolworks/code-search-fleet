@@ -848,6 +848,43 @@ else
 fi
 rm -rf "$notc"
 
+# ---- a graph with a known hole: C# / Kotlin property accessors ---------------
+# tokensave emits no edges out of property accessors, so a method called only
+# from a getter had no callers, and `cs callers` answered a clean structural
+# zero for it (#79). The zero must say where the hole is -- in the provenance
+# line and the envelope, which is what an agent reads -- and the advice for a
+# method must pair the graph with its text complement, which does find it.
+if command -v tokensave >/dev/null 2>&1; then
+  acc_fleet=$(mktemp -d)/fleet
+  mkdir -p "$acc_fleet/lims/Data"
+  printf 'namespace Lims.Data { public class Patient { public static string[] GetAccessionList(int id) { return new string[0]; } } }\n' \
+    > "$acc_fleet/lims/Data/Patient.cs"
+  printf 'namespace Lims.Data {\npublic class PatientRelative {\n  public int RelatedId { get; set; }\n  public string[] AccessionList { get { return Patient.GetAccessionList(RelatedId); } }\n}\n}\n' \
+    > "$acc_fleet/lims/Data/PatientRelative.cs"
+  (cd "$acc_fleet/lims" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i \
+     && tokensave init </dev/null >/dev/null 2>&1)
+  acc_shim=$(mktemp -d)
+  printf '#!/bin/sh\nexit 127\n' > "$acc_shim/dotnet"; printf '#!/bin/sh\nexit 0\n' > "$acc_shim/uvx"; chmod +x "$acc_shim"/*
+  acc_out=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims 2>&1); acc_rc=$?
+  acc_env=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims --porcelain 2>/dev/null)
+  acc_ref=$(PATH="$acc_shim:$PATH" FLEET_ROOT="$acc_fleet" "$here/cs" refs GetAccessionList lims Data/Patient.cs 2>&1)
+  acc_txt=$(FLEET_ROOT="$acc_fleet" "$here/cs" uses 'GetAccessionList' --word 2>/dev/null)
+  if [[ $acc_rc -eq 2 ]] && matches "$acc_out" 'answer:.*C# property accessors are not in the graph' \
+     && matches "$acc_env" '"degraded":"[^"]*property accessors' \
+     && matches "$acc_ref" "and: +cs uses 'GetAccessionList' --word" \
+     && matches "$acc_txt" 'PatientRelative\.cs:4:'; then
+    ok "a C# graph zero names the property-accessor hole, and the advice pairs it with the text search that fills it"
+    pass=$((pass + 1))
+  else
+    err "the C# property-accessor gap was not disclosed (callers exit $acc_rc):"
+    printf '%s\n%s\n' "$acc_out" "$acc_ref" | grep -E 'answer|and:|degraded' | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("graph-accessor-gap")
+  fi
+  rm -rf "$acc_shim" "$(dirname "$acc_fleet")"
+else
+  skip "the C# property-accessor caveat" "tokensave not installed"
+fi
+
 # ---- telling users and agents what changed -----------------------------------
 # The changelog records every change, small untracked fixes included, but it
 # reaches nobody unless something reads it: `cs changes` for agents and people,

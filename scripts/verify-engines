@@ -11,7 +11,8 @@
 #   capability      -- must keep working; losing it is a REGRESSION
 #   known-limitation-- currently fails; if it starts passing that is an
 #                      IMPROVEMENT and the routing should be reconsidered
-#                      (none at present: tokensave's became a capability, #65)
+#                      (tokensave's C# interface edges became a capability, #65;
+#                      its property-accessor edges are one, #79)
 #
 # Versions are recorded in fixtures/verified-versions.tsv. A changed version is
 # not itself a failure -- it is a prompt to look at the probe results.
@@ -399,6 +400,37 @@ probe_tokensave() {
   fi
 }
 
+# A known limitation cs now names on every C# and Kotlin graph answer (#79):
+# tokensave emits no edges out of property accessors, so a method called only
+# from a getter has no callers in the graph. Each repo has two calls -- one from
+# a getter (the gap) and one from a method (the control, which must be found,
+# or the probe proves nothing). CONFIRMED while the gap holds; IMPROVED the day
+# a release emits the edge, which is when graph_accessor_gap in cs should go.
+probe_tokensave_accessors() {
+  have tokensave || { record ts-getters "-" known-limitation SKIP "not installed"; return; }
+  local ver tmp lang gap ctl found=() control_missing=()
+  ver=$(tokensave --version 2>/dev/null | awk '{print $2}')
+  tmp=$(mktemp -d)
+  mkdir -p "$tmp/cs" "$tmp/kt"
+  printf 'namespace L { public class P { public static int Gap(int i) { return i; } public static int Ctl(int i) { return i; } }\n public class R { public int A { get { return P.Gap(1); } } public int B() { return P.Ctl(1); } } }\n' > "$tmp/cs/P.cs"
+  printf 'object P {\n    fun gap(i: Int): Int = i\n    fun ctl(i: Int): Int = i\n}\nclass R {\n    val a: Int\n        get() = P.gap(1)\n    fun b(): Int = P.ctl(1)\n}\n' > "$tmp/kt/P.kt"
+  for lang in cs kt; do
+    (cd "$tmp/$lang" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm p \
+       && tokensave init </dev/null >/dev/null 2>&1)
+    case "$lang" in cs) gap=Gap; ctl=Ctl ;; kt) gap=gap; ctl=ctl ;; esac
+    [[ -n "$(python3 "$here/lib/tokensave_call.py" callers "$tmp/$lang" "$lang" "$ctl" 2>/dev/null)" ]] || control_missing+=("$lang")
+    [[ -n "$(python3 "$here/lib/tokensave_call.py" callers "$tmp/$lang" "$lang" "$gap" 2>/dev/null)" ]] && found+=("$lang")
+  done
+  rm -rf "$tmp"
+  if [[ ${#control_missing[@]} -gt 0 ]]; then
+    record ts-getters "$ver" known-limitation FAIL "the control call (from a method) was not found in: ${control_missing[*]} — the probe cannot tell anything"
+  elif [[ ${#found[@]} -gt 0 ]]; then
+    record ts-getters "$ver" known-limitation IMPROVED "a call inside a property accessor IS an edge now (${found[*]}) — drop the caveat in cs (graph_accessor_gap)"
+  else
+    record ts-getters "$ver" known-limitation CONFIRMED "no edges out of C# / Kotlin property accessors — cs names it on those graph answers"
+  fi
+}
+
 info "probing engines against $F"   # unconditional: the cheap self-check that
                                    # catches a scope leak immediately
 probe_text
@@ -406,6 +438,7 @@ probe_ctags
 probe_ast_grep
 probe_semgrep
 probe_tokensave
+probe_tokensave_accessors
 probe_serena
 probe_serena_java
 probe_serena_kotlin_floor

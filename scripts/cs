@@ -1613,8 +1613,8 @@ ctags_bin() {
 
 # ---- language toolchains ---------------------------------------------------
 # Serena is a DRIVER for a language server, and a language server needs its
-# language's toolchain: a .NET SDK to load a C# project, a JVM for Java or
-# Kotlin, node for TypeScript. The preflight in `cs refs` / `cs impls` used to
+# language's toolchain: a .NET SDK to load a C# project, a JDK for Kotlin, node
+# for TypeScript. The preflight in `cs refs` / `cs impls` used to
 # check uvx, python3 and the repo directory -- the driver and its plumbing, none
 # of which say anything about whether the language can be analysed. All three
 # passed on a machine with no SDK, the server loaded nothing, and the empty
@@ -1649,22 +1649,31 @@ have_toolchain() {
 language_toolchain() {  # <language> -> the binary its language server needs
   case "$1" in
     csharp)                echo dotnet ;;
-    java|kotlin)           echo java ;;
+    kotlin)                echo java ;;
     typescript|javascript) echo node ;;
     *) return 1 ;;
   esac
 }
+# Java is preflighted and needs NOTHING, which is different from not being
+# preflighted. Serena's Eclipse JDTLS ships its own JRE and imports Gradle with
+# it ("Using bundled JRE for Gradle"), so `cs impls DiscountRule` resolves on a
+# machine whose only java is the macOS stub. Java used to share Kotlin's `java`
+# entry, and on that machine cs refused a query that would have been answered
+# correctly. Kotlin keeps the gate: its server bundles a runtime to RUN, but its
+# Gradle import needs a JDK matching the project's toolchain, and without one it
+# returns `[]` with exit 0 -- the silent negative the gate exists for (#65).
+runtime_bundled() { [[ "$1" == java ]]; }
 toolchain_languages() {  # <toolchain> -> the languages it unblocks, for messages
   case "$1" in
     dotnet) echo "C#" ;;
-    java)   echo "Java/Kotlin" ;;
+    java)   echo "Kotlin" ;;
     node)   echo "TypeScript/JavaScript" ;;
   esac
 }
 toolchain_install() {
   case "$1" in
     dotnet) echo "brew install --cask dotnet-sdk   (or https://dot.net)" ;;
-    java)   echo "brew install openjdk             (any JDK)" ;;
+    java)   echo "brew install openjdk@21          (a JDK at the project's Gradle toolchain version, findable via JAVA_HOME)" ;;
     node)   echo "brew install node" ;;
   esac
 }
@@ -1906,6 +1915,7 @@ require_serena_toolchain() {
     warn "could not tell what language $repo is written in — if Serena cannot load it, an empty result here would look like a clean negative (cs why resolved)"
     return 0
   fi
+  runtime_bundled "$lang" && return 0
   if ! tc=$(language_toolchain "$lang"); then
     # Not preflighted rather than known-good. Said out loud, because silence
     # here would read as "checked and fine".
@@ -2316,7 +2326,7 @@ kind_subcommands() {
 }
 
 # Roll-call of the language toolchains Serena needs, e.g.
-# "dotnet ok, java MISSING (Java/Kotlin), node ok".
+# "dotnet ok, java MISSING (Kotlin), node ok".
 toolchain_roll_call() {
   local tc out=""
   for tc in $CS_TOOLCHAINS; do

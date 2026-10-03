@@ -8,6 +8,22 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.16.2 — 2026-10-03
+
+- `cs impls` / `cs refs` no longer refuse Java for want of a JDK (#65). Java
+  shared Kotlin's toolchain entry, so on a machine whose only `java` is the
+  macOS stub a query Serena would have answered was turned away. Serena's
+  Eclipse JDTLS ships a JRE and imports Gradle with it. Kotlin keeps the gate:
+  without a JDK at the project's toolchain version its Gradle import fails and
+  the server answers `[]`. `verify-engines` gains a `serena-java` probe so a
+  Serena release that stops bundling the runtime shows as a regression.
+- `verify-engines` probes tokensave's C# interface edges as a capability, not
+  a known limitation (#65). The limitation was corrected at 7.9.0 and
+  `cs impls` falls back to the graph, so every run printed `IMPROVED — revisit
+  the routing`, and losing the edges would have read `CONFIRMED` in green. It
+  now passes, or fails as a regression, and a rank output it cannot parse is a
+  FAIL rather than a missing row. Verified on tokensave 7.9.0, 7.13.0 and 7.14.1.
+
 ## 1.16.1 — 2026-10-03
 
 - `verify-search` and `verify-engines` no longer hang when run from a terminal.

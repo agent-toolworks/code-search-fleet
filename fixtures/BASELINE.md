@@ -136,6 +136,11 @@ project.
 - Requires a working toolchain per language. This machine had **no .NET SDK and
   no JVM**; both had to be installed before C#, Java, or Kotlin could be
   analyzed at all. tokensave and ast-grep need nothing.
+  *Correction (#65):* Java did not need the JVM. Serena's Eclipse JDTLS ships a
+  JRE and imports Gradle with it, so `find_implementations` resolves Java on a
+  machine with no JDK. Kotlin does need one: its server bundles a runtime to
+  run, but its Gradle import needs a JDK at the project's toolchain version,
+  and without it the server answers `[]`.
 - Fleet-root auto-configuration is **interactive** (it prompts per language) and
   fails outright in a non-interactive shell with `EOF when reading a line`. The
   `project.yml` has to be written by hand for automation — which `new-ticket`

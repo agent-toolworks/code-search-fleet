@@ -11,6 +11,7 @@
 #   capability      -- must keep working; losing it is a REGRESSION
 #   known-limitation-- currently fails; if it starts passing that is an
 #                      IMPROVEMENT and the routing should be reconsidered
+#                      (none at present: tokensave's became a capability, #65)
 #
 # Versions are recorded in fixtures/verified-versions.tsv. A changed version is
 # not itself a failure -- it is a prompt to look at the probe results.
@@ -217,11 +218,32 @@ probe_serena() {
   fi
 }
 
+# Java is the one language whose server needs nothing from the machine: Eclipse
+# JDTLS ships a JRE and imports Gradle with it, so cs does not gate Java on a
+# system `java` (#65). That is a claim about Serena's packaging, not a law, so it
+# is probed: this runs whether or not a JDK is installed, and a release that
+# stops bundling the runtime turns it into a REGRESSION rather than into empty
+# Java answers.
+probe_serena_java() {
+  have uvx || { record serena-java "-" capability MISSING "uv not installed"; return; }
+  local ver; ver=$(version_of serena)
+  local out
+  out=$(python3 "$here/lib/serena_call.py" "$F/pricing-lib-java" find_implementations \
+        '{"name_path":"DiscountRule","relative_path":"src/main/java/com/acme/pricing/DiscountRule.java"}' 2>/dev/null)
+  if printf '%s' "$out" | grep -q 'BulkDiscountRule'; then
+    record serena-java "${ver:-unknown}" capability PASS "Java interface to implementation, with or without a system JDK"
+  else
+    record serena-java "${ver:-unknown}" capability FAIL "lost Java find_implementations — cs no longer gates Java on a JDK, so check the bundled JRE"
+  fi
+}
+
 # Serena is a DRIVER for a language server, and a language server needs its
 # language's toolchain. `probe_serena` above only exercises C#, so on a machine
-# with a .NET SDK and no JVM it reports PASS while `cs impls` on every Kotlin
-# and Java repo in the fleet is unable to run -- a gap that was visible only
-# after a query came back empty, and only to someone who knew why.
+# with a .NET SDK and no JDK it reports PASS while `cs impls` on every Kotlin
+# repo in the fleet is unable to run -- a gap that was visible only after a
+# query came back empty, and only to someone who knew why. (Kotlin's server
+# bundles a runtime to run, but its Gradle import needs a JDK at the project's
+# toolchain version; without one it answers `[]`.)
 #
 # Probed by RUNNING each toolchain, not by `command -v`: "on PATH but fails to
 # run" is a real state and is indistinguishable from a working one until a
@@ -232,7 +254,7 @@ probe_toolchains() {
   for tc in dotnet java node; do
     case "$tc" in
       dotnet) langs="C#" ;;
-      java)   langs="Java/Kotlin" ;;
+      java)   langs="Kotlin" ;;
       node)   langs="TypeScript/JavaScript" ;;
     esac
     if ! command -v "$tc" >/dev/null 2>&1; then
@@ -251,12 +273,17 @@ probe_toolchains() {
   done
 }
 
-# tokensave is probed on a limitation rather than a capability: its C# graph has
-# no `implements` edges, which is why it lost the routing. If a release fixes
-# that, this reports IMPROVED and the decision should be revisited -- upgrades
-# can remove reasons as well as introduce regressions.
+# tokensave was first probed on a LIMITATION -- "its C# graph has no
+# `implements` edges", the reason it lost the routing -- so that a release
+# fixing it would report IMPROVED. The limitation turned out to be a misreading
+# (below, and BASELINE.md at 7.9.0), the routing WAS revisited, and `cs impls`
+# now falls back to the graph wherever a language server cannot run. That made
+# it a capability cs relies on, and a known-limitation probe of a capability
+# gets both directions wrong: it prints IMPROVED on every run, which teaches
+# people to skip the line, and a release that LOST the edges would report
+# CONFIRMED, in green. So it is a capability: losing it is a REGRESSION (#65).
 #
-# Probing ONE edge kind was the flaw. C# has a single syntax for both relations
+# Probing ONE edge kind was the original flaw. C# has a single syntax for both relations
 # -- `class Foo : BaseFoo, IFoo` -- so an extractor cannot separate them without
 # resolving each name in the base list, and tokensave resolves some while
 # defaulting the rest to `extends`. Counting only `implements` therefore reports
@@ -270,7 +297,7 @@ probe_toolchains() {
 # which is a far better discriminator than the `I[A-Z]*` naming convention --
 # it is what the extractor actually decided, not a guess from the name.
 probe_tokensave() {
-  have tokensave || { record tokensave "-" known-limitation SKIP "not installed"; return; }
+  have tokensave || { record tokensave "-" capability MISSING "not installed"; return; }
   local ver; ver=$(tokensave --version 2>/dev/null | awk '{print $2}')
   local dir="$F/inventory-api-dotnet"
   [[ -d "$dir/.tokensave" ]] || (cd "$dir" && tokensave init </dev/null >/dev/null 2>&1)
@@ -280,7 +307,14 @@ probe_tokensave() {
            | awk -F: '/result_count/{gsub(/[ ,]/,"",$2); print $2}')
   n_ext=$(cd "$dir" && tokensave tool rank --edge-kind extends 2>/dev/null \
           | awk -F: '/result_count/{gsub(/[ ,]/,"",$2); print $2}')
-  n_impl=${n_impl:-0}; n_ext=${n_ext:-0}
+  # Unparseable counts are a FAIL, not a zero. A count that is not a number
+  # used to abort this function in the -gt test below, so the row vanished and
+  # the summary called tokensave "not installed here" on a machine that has it.
+  if ! [[ "$n_impl" =~ ^[0-9]+$ && "$n_ext" =~ ^[0-9]+$ ]]; then
+    record tokensave "$ver" capability FAIL \
+      "could not read edge counts from 'tokensave tool rank' (got '${n_impl}' / '${n_ext}') — its output format may have changed"
+    return
+  fi
 
   # How many `extends` edges actually point at an interface. Needs the graph
   # itself; the rank tool reports counts but not targets.
@@ -296,11 +330,11 @@ probe_tokensave() {
 
   local captured=$((n_impl + ${n_iface//[!0-9]/0}))
   if [[ "$n_impl" -gt 0 || "${n_iface//[!0-9]/0}" -gt 0 ]]; then
-    record tokensave "$ver" known-limitation IMPROVED \
-      "C# interface impls ARE captured ($captured: $n_impl implements + $n_iface extends→interface, of $n_ext extends) — query BOTH kinds; see BASELINE.md"
+    record tokensave "$ver" capability PASS \
+      "C# interface impls in the graph ($captured: $n_impl implements + $n_iface extends→interface, of $n_ext extends) — cs impls queries both kinds"
   else
-    record tokensave "$ver" known-limitation CONFIRMED \
-      "no C# interface implementation in either kind ($n_ext extends, none targeting an interface)"
+    record tokensave "$ver" capability FAIL \
+      "no C# interface implementation in either kind ($n_ext extends, none targeting an interface) — cs impls' graph fallback cannot answer"
   fi
 }
 
@@ -312,6 +346,7 @@ probe_ast_grep
 probe_semgrep
 probe_tokensave
 probe_serena
+probe_serena_java
 probe_toolchains
 
 # ---- report -----------------------------------------------------------------

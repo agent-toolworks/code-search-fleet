@@ -755,6 +755,23 @@ if printf '%s' "$notc_out" | grep -q 'answer:.*resolved'; then
 else
   ok "no 'resolved' label is printed when the toolchain is missing"; pass=$((pass + 1))
 fi
+
+# The gate is per language, and Java's is empty: its server ships a JRE, so a
+# missing `java` must not refuse a Java query (it used to: Java shared Kotlin's
+# entry, and a query that would have resolved was turned away). Kotlin keeps
+# the gate -- without a JDK its Gradle import fails and the server answers [].
+# Only the GATE is asserted for Java; the shimmed uvx cannot answer the query.
+java_out=$(env PATH="$notc:$PATH" "$here/cs" impls DiscountRule pricing-lib-java 2>&1)
+if matches "$java_out" 'needs java'; then
+  err "cs impls refused a Java query for want of a JDK its server does not need:"
+  printf '%s\n' "$java_out" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("toolchain-java-gated")
+else
+  ok "a Java query is not refused for a missing JDK (its server bundles a JRE)"
+  pass=$((pass + 1))
+fi
+refuses "a Kotlin query without a JDK still refuses" "needs java" \
+  env PATH="$notc:$PATH" "$here/cs" impls CheckoutResult checkout-service-kotlin
 rm -rf "$notc"
 
 # stdout is the scoreable result stream and nothing else. A zero-hit `cs uses`

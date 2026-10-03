@@ -215,6 +215,20 @@ before 1.16. Update anything that says otherwise:
   Linux too, minus its reference assemblies. cs used to call that impossible.
 - **`CS_NO_GRAPH`** in `fleet.env` (1.18.0) names repos kept without a tokensave
   graph on purpose, so `cs doctor` can come clean on a fleet that has them.
+- **Language-server line numbers are 1-based** (1.18.1, #76). Every `cs impls`
+  / `cs refs` address used to be one line short, the LSP's 0-based number.
+  A `cs refs` line names its enclosing symbol (`[in Method Foo/Bar]`), where it
+  printed only that symbol's kind.
+- **An answer given before the project import finished is re-asked, or
+  refused** (1.18.1, #76). Serena's Java wrapper stops waiting after 20s. `cs`
+  now waits for the import and asks again, or refuses, so
+  `resolved · 0 hit(s)` from a cold server is no longer possible.
+- **A refusal's "answer now" is a command that runs** (1.18.1, #75): for
+  `cs refs` it is `cs callers` (a method) or `cs impls --engine=tokensave` (a
+  type), not a flag `cs refs` refuses.
+- **`cs changes` / `cs_changes`** (1.19.0) lists what changed since a version,
+  small fixes included, and the MCP instructions name the running version.
+  This section is the summary; that command is the complete list.
 - **`verify-engines`** probes tokensave's C# interface edges as a capability
   (1.16.2), and Serena on Java without a JDK, Kotlin without a toolchain
   request, and .NET Framework projects (1.18.0).

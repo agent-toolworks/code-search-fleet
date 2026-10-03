@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Release notes for vX.Y.Z, from that version's CHANGELOG.md section.
+#
+# The changelog is the record of every change, the small fixes nobody filed a
+# ticket for included; release pages written by hand were where those got lost.
+# So a release's notes are this script's output, plus whatever is worth adding
+# above it -- never instead of it.
+#
+# Usage: release-notes [X.Y.Z]      (default: VERSION)
+#   gh release create vX.Y.Z --title "…" --notes-file <(scripts/release-notes X.Y.Z)
+set -uo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ver="${1:-$(tr -d '[:space:]' < "$root/VERSION")}"
+body=$(python3 "$root/scripts/lib/changelog.py" "$root/CHANGELOG.md" body "$ver") || exit 1
+[[ -n "$body" ]] || { echo "release-notes: the $ver section of CHANGELOG.md is empty" >&2; exit 1; }
+cat <<NOTES
+## Update, then check
+\`\`\`sh
+claude plugin marketplace update agent-toolworks
+claude plugin update code-search@agent-toolworks
+\`\`\`
+Restart Claude Code, then ask it to *"run cs_doctor"* and fix what it flags. New machine? Follow [docs/install.md](https://github.com/agent-toolworks/code-search-fleet/blob/main/docs/install.md). Agents learn the running version from the MCP server, and \`cs_changes\` (\`cs changes <your old version>\`) lists everything since the one you knew.
+
+## What changed in $ver
+$body
+
+Full history: [CHANGELOG.md](https://github.com/agent-toolworks/code-search-fleet/blob/main/CHANGELOG.md).
+NOTES

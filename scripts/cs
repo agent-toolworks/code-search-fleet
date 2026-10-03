@@ -66,6 +66,8 @@
 #   cs engines                     which engines are available here
 #   cs doctor                      check this machine against this fleet: what
 #                                  will not work, what it costs, and the fix
+#   cs changes [version]           what changed in cs: the latest releases, or
+#                                  everything since <version> -- small fixes too
 #
 #   --fleet          ignore the ticket workspace, search the fleet only
 #   --ticket=<path>  search a workspace layered over the fleet: the absolute
@@ -895,7 +897,7 @@ detect_ticket() {
   # caller is standing in a repo, they are almost certainly working in it, and
   # answering from main without a word is the failure this exists to stop.
   # Not for the subcommands that explain the tool: they search nothing.
-  case "${sub:-}" in which|why|engines|doctor|scopes|-h|--help|help) return 1 ;; esac
+  case "${sub:-}" in which|why|engines|doctor|changes|scopes|-h|--help|help) return 1 ;; esac
   if top=$(git_toplevel_of "$here_p"); then
     local froot; froot=$(real_path_of "$root" 2>/dev/null || true)
     if [[ -z "$froot" ]] || ! under "$top" "$froot"; then
@@ -3537,6 +3539,32 @@ cmd_doctor() {
   return 0
 }
 
+# ---- cs changes --------------------------------------------------------------
+# What changed in cs, from the CHANGELOG.md that ships beside it. An agent never
+# opens the changelog, and its notes, CLAUDE.md or memory describe whichever cs
+# it learned -- so a fixed bug, a changed refusal, or a different meaning for an
+# answer reached it only if someone copied that one change into the skill. The
+# changelog records every change, the small ones nobody filed a ticket for
+# included; this puts it one call away, and the MCP instructions name the
+# running version so a mismatch is noticeable at all.
+cmd_changes() {
+  local log="$lib_dir/../../CHANGELOG.md" ver
+  ver=$(tr -d '[:space:]' < "$lib_dir/../../VERSION" 2>/dev/null)
+  [[ -f "$log" ]] || die "cs changes: there is no CHANGELOG.md beside this cs ($log)"
+  require_python3 changes "reading the changelog"
+  if [[ $# -ge 1 && -n "${1:-}" ]]; then
+    [[ "$1" =~ ^[0-9]+(\.[0-9]+)*$ ]] || die "cs changes: '$1' is not a version (it looks like 1.17.2)"
+    info "cs ${ver:-?}: what changed after $1, newest first"
+    python3 "$lib_dir/changelog.py" "$log" since "$1" \
+      || die "cs changes: '$1' is not a version (it looks like 1.17.2)"
+  else
+    info "cs ${ver:-?}: the three latest releases (cs changes <version> lists everything after that one)"
+    python3 "$lib_dir/changelog.py" "$log" last 3
+  fi
+  info "the whole history: $(cd "$(dirname "$log")" && pwd)/CHANGELOG.md"
+  return 0
+}
+
 hint() {
   info ""; info "${C_BOLD}nothing found — try:${C_OFF}"
   while [[ $# -gt 0 ]]; do
@@ -5811,12 +5839,12 @@ CS_SUB="$sub"; CS_QUERY="${1:-}"
 # diagnosis. `cs engines` is deliberately in the exempt list and prints the root
 # it would have used.
 case "$sub" in
-  which|why|doctor|-h|--help|help) ;;
+  which|why|doctor|changes|-h|--help|help) ;;
   engines|scopes) [[ -d "$root" ]] || warn "fleet root does not exist yet: $root" ;;
   *) require_fleet ;;
 esac
 build_view
-case "$sub" in engines|doctor|which|why|repos|scopes|-h|--help|help) ;; *) announce_view ;; esac
+case "$sub" in engines|doctor|changes|which|why|repos|scopes|-h|--help|help) ;; *) announce_view ;; esac
 case "$sub" in
   text)    cmd_text "$@" ;;
   seam)    cmd_seam "$@" ;;
@@ -5846,6 +5874,7 @@ case "$sub" in
   why)     cmd_why "$@" ;;
   engines) cmd_engines ;;
   doctor)  cmd_doctor ;;
+  changes) cmd_changes "$@" ;;
   -h|--help|help) usage 0 ;;
   *) err "unknown subcommand: $sub"; usage 1 ;;
 esac

@@ -8,6 +8,34 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.16.1 — 2026-10-03
+
+- `verify-search` and `verify-engines` no longer hang when run from a terminal.
+  `tokensave init` asks whether to install git hooks when stdin is a TTY, and
+  the suites ran it with its output discarded but stdin attached, so it waited
+  on a question nobody could see. Every `tokensave init`/`sync` in them now
+  reads from `/dev/null`.
+- A grouping folder that holds a stray repo no longer hides the workspaces
+  inside it (#61). Discovery stopped at the first directory holding a repo, so
+  `_old/` with one scratch clone was taken to be the workspace: the 26
+  workspaces inside it were missing from `cs scopes`, and their bare ids were
+  refused, although their paths resolved. Both levels are now listed, and
+  `cs scopes` marks the outer one `mixed: N repo(s) and M workspace(s) below`.
+- The hit-line cap keeps the annotation a verb writes after the address (#62).
+  `cs values` cuts each line's raw text itself, so `[set] "<literal>"`, the
+  `[read]` note and the `NOT accepted` mark survive a long line. Before, they
+  were the first bytes cut. The cuts are still counted in the warning and the
+  envelope. Any `[tag]` right after the address is protected, `cs fields`
+  included.
+- `cs uses` names only the unfiltered extensions that still have hits (#62).
+  With `--source-only`, `.svg` was named as `NOT filtered` (and on the
+  `answer:` line) after every `.svg` hit had been dropped.
+- `verify-search`: the fleet-index substitution check expects the scope as a
+  path, as it has been since #59 (#63). Its summary no longer sends a failed
+  check to `score-seams`, which knows only the scored queries: a scored query's
+  re-run line is the whole `cs … | score-seams <id> -` command, and other
+  failures are listed as checks of the suite.
+
 ## 1.16.0 — 2026-10-01
 
 - A scope can be a path (#59). `--ticket=` and the MCP `scope` take the absolute

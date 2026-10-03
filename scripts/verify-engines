@@ -273,7 +273,7 @@ probe_tokensave() {
   have tokensave || { record tokensave "-" known-limitation SKIP "not installed"; return; }
   local ver; ver=$(tokensave --version 2>/dev/null | awk '{print $2}')
   local dir="$F/inventory-api-dotnet"
-  [[ -d "$dir/.tokensave" ]] || (cd "$dir" && tokensave init >/dev/null 2>&1)
+  [[ -d "$dir/.tokensave" ]] || (cd "$dir" && tokensave init </dev/null >/dev/null 2>&1)
 
   local n_impl n_ext
   n_impl=$(cd "$dir" && tokensave tool rank --edge-kind implements 2>/dev/null \

@@ -39,6 +39,7 @@ WHAT THIS DELIBERATELY WILL NOT DO
   rather than papered over.
 
 Usage:  config_values.py <fleet-root> <KEY>   < hits on stdin (repo/path:line:text)
+        CS_MAX_LINE=<bytes> cuts each line's raw text around KEY (unset or 0: whole)
 Exit:   0 something was classified, 1 nothing was.
 """
 import os
@@ -217,6 +218,44 @@ def split_hit(line):
     return m.group(1), int(m.group(2)), m.group(3)
 
 
+def cont(byte):
+    return 0x80 <= byte < 0xC0
+
+
+def cap_text(text, key, limit):
+    """`text` cut to `limit` bytes around `key`, with the bytes removed named
+    where they were -- the same cut, and the same markers, as cs's
+    cap_hit_lines. Done HERE, on the raw line alone, because cs can only see
+    the finished line: it protected the address and cut the rest around the
+    match, so the [set]/[read]/[doc] tag and the literal this script puts in
+    front of the raw text were the first thing to go, and they are the answer.
+    Returns (text, bytes elided). A cut never splits a UTF-8 character."""
+    b = text.encode("utf-8", "surrogateescape")
+    n = len(b)
+    if limit <= 0 or n <= limit:
+        return text, 0
+    q = key.encode("utf-8", "surrogateescape")
+    at = b.lower().find(q.lower()) + 1 if q else 0
+    if at > 0:
+        start = max(1, at - int((limit - len(q)) / 2))
+    else:
+        start = 1
+    if start + limit - 1 > n:
+        start = n - limit + 1
+    stop = start + limit - 1
+    while start > 1 and cont(b[start - 1]):
+        start += 1
+    while stop < n and cont(b[stop]):
+        stop -= 1
+    head, tail = start - 1, n - stop
+    out = b[start - 1:stop].decode("utf-8", "surrogateescape")
+    if head:
+        out = "…(%d bytes elided)…" % head + out
+    if tail:
+        out += "…(%d bytes elided)" % tail
+    return out, head + tail
+
+
 def main():
     if len(sys.argv) < 3:
         print(__doc__, file=sys.stderr)
@@ -288,19 +327,30 @@ def main():
     # a mismatch that lived only there would be invisible to exactly the caller
     # least able to notice it.
     acc_pre = set(accepted)
+    # The raw text is cut to CS_MAX_LINE bytes (cs passes its own budget, 0 for
+    # --full-lines); everything this script adds around it is kept whole.
+    try:
+        limit = int(os.environ.get("CS_MAX_LINE", "0") or 0)
+    except ValueError:
+        limit = 0
+
+    def cut(text):
+        return cap_text(text, key, limit)[0]
+
     for path, lineno, label, v, text in sets:
         mark = ""
         if acc_pre and v and not TEMPLATE_RE.search(v):
             parts = [t.strip() for t in re.split(r"[,\s]+", v) if t.strip()]
             if not all(t in acc_pre for t in parts):
                 mark = "  <- NOT accepted by any read site"
-        print("%s:%d: [set] %s   %s%s" % (path, lineno, label, text, mark))
+        print("%s:%d: [set] %s   %s%s" % (path, lineno, label, cut(text), mark))
     for path, lineno, note, text in reads:
-        print("%s:%d: [read] %s%s" % (path, lineno, (note + "   ") if note else "", text))
+        print("%s:%d: [read] %s%s" % (path, lineno, (note + "   ") if note else "",
+                                      cut(text)))
     for path, lineno, text in docs:
-        print("%s:%d: [doc] %s" % (path, lineno, text))
+        print("%s:%d: [doc] %s" % (path, lineno, cut(text)))
     for path, lineno, text in others:
-        print("%s:%d: [other] %s" % (path, lineno, text))
+        print("%s:%d: [other] %s" % (path, lineno, cut(text)))
 
     # ---- the summary, on stderr like every other cs diagnostic -------------
     literals = sorted({v for _p, _l, _lab, v, _t in sets

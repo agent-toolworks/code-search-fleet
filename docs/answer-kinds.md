@@ -482,7 +482,9 @@ docs/arch.svg:1:…(49828 bytes elided)…<text>/api/orders</text>…(29824 byte
 ! 1 line(s) longer than 400 bytes were cut around the match (79652 bytes elided) — --full-lines prints them whole
 ```
 
-The `repo/path:line:` address is never cut. Once an answer is over 20 KB, the
+The `repo/path:line:` address is never cut, and neither is what a verb writes
+after it: the `[set]`/`[read]` tag and the literal from `cs values`, or the
+`[write]`/`[read]` tag from `cs fields`. Only the raw source line is cut. Once an answer is over 20 KB, the
 `answer:` line also gives its size, so the cost shows before you re-run.
 `--full-lines` (or `CS_MAX_LINE=0`) prints lines whole.
 

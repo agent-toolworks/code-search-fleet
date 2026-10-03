@@ -8,6 +8,22 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.17.0 — 2026-10-03
+
+- `cs doctor` (`cs_doctor` over MCP): checks this machine against this fleet
+  and says what will not work, what it costs, and the fix (#67). It covers
+  python3 (and 3.11+ for `tomllib`, naming a newer one already on PATH), the
+  fleet root, each engine, tokensave graph coverage, and a row for each
+  language the fleet contains. For Kotlin it reads the JDK version the Gradle
+  build asks for and checks that one is findable. A Homebrew `openjdk@N` that
+  is installed but keg-only is named with the `JAVA_HOME` line that fixes it.
+  A JDK of the wrong version is named too: there `cs` cannot refuse, because
+  `java` runs, and the server answers `[]`. Exits 3 when anything is flagged.
+  `bootstrap` now ends with it.
+- README: a "What needs what" section with two tables: each command's
+  requirement and what happens without it, and the toolchain each language
+  needs (Java: none; Kotlin: a JDK at the build's toolchain version).
+
 ## 1.16.2 — 2026-10-03
 
 - `cs impls` / `cs refs` no longer refuse Java for want of a JDK (#65). Java

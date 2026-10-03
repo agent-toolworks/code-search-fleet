@@ -62,14 +62,18 @@ place both the CLI and the MCP server read (see
 export FLEET_ROOT=~/code/fleet     # the directory holding your repos
 ```
 
+Then check the setup against your repos: ask Claude to run `cs_doctor`, or run
+`cs doctor` from a terminal (see [What needs what](#what-needs-what)).
+
 Updating, the plugin cache, and running the installed scripts from a terminal:
 [docs/updating.md](docs/updating.md).
 
 ### From a clone
 
 ```sh
-scripts/bootstrap                  # install engines (--check to only report)
+scripts/bootstrap                  # install engines (--check to only report), then cs doctor
 export FLEET_ROOT=~/code/fleet     # a directory holding your repos (see below)
+scripts/cs doctor                  # what will not work on YOUR repos, and the fix
 scripts/verify-search              # 200+ checks against a throwaway fixture fleet
 ```
 
@@ -92,19 +96,43 @@ there. If you try it, keep the fleet on the Linux filesystem (`~/code/fleet`),
 not under `/mnt/c`. Every search walks the whole fleet, and crossing into the
 Windows filesystem makes that many times slower.
 
-Every *engine* is optional; `cs engines` reports what is present and `cs` routes
-around what is missing rather than failing silently.
+### What needs what
 
-**`python3` is the one hard requirement** — `uses`, `provides`, `deps`,
-`publishes`, `versions`, `owns`, `impls`, `refs`, `fields` and symbol mode all
-run through it. It is separate from the engines because it does not degrade:
-those commands refuse rather than answer without it. Nothing installs it for you
-(a system python is the OS's business), but `bootstrap` and `cs engines` both
-report it.
+Only `python3` and a fleet root are required. Every engine is optional: without
+one, the commands it backs refuse or fall back, and they say so, rather than
+answering empty.
 
-`timeout(1)` is worth having too. Without it a hung language server hangs `cs`
-with no upper bound, and a search that never returns is the one outcome worse
-than a wrong one, because nothing reports it. `brew install coreutils` on macOS.
+| For | You need | Without it |
+|---|---|---|
+| every search | `FLEET_ROOT`: a directory of git clones | every search refuses (`which`, `why`, `engines`, `doctor` still run) |
+| `uses` `provides` `deps` `publishes` `versions` `owns` `impls` `refs` `fields`, symbol mode | `python3` | those commands refuse |
+| Gradle version catalogs and `pyproject.toml` as TOML (`versions`, `deps`) | `python3` ≥ 3.11 (`tomllib`) | catalogs are not read (the answer names them); `pyproject.toml` is read by a fallback scanner |
+| `text` `seam` `uses` | ripgrep | POSIX grep: the same answers, slower |
+| `calls` | ast-grep, or semgrep | refuses |
+| `def` | universal-ctags | falls back to tokensave graphs, or refuses |
+| `callers` `callees` `impact`, and `impls` where no toolchain can run | tokensave, and a graph in each repo (`tokensave init`) | refuses in repos without a graph |
+| `impls` `refs` (a `resolved` answer) | uv, which runs Serena, and the language's toolchain below | refuses |
+| `history` | git | unavailable |
+| `gaps` | `gh`, authenticated | refuses |
+| a time limit on a hung engine | `timeout(1)` (`brew install coreutils`) | a hung language server hangs `cs` |
+
+`impls` and `refs` start a language server, and each language needs its own
+toolchain. Only the languages your fleet contains matter:
+
+| Language | Needs | Notes |
+|---|---|---|
+| C# | the .NET SDK (`dotnet`) | .NET Framework projects do not load on macOS or Linux; `impls` falls back to a tokensave graph there |
+| Java | nothing | Serena's Java server ships its own runtime |
+| Kotlin | a JDK at the version the Gradle build asks for (`jvmToolchain(21)`), findable through `JAVA_HOME` | with a JDK of another version the server answers **empty**, not an error. Homebrew's `openjdk@N` is keg-only, so set `JAVA_HOME` to it |
+| TypeScript, JavaScript | node | |
+| Python, Go, Rust | not checked by `cs` | an empty answer there is not proof of absence |
+
+**`cs doctor` checks all of this against your fleet.** It lists each engine and
+each language your repos contain, marks what will not work here, and says what
+it costs and how to fix it. It exits 3 when it flags anything. Over MCP it is
+`cs_doctor`. The MCP server sees the environment Claude Code started with, so
+after changing `PATH` or `JAVA_HOME`, restart Claude Code. `cs engines` is the
+shorter view: what is installed, and which answer kinds work.
 
 ## Setting up a fleet
 
@@ -194,6 +222,7 @@ Tool names, argument names per tool, and why `scope` is required:
 | What is actually being searched | `cs repos` |
 | Which workspaces there are to search | `cs scopes` |
 | How much to trust an answer | `cs why [kind]` |
+| What will not work on this machine, and the fix | `cs doctor` |
 
 ## How far to trust an answer
 

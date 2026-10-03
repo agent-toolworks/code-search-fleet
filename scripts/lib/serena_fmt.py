@@ -29,12 +29,28 @@ import sys
 #     >   7:public class SqlInventoryStore : IInventoryStore
 # That line number is the reference; body_location is where the *enclosing*
 # symbol starts, which is a different and less useful thing to report.
+#
+# BOTH are 0-based -- the LSP's convention -- while every other engine's
+# `repo/path:line:` is 1-based (an editor's, grep's). Printed as they came,
+# every address landed one line short: on the `{` above a class, on a blank
+# line above an annotation, and a join with another engine's (file, line)
+# never matched (#76). In the snippet above the class is on line 8.
 REF_LINE = re.compile(r"^\s*>\s*(\d+):(.*)$", re.MULTILINE)
+
+
+def one_based(n):
+    return n + 1 if isinstance(n, int) else n
 
 
 def start_line(entry):
     loc = entry.get("body_location") or {}
-    return loc.get("start_line", "?")
+    return one_based(loc.get("start_line", "?"))
+
+
+def short_name(name_path):
+    """The symbol path without its namespace: Acme.Inventory.Web/Foo/Bar -> Foo/Bar."""
+    head, sep, rest = name_path.partition("/")
+    return rest if sep and "." in head else name_path
 
 
 def reference_site(entry):
@@ -42,7 +58,7 @@ def reference_site(entry):
     snippet = entry.get("content_around_reference") or ""
     m = REF_LINE.search(snippet)
     if m:
-        return m.group(1), m.group(2).strip()
+        return int(m.group(1)) + 1, m.group(2).strip()
     return start_line(entry), entry.get("name_path", "")
 
 
@@ -83,8 +99,13 @@ def main():
                     if not isinstance(entry, dict):
                         continue
                     line, text = reference_site(entry)
+                    # The kind Serena groups by is the ENCLOSING symbol's, not
+                    # the reference's: a call inside a method read `[Class]`.
+                    # Naming the enclosing symbol says where the site is (#76).
+                    where = short_name(entry.get("name_path", ""))
+                    tag = "in {} {}".format(kind, where) if where else kind
                     rows.append((path, int(line) if str(line).isdigit() else 0,
-                                 kind, text))
+                                 tag, text))
         # By file then line, so a reader scans a file's references in order.
         for path, line, kind, text in sorted(rows, key=lambda r: (r[0], r[1])):
             emit(repo, path, line, kind, text)

@@ -108,23 +108,27 @@ where it was built".
 `/scripts/…` in an ordinary shell and fails. Resolve the installed copy instead:
 
 ```sh
-MARKETPLACE=agent-toolworks   # or code-search-fleet, or repo-fleet: the part after @ in `claude plugin list`
-CS_ROOT=$(ls -d ~/.claude/plugins/cache/"$MARKETPLACE"/code-search/*/ \
-          | grep -E '/[0-9]+(\.[0-9]+)*/$' | sort -V | tail -1)
+CS_ROOT=$(ls -d ~/.claude/plugins/cache/*/code-search/*/ 2>/dev/null \
+  | awk -F/ '{v=$(NF-1); print (v ~ /^[0-9]+(\.[0-9]+)*$/ ? v : "0"), $0}' \
+  | sort -V -k1,1 | tail -1 | cut -d' ' -f2-)
+[ -n "$CS_ROOT" ] || echo 'code-search is not installed: see claude plugin list'
 
 "$CS_ROOT/scripts/bootstrap"        # install the engines (--check to only report)
 "$CS_ROOT/scripts/verify-search"    # the full suite, against a throwaway fixture fleet
 "$CS_ROOT/scripts/cs" which         # the decision table
 ```
 
-The filter and `sort -V` pick the highest *version*, which matters because an
-update leaves the previous version's directory in place. A plain `tail -1` is
-not enough. A catalog entry pinned by `sha` can also leave a directory named
-after the short commit (`code-search/c7607743042c/` next to
-`code-search/1.14.1/`), and a hex name sorts after a version string. `tail -1`
-would then pick that directory, not the one the running `cs-mcp` serves from. If
-the result looks wrong, `claude plugin details code-search` names the installed
-version.
+It sorts on the version **alone**, which matters three ways. An update leaves
+the previous version's directory in place, so a plain `tail -1` is not enough.
+Sorting whole paths picks the alphabetically last *catalog*, not the newest
+version, when two catalogs hold the plugin. And a catalog entry pinned by `sha`
+leaves a directory named after the short commit (`code-search/c7607743042c/`
+next to `code-search/1.14.1/`), whose hex name would sort after a version
+string. That directory ranks below every real version, and is used only when it
+is the only one. It used to name the catalog (`agent-toolworks`) in the glob,
+which found nothing for any other install, left `CS_ROOT` empty, and ran
+`/scripts/cs` (#75). If the result looks wrong,
+`claude plugin details code-search` names the installed version.
 
 `verify-search` builds its own fixture repos, so it neither touches your code nor
 needs `FLEET_ROOT` set — which makes it the right first thing to run, before the

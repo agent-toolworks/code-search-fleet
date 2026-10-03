@@ -848,6 +848,25 @@ else
 fi
 rm -rf "$notc"
 
+# ---- telling users and agents what changed -----------------------------------
+# The changelog records every change, small untracked fixes included, but it
+# reaches nobody unless something reads it: `cs changes` for agents and people,
+# `release-notes` for the release page. Both are checked against the real file.
+cl_cur=$(tr -d '[:space:]' < "$repo_root_dir/VERSION")
+cl_prev=$(grep -oE '^## [0-9]+(\.[0-9]+)*' "$repo_root_dir/CHANGELOG.md" | sed -n 2p | cut -c4-)
+cl_out=$("$here/cs" changes "$cl_prev" 2>/dev/null)
+cl_notes=$("$here/release-notes" "$cl_cur" 2>/dev/null)
+"$here/cs" changes not-a-version >/dev/null 2>&1; cl_bad_rc=$?
+if matches "$cl_out" "^## ${cl_cur//./\\.}( |$)" && ! matches "$cl_out" "^## ${cl_prev//./\\.}( |$)" \
+   && [[ $cl_bad_rc -eq 1 ]] && matches "$cl_notes" "What changed in ${cl_cur//./\\.}" \
+   && [[ $(printf '%s\n' "$cl_notes" | grep -c '^- ') -ge 1 ]]; then
+  ok "cs changes lists what came after a version, and release notes come from the changelog"
+  pass=$((pass + 1))
+else
+  err "cs changes / release-notes (current $cl_cur, previous $cl_prev, bad-version exit $cl_bad_rc)"
+  fail=$((fail + 1)); failed_ids+=("changes-and-release-notes")
+fi
+
 # ---- a language server that answered before its import finished ------------
 # Serena's Java wrapper stops waiting for the project import after 20s and
 # answers anyway; on a cold multi-module build that was `resolved · 0 hit(s)`
@@ -4441,6 +4460,11 @@ assert init["protocolVersion"], "no protocol version"
 assert init["serverInfo"]["name"], "no server name"
 # The one place a search facade can announce itself from inside the tool list.
 assert "cs_scopes" in init["instructions"], "instructions do not point at cs_scopes"
+# The running version, and where to learn what changed in it: an agent whose
+# notes describe an older cs has no other way to notice that they do.
+version = open(os.environ["CS_HERE"] + "/../VERSION").read().strip()
+assert "cs " + version in init["instructions"], "instructions do not name the running version"
+assert "cs_changes" in init["instructions"], "instructions do not point at cs_changes"
 tools = json.loads(lines[1].split("\t", 1)[1])["tools"]
 assert len(tools) >= 15, "suspiciously few tools: %d" % len(tools)
 here = os.environ["CS_HERE"]
@@ -4467,7 +4491,7 @@ if printf '%s' "$mcp_list" | CS_HERE="$here" python3 -c '
 import json, sys
 lines = [l for l in sys.stdin.read().splitlines() if l.startswith("meta\t")]
 tools = json.loads(lines[1].split("\t", 1)[1])["tools"]
-explainers = {"cs_scopes", "cs_which", "cs_why", "cs_engines", "cs_doctor"}
+explainers = {"cs_scopes", "cs_which", "cs_why", "cs_engines", "cs_doctor", "cs_changes"}
 for t in tools:
     req = t["inputSchema"].get("required", [])
     if t["name"] in explainers:
@@ -5053,7 +5077,7 @@ fi
 # cs which/why/engines/doctor/scopes/repos cannot hit, miss or refuse. Logging
 # them would dilute every rate in the file, refusal rate most of all.
 qlog_meta="$qlog_dir/meta.jsonl"
-for _s in which why engines doctor scopes repos; do
+for _s in which why engines doctor changes scopes repos; do
   CS_LOG="$qlog_meta" "$here/cs" "$_s" >/dev/null 2>&1
 done
 if [[ ! -s "$qlog_meta" ]]; then

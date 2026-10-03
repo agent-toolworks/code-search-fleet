@@ -36,6 +36,10 @@ terminal (`"$CS_ROOT/scripts/cs" doctor`, see
 [below](#running-the-scripts-from-a-terminal)). It exits 0 when nothing is
 flagged and 3 when something is.
 
+Then `cs changes <the version you had>` (`cs_changes` over MCP) lists everything
+that changed since, small fixes included. `cs doctor`'s first row names the
+version you have now.
+
 Each flagged line prints its fix, ready to paste. The common ones, with what to
 do, are in [install.md](install.md#what-cs-doctor-says-and-what-to-do), and
 [what changed](install.md#if-you-already-use-cs-what-changed)

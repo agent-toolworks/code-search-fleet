@@ -61,7 +61,8 @@ install. To move an existing install, run
 
 Updating, the plugin cache, and running the installed scripts from a terminal:
 [docs/updating.md](docs/updating.md). **Already using cs?** See
-[what changed](docs/install.md#if-you-already-use-cs-what-changed).
+[what changed](docs/install.md#if-you-already-use-cs-what-changed), or run
+`cs changes <the version you knew>` for every change since, small fixes included.
 
 ### From a clone
 
@@ -219,6 +220,7 @@ Tool names, argument names per tool, and why `scope` is required:
 | Which workspaces there are to search | `cs scopes` |
 | How much to trust an answer | `cs why [kind]` |
 | What will not work on this machine, and the fix | `cs doctor` |
+| What changed since the version I knew | `cs changes [version]` |
 
 ## How far to trust an answer
 

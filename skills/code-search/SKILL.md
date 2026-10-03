@@ -51,8 +51,10 @@ one file both the CLI and the MCP server read. An `export` in a shell reaches
 only that shell. If it is unset, ask the user for the directory holding their
 repos rather than guessing.
 
-**If you learned cs before 1.16**, these changed (details in `docs/install.md`,
-"If you already use cs"):
+**If you learned cs earlier**, these changed. `cs changes <the version you knew>`
+(`cs_changes` over MCP) lists everything since, small fixes included, and the
+MCP instructions name the running version. Details are in `docs/install.md`,
+"If you already use cs":
 - A scope is the **absolute path** of the workspace you are in, or of any
   directory inside it (since 1.16.0). A bare folder name still works when it is
   unique. `cs_scopes` lists workspaces by path, across `TICKETS_ROOT` and
@@ -65,13 +67,18 @@ repos rather than guessing.
 - Legacy .NET Framework C# loads with the .NET SDK, minus its reference
   assemblies.
 - `CS_NO_GRAPH` in `fleet.env` marks repos kept without a graph on purpose.
+- Language-server line numbers are 1-based since 1.18.1. Before, every
+  `cs impls` / `cs refs` address was one line short, so an older answer
+  you kept points one line above the symbol.
+- A `cs refs` line names its enclosing symbol (`[in Method Foo/Bar]`).
+- An answer a language server gave before its project import finished is
+  asked again, or refused. It is never reported as it came, so a
+  `resolved · 0 hit(s)` is a real zero.
 
 **When a command refuses for a missing engine or toolchain, or `cs impls` /
 `cs refs` comes back empty, run `cs doctor` (`cs_doctor` over MCP) before
 concluding anything.** It checks this machine against the languages the fleet
-actually contains, and hands the user the fix. A Kotlin repo with a JDK of the
-wrong version is the case to know: `cs` cannot refuse it, because `java` runs,
-and the server answers empty.
+actually contains, and hands the user the fix.
 
 Every *engine* is optional. `cs engines` reports what is present, and `cs` routes
 around whatever is missing rather than failing silently. **Two exceptions.**

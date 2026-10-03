@@ -8,6 +8,25 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.19.0 — 2026-10-03
+
+- **`cs changes [version]`** (`cs_changes` over MCP): what changed in cs,
+  from this changelog. With no argument it shows the three latest releases;
+  with a version, everything after it. Small fixes that never had a ticket are
+  included, because every change gets a line here. **If you are an agent whose
+  notes describe an older cs, call it with the version you knew.**
+- The MCP server's instructions name the running version (`This is cs X.Y.Z`),
+  and say to call `cs_changes` when cs behaves differently from what you
+  remember.
+- `scripts/release-notes X.Y.Z` prints a version's notes from its changelog
+  section, so a GitHub release cannot leave out a change the changelog
+  records. `CLAUDE.md` makes that the rule for every release.
+- The skill's "If you learned cs earlier" list and `docs/install.md`'s "what
+  changed" cover 1.18.1: 1-based line numbers, the enclosing symbol on
+  `cs refs` lines, and an answer given before the import finished. The skill no
+  longer says a wrong-version Kotlin JDK cannot be refused; it has been
+  refused since 1.18.0.
+
 ## 1.18.1 — 2026-10-03
 
 - **A language server that answered before its project import finished is

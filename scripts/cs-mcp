@@ -465,6 +465,14 @@ TOOLS = [
      "negatives here are worth.",
      []),
 
+    ("cs_changes", "changes",
+     "What changed in cs: the three latest releases, or everything after a "
+     "version you name -- behaviour changes, new refusals, and small fixes "
+     "that had no ticket. Call it when cs behaves differently from what you "
+     "remember or from your notes.",
+     [arg("since", "a version such as 1.17.2: list everything released after "
+                   "it. Omit for the three latest releases.", required=False)]),
+
     ("cs_doctor", "doctor",
      "Check this machine against this fleet: for every engine, and for every "
      "language the fleet contains, whether cs can answer here, what it costs "
@@ -476,6 +484,14 @@ TOOLS = [
 # The one place a search facade can tell an agent it exists, from inside the
 # tool list rather than from prose someone has to remember to load. Kept short:
 # it is standing context in every session this server is enabled for.
+def _version():
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "VERSION")) as f:
+            return f.read().strip() or "?"
+    except OSError:
+        return "?"
+
+
 INSTRUCTIONS = """\
 cs searches a fleet of repositories. Start with a cs_* tool for any question \
 that spans more than one repo — who calls an endpoint, where a symbol is \
@@ -495,8 +511,16 @@ warning rather than reporting the hits alone.
 When a tool refuses for a missing engine or toolchain, or cs_impls / cs_refs \
 come back empty, call cs_doctor before concluding anything: it checks this \
 machine against the languages the fleet holds and names the fix to give the \
-user.\
+user.
+
+This is cs {version}. If cs behaves differently from what you remember or \
+from your notes, call cs_changes: it lists what changed in recent versions, \
+small fixes included.\
 """
+# The version is read, not written in: a number typed into this string would be
+# the one place it could drift from VERSION, and the version is what lets an
+# agent notice the cs it is talking to is not the one it remembers.
+INSTRUCTIONS = INSTRUCTIONS.replace("{version}", _version())
 
 
 def tool_schema(spec):
@@ -634,7 +658,7 @@ def run_cs(sub, argv, scope=None, flags=()):
 # straight to stdout rather than through cs's result buffer, so `--porcelain`
 # would put the table and the envelope on the same stream and neither would
 # parse. Their stdout is passed through as written instead.
-PLAIN_SUBS = {"which", "why", "engines", "doctor", "scopes", "repos"}
+PLAIN_SUBS = {"which", "why", "engines", "doctor", "changes", "scopes", "repos"}
 
 
 def run_cs_plain(sub, argv=(), scope=None):

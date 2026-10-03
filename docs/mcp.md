@@ -109,7 +109,7 @@ mcp__plugin_code-search_cs__cs_refs   {"scope": "fleet", "symbol": "Reserve", "r
                                        "file": "src/Inventory/ReserveHandler.cs"}
 // one named key: cs_fields (field), cs_values (key), cs_constructs (type), cs_provides (coordinate)
 mcp__plugin_code-search_cs__cs_fields {"scope": "fleet", "field": "Order::status", "count": true}
-// scope only: cs_deps, cs_versions, cs_owns, cs_repos, …; nothing at all: cs_scopes, cs_which, cs_why, cs_engines, cs_doctor
+// scope only: cs_deps, cs_versions, cs_owns, cs_repos, …; nothing at all: cs_scopes, cs_which, cs_why, cs_engines, cs_doctor, cs_changes
 mcp__plugin_code-search_cs__cs_scopes {}
 ```
 

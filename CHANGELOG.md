@@ -8,6 +8,28 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.19.1 — 2026-10-03
+
+- **A C# or Kotlin graph answer names the graph's property-accessor hole** (#79).
+  tokensave emits no edges out of property accessors (get/set/init, a Kotlin
+  `get() =`) and none into properties: on tokensave 7.9.0, 7.13.0 and 7.14.1, a
+  method called only from a getter has no callers in the graph. TypeScript
+  getters are fine. `cs callers` therefore answered a clean structural zero,
+  exit 2, for a method with a caller, and the 1.18.1 refusal for `cs refs`
+  pointed at exactly that command. Now:
+  - `cs callers` / `cs callees` / `cs impact` on C# or Kotlin say
+    `calls inside C# property accessors are not in the graph` in the
+    provenance line;
+  - a zero is marked `degraded` in the envelope, with
+    `cs uses '<name>' --word` as the first hint;
+  - the `cs refs` "answer now" for a method adds that text search as a second
+    line, saying only the two together approximate references.
+
+  **If you are an agent:** a C# or Kotlin "no callers" from the graph is not
+  "unused" until `cs uses --word` agrees. `cs why structural` says the same.
+  `verify-engines` has a `ts-getters` known-limitation probe, which reports
+  `IMPROVED` when a tokensave release fixes this.
+
 ## 1.19.0 — 2026-10-03
 
 - **`cs changes [version]`** (`cs_changes` over MCP): what changed in cs,

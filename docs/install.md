@@ -226,6 +226,12 @@ before 1.16. Update anything that says otherwise:
 - **A refusal's "answer now" is a command that runs** (1.18.1, #75): for
   `cs refs` it is `cs callers` (a method) or `cs impls --engine=tokensave` (a
   type), not a flag `cs refs` refuses.
+- **C# and Kotlin graph answers name a hole in the graph** (1.19.1, #79).
+  tokensave emits no edges out of property accessors, so a method called only
+  from a getter has no callers in the graph. `cs callers` / `callees` /
+  `impact` say so in the provenance line, a zero is marked `degraded`, and the
+  `cs refs` refusal pairs `cs callers` with `cs uses '<name>' --word`, the text
+  search that finds those calls. Until 1.19.1, such a zero looked like "unused".
 - **`cs changes` / `cs_changes`** (1.19.0) lists what changed since a version,
   small fixes included, and the MCP instructions name the running version.
   This section is the summary; that command is the complete list.

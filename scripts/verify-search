@@ -1196,7 +1196,7 @@ if ! command -v tokensave >/dev/null 2>&1; then
   skip "graph fallback" "tokensave not installed"
 else
   ts_repo="$FLEET_ROOT/inventory-api-dotnet"
-  (cd "$ts_repo" && tokensave init >/dev/null 2>&1) || true
+  (cd "$ts_repo" && tokensave init </dev/null >/dev/null 2>&1) || true
   if [[ ! -f "$ts_repo/.tokensave/tokensave.db" ]]; then
     skip "graph fallback" "could not build a tokensave graph here"
   else
@@ -1505,7 +1505,7 @@ else
     # Wide enough that the two fields cannot be confused for one another after
     # rounding, and short enough to sit in a suite.
     sleep 5
-    (cd "$ts_repo" && tokensave sync >/dev/null 2>&1) || true
+    (cd "$ts_repo" && tokensave sync </dev/null >/dev/null 2>&1) || true
     fresh_u=$(fresh_field last_updated)
     fresh_s=$(fresh_field last_sync_at)
     if [[ -z "$fresh_s" || -z "$fresh_u" ]]; then
@@ -1578,7 +1578,7 @@ else
   # produced read sites and no writes at all, which would have let a broken
   # split pass.
   fld_repo="$FLEET_ROOT/fulfillment-worker-python"
-  (cd "$fld_repo" && tokensave init >/dev/null 2>&1) || true
+  (cd "$fld_repo" && tokensave init </dev/null >/dev/null 2>&1) || true
   if [[ ! -f "$fld_repo/.tokensave/tokensave.db" ]]; then
     skip "cs fields" "could not build a tokensave graph here"
   else
@@ -1682,7 +1682,7 @@ namespace Probe {
   }
 }
 PROBE
-      (cd "$lb_repo" && tokensave init >/dev/null 2>&1) || true
+      (cd "$lb_repo" && tokensave init </dev/null >/dev/null 2>&1) || true
       lb_out=$("$here/cs" fields 'Holder::_hfield' --fleet 2>&1); lb_rc=$?
       lb_json=$("$here/cs" fields 'Holder::_hfield' --fleet --porcelain --quiet 2>/dev/null)
       if [[ $lb_rc -eq 0 ]] \
@@ -1714,7 +1714,7 @@ for i in range(60):
     L += [f"    def r{i}(self):", f"        return self._capprobefield"]
 open(sys.argv[1], "w").write("\n".join(L) + "\n")
 PROBE
-    (cd "$fld_repo" && tokensave sync >/dev/null 2>&1) || true
+    (cd "$fld_repo" && tokensave sync </dev/null >/dev/null 2>&1) || true
     cap_w=$(CS_MAX_RESULTS=10 "$here/cs" fields _capprobefield --fleet --quiet 2>/dev/null | grep -c '\[write\]')
     cap_r=$(CS_MAX_RESULTS=10 "$here/cs" fields _capprobefield --fleet --quiet 2>/dev/null | grep -c '\[read\]')
     if [[ "$cap_w" -eq 5 && "$cap_r" -eq 5 ]]; then
@@ -1794,7 +1794,7 @@ open(sys.argv[1], "w").write(
     "        if self._dupprobefield and self._dupprobefield != 0:"
     " return self._dupprobefield\n")
 PROBE
-    (cd "$fld_repo" && tokensave sync >/dev/null 2>&1) || true
+    (cd "$fld_repo" && tokensave sync </dev/null >/dev/null 2>&1) || true
 
     dup_list=$("$here/cs" fields _dupprobefield --fleet --quiet 2>&1)
     dup_cnt=$("$here/cs" fields _dupprobefield --fleet --count --quiet 2>&1)
@@ -1837,7 +1837,7 @@ PROBE
     fi
 
     rm -f "$fld_repo/fulfillment/dupprobe.py"
-    (cd "$fld_repo" && tokensave sync >/dev/null 2>&1) || true
+    (cd "$fld_repo" && tokensave sync </dev/null >/dev/null 2>&1) || true
 
     # ---- --count: the fleet-wide question, where listing cannot answer ------
     # A common field name overflows tokensave's own 15000-character output even
@@ -1855,7 +1855,7 @@ for i in range(200):
     L += [f"    def r{i}(self):", f"        return self._hugeprobefield"]
 open(sys.argv[1], "w").write("\n".join(L) + "\n")
 PROBE
-    (cd "$fld_repo" && tokensave sync >/dev/null 2>&1) || true
+    (cd "$fld_repo" && tokensave sync </dev/null >/dev/null 2>&1) || true
 
     # The listing must still REFUSE -- a partial site list presented as complete
     # would understate the blast radius -- but it must name the mode that can
@@ -1928,7 +1928,7 @@ PROBE
     rm -f "$fld_repo/fulfillment/hugeprobe.py"
 
     rm -f "$fld_repo/fulfillment/capprobe.py"
-    (cd "$fld_repo" && tokensave sync >/dev/null 2>&1) || true
+    (cd "$fld_repo" && tokensave sync </dev/null >/dev/null 2>&1) || true
   fi
   rm -rf "$fld_repo/.tokensave"
 fi
@@ -2058,7 +2058,7 @@ if ! command -v tokensave >/dev/null 2>&1; then
   skip "symbol mode" "tokensave not installed"
 else
   sym_repo="$FLEET_ROOT/inventory-api-dotnet"
-  (cd "$sym_repo" && tokensave init >/dev/null 2>&1) || true
+  (cd "$sym_repo" && tokensave init </dev/null >/dev/null 2>&1) || true
   if [[ ! -f "$sym_repo/.tokensave/tokensave.db" ]]; then
     skip "symbol mode" "could not build a tokensave graph here"
   else
@@ -2217,7 +2217,7 @@ assert env["hits"], "no hits to attach the warning to"
       # And with a graph in the workspace, the SAME query is answered from it,
       # with no substitution to warn about. Otherwise the warning above would be
       # unconditional, which is how a warning stops being read.
-      (cd "$sym_tick/SYM-1/inventory-api-dotnet" && tokensave init >/dev/null 2>&1) || true
+      (cd "$sym_tick/SYM-1/inventory-api-dotnet" && tokensave init </dev/null >/dev/null 2>&1) || true
       sym_own=$(TICKETS_ROOT="$sym_tick" "$here/cs" callers ReserveAsync \
                 inventory-api-dotnet --ticket=SYM-1 --porcelain 2>/dev/null)
       if printf '%s' "$sym_own" | python3 -c '

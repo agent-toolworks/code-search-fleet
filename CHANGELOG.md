@@ -10,6 +10,11 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## 1.16.1 — 2026-10-03
 
+- `verify-search` and `verify-engines` no longer hang when run from a terminal.
+  `tokensave init` asks whether to install git hooks when stdin is a TTY, and
+  the suites ran it with its output discarded but stdin attached, so it waited
+  on a question nobody could see. Every `tokensave init`/`sync` in them now
+  reads from `/dev/null`.
 - A grouping folder that holds a stray repo no longer hides the workspaces
   inside it (#61). Discovery stopped at the first directory holding a repo, so
   `_old/` with one scratch clone was taken to be the workspace: the 26

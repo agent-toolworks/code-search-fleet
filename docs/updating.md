@@ -27,6 +27,32 @@ installed, not like the id is incomplete.
 Restart Claude Code afterwards; the CLI says so, and the previously loaded skill
 stays in the session until you do.
 
+### After updating: run `cs doctor`
+
+Since 1.17.0, `cs doctor` checks this machine against *your* fleet and names
+what will not work here, what it costs, and the fix. Run it after every update
+and on every new machine: ask Claude to run `cs_doctor`, or run it from a
+terminal (`"$CS_ROOT/scripts/cs" doctor`, see
+[below](#running-the-scripts-from-a-terminal)). It exits 0 when nothing is
+flagged and 3 when something is.
+
+Most of what it flags is set up once per machine:
+
+| It says | Do |
+|---|---|
+| `python3 … older than 3.11` | put a newer one first on `PATH`. On macOS with Homebrew, add `eval "$(/opt/homebrew/bin/brew shellenv)"` to `~/.zprofile`. `/usr/bin` otherwise wins with Apple's 3.9 |
+| `Kotlin … the builds ask for JDK N, and none is findable` | install `openjdk@N` and set `JAVA_HOME` to it in your shell profile. Homebrew's JDKs are keg-only, so installing alone is not enough. `cs doctor` prints the exact line |
+| `C# … no runnable dotnet` | `brew install --cask dotnet-sdk` |
+| `tokensave … graphs in N of M repos` | `cd <repo> && tokensave init` in the rest |
+
+Java needs nothing; its language server ships its own runtime (since 1.16.2;
+before that, cs refused Java without a JDK).
+
+**After changing `PATH` or `JAVA_HOME`, restart Claude Code.** The MCP server
+inherits the environment Claude Code was started with, so it keeps using the
+old Python and no JDK until then, and `cs_doctor` reports from that old
+environment.
+
 **Verify by effect, not by the version string** — and the reason that advice
 exists is worth stating, because it was once not enough. The plugin cache keeps
 every version side by side and `claude plugin update` compares version strings,

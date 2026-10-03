@@ -490,7 +490,12 @@ while the user edits a branch. cs_scopes lists the workspaces by path.
 Every answer is labelled with the KIND of evidence behind it, which is what \
 decides how much a NEGATIVE is worth: a `resolved` no is strong, a `textual` \
 no is weak. Pass on the provenance line and any PARTIAL / degraded / truncated \
-warning rather than reporting the hits alone.\
+warning rather than reporting the hits alone.
+
+When a tool refuses for a missing engine or toolchain, or cs_impls / cs_refs \
+come back empty, call cs_doctor before concluding anything: it checks this \
+machine against the languages the fleet holds and names the fix to give the \
+user.\
 """
 
 

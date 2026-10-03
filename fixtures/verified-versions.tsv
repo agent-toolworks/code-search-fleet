@@ -1,5 +1,5 @@
 # engine	version	kind	outcome	note
-# verified 2026-10-03T13:22:26Z
+# verified 2026-10-03T14:06:40Z
 ripgrep	15.2.0	capability	PASS	literal text across repos
 ctags	6.2.1	capability	PASS	fleet-wide symbol index
 ast-grep	0.45.1	capability	PASS	literal in argument position
@@ -8,5 +8,5 @@ tokensave	7.13.0	capability	PASS	C# interface impls in the graph (4: 1 implement
 serena	2.0.0.dev0	capability	PASS	C# interface to implementation
 serena-java	2.0.0.dev0	capability	PASS	Java interface to implementation, with or without a system JDK
 dotnet	10.0.400	capability	PASS	Serena can analyse C#
-java	?	capability	MISSING	on PATH but did not run — Serena cannot analyse Kotlin
-node	v25.6.1	capability	PASS	Serena can analyse TypeScript/JavaScript
+java	21.0.12	capability	PASS	Serena can analyse Kotlin
+node	v22.23.1	capability	PASS	Serena can analyse TypeScript/JavaScript

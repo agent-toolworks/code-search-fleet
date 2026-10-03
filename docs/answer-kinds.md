@@ -175,10 +175,12 @@ kind's blind spots.
 
 ## And where no language server can run, a graph answers instead
 
-`cs impls` needs a language server, which needs its language's toolchain. For
-.NET Framework C# that toolchain is Windows-only to build, so on macOS or Linux
-the `resolved` tier is unavailable *by construction* — and refusing was `cs`'s
-only answer there. When a repo has a tokensave graph, `cs impls` now falls back
+`cs impls` needs a language server, which needs its language's toolchain. Where
+that toolchain is missing, or cannot be installed on the machine, refusing was
+`cs`'s only answer. (This once said .NET Framework C# was such a case by
+construction on macOS and Linux. It is not: the .NET SDK loads Framework
+projects there too, minus their reference assemblies, as `verify-engines`'
+`serena-netfx` probe checks.) When a repo has a tokensave graph, `cs impls` now falls back
 to it:
 
 ```

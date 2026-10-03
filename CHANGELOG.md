@@ -8,6 +8,41 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.18.0 — 2026-10-03
+
+- **Kotlin is gated by what its build requests, not by `java` running** (#72).
+  A `jvmToolchain(N)` request, the repo's own or one in a build it pulls in
+  with `includeBuild`, needs a JDK of exactly N that Gradle can find, and `cs`
+  now refuses when there is none. Before, a JDK of another version passed the
+  check and the server answered `[]`. A build pinned only by
+  `sourceCompatibility` / `jvmTarget` needs no JDK: the Kotlin server builds it
+  on its own runtime (Java 25). Verified under JDK 17, 21, 26 and none. `cs`
+  refused those builds before when `java` did not run. JDK discovery adds
+  Gradle-provisioned JDKs, SDKMAN, `org.gradle.java.installations.paths`, and
+  builds that apply the foojay resolver.
+- **Legacy .NET Framework C# loads with the .NET SDK on macOS and Linux** (#72).
+  A two-project v4.x solution resolved implementations and references across a
+  `ProjectReference`, minus the framework's reference assemblies. The refusal
+  text, the README and the skill had called that impossible. `cs doctor` and
+  the C# refusal now say what a Framework repo gets. When the repo has a
+  tokensave graph, the refusal leads with `--engine=tokensave`.
+- **`CS_NO_GRAPH`** (`fleet.env`): repos kept without a tokensave graph on
+  purpose. `cs doctor` names them and does not count them, and a graph refusal
+  in one says why instead of prescribing `tokensave init` (#72).
+- `cs doctor` has a **workspaces** row: each configured root, its workspace
+  count, any `mixed` folder, and a root that does not exist. The default
+  `TICKETS_ROOT` is not flagged when absent (#72).
+- `verify-engines`: `serena-kt` (Kotlin with no toolchain request, no
+  `JAVA_HOME`) and `serena-netfx` (a legacy .NET Framework solution) probes.
+- Toolchain probes give `--version` an empty stdin. `dotnet` otherwise writes a
+  keypad-mode escape (`ESC[?1h ESC=`) straight to the terminal, even with its
+  output captured, which leaves the terminal's keypad mode switched.
+- Docs (#73). `docs/install.md` covers workspaces and path scopes, gives a
+  ticket-scoped first query, and "If you already use cs: what changed" (under a
+  stable heading; the old link still works) now opens with path scopes (#59)
+  and `WORKSPACE_ROOTS`. The MCP "scope is required" error leads with the
+  absolute path. Check counts are no longer quoted, so they cannot go stale.
+
 ## 1.17.2 — 2026-10-03
 
 - **`docs/install.md`: installing on a new machine, step by step** (#70). It is

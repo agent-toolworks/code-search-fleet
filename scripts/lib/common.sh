@@ -24,6 +24,7 @@ _env_FLEET_ROOT="${FLEET_ROOT:-}"
 _env_TICKETS_ROOT="${TICKETS_ROOT:-}"
 _env_BRANCH_PREFIX="${BRANCH_PREFIX:-}"
 _env_WORKSPACE_ROOTS="${WORKSPACE_ROOTS:-}"
+_env_CS_NO_GRAPH="${CS_NO_GRAPH:-}"
 
 # shellcheck disable=SC1091
 [[ -f "$FLEET_CONFIG_DIR/fleet.env" ]] && source "$FLEET_CONFIG_DIR/fleet.env"
@@ -32,9 +33,14 @@ _env_WORKSPACE_ROOTS="${WORKSPACE_ROOTS:-}"
 [[ -n "$_env_TICKETS_ROOT" ]]  && TICKETS_ROOT="$_env_TICKETS_ROOT"
 [[ -n "$_env_BRANCH_PREFIX" ]] && BRANCH_PREFIX="$_env_BRANCH_PREFIX"
 [[ -n "$_env_WORKSPACE_ROOTS" ]] && WORKSPACE_ROOTS="$_env_WORKSPACE_ROOTS"
-unset _env_FLEET_ROOT _env_TICKETS_ROOT _env_BRANCH_PREFIX _env_WORKSPACE_ROOTS
+[[ -n "$_env_CS_NO_GRAPH" ]] && CS_NO_GRAPH="$_env_CS_NO_GRAPH"
+unset _env_FLEET_ROOT _env_TICKETS_ROOT _env_BRANCH_PREFIX _env_WORKSPACE_ROOTS _env_CS_NO_GRAPH
 
 FLEET_ROOT="${FLEET_ROOT:-${HOME}/code/fleet}"
+# Whether TICKETS_ROOT is only the default: cs doctor flags a CONFIGURED root
+# that does not exist, not a default nobody asked for.
+TICKETS_ROOT_DEFAULTED=0
+[[ -z "${TICKETS_ROOT:-}" ]] && TICKETS_ROOT_DEFAULTED=1
 TICKETS_ROOT="${TICKETS_ROOT:-${HOME}/tickets}"
 # Further workspace roots, colon-separated (_reviews/ beside _tickets/, say).
 # TICKETS_ROOT is always one of them; a scope must lie under one.

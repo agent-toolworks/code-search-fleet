@@ -118,7 +118,7 @@ if [[ $minimal -eq 0 ]]; then
     for tc in dotnet java node; do
       case "$tc" in
         java) runs=$(java -version >/dev/null 2>&1 && echo 1 || echo 0) ;;
-        *)    runs=$("$tc" --version >/dev/null 2>&1 && echo 1 || echo 0) ;;
+        *)    runs=$("$tc" --version </dev/null >/dev/null 2>&1 && echo 1 || echo 0) ;;
       esac
       if have "$tc" && [[ "$runs" == 1 ]]; then
         ok "  $tc toolchain present"

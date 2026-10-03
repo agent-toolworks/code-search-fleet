@@ -61,7 +61,7 @@ install. To move an existing install, run
 
 Updating, the plugin cache, and running the installed scripts from a terminal:
 [docs/updating.md](docs/updating.md). **Already using cs?** See
-[what changed in 1.16–1.17](docs/install.md#if-you-already-use-cs-what-changed-in-116117).
+[what changed](docs/install.md#if-you-already-use-cs-what-changed).
 
 ### From a clone
 
@@ -69,7 +69,7 @@ Updating, the plugin cache, and running the installed scripts from a terminal:
 scripts/bootstrap                  # install engines (--check to only report), then cs doctor
 export FLEET_ROOT=~/code/fleet     # a directory holding your repos (see below)
 scripts/cs doctor                  # what will not work on YOUR repos, and the fix
-scripts/verify-search              # 200+ checks against a throwaway fixture fleet
+scripts/verify-search              # the full suite, against a throwaway fixture fleet
 ```
 
 Every check should pass. Checks for an engine you have not installed show as
@@ -116,9 +116,9 @@ toolchain. Only the languages your fleet contains matter:
 
 | Language | Needs | Notes |
 |---|---|---|
-| C# | the .NET SDK (`dotnet`) | .NET Framework projects do not load on macOS or Linux; `impls` falls back to a tokensave graph there |
+| C# | the .NET SDK (`dotnet`) | legacy .NET Framework projects load too, on macOS and Linux, without their reference assemblies: types from the framework and its packages do not resolve, the repo's own types and references do. Without the SDK, `impls` falls back to a tokensave graph |
 | Java | nothing | Serena's Java server ships its own runtime |
-| Kotlin | a JDK at the version the Gradle build asks for (`jvmToolchain(21)`), findable through `JAVA_HOME` | with a JDK of another version the server answers **empty**, not an error. Homebrew's `openjdk@N` is keg-only, so set `JAVA_HOME` to it |
+| Kotlin | only for a build that requests a Gradle toolchain (`jvmToolchain(21)`, its own or an `includeBuild`'s): a JDK of exactly that version, findable through `JAVA_HOME` | a build pinned only by `sourceCompatibility` / `jvmTarget` needs no JDK: the Kotlin server builds it on its own runtime. Where a requested JDK is not findable, `cs` refuses, because the server would answer empty. Homebrew's `openjdk@N` is keg-only, so set `JAVA_HOME` to it |
 | TypeScript, JavaScript | node | |
 | Python, Go, Rust | not checked by `cs` | an empty answer there is not proof of absence |
 
@@ -140,6 +140,7 @@ Put the location in `~/.config/repo-fleet/fleet.env`:
 export FLEET_ROOT="$HOME/code/fleet"     # one clone per repo
 export TICKETS_ROOT="$HOME/tickets"      # per-ticket worktree workspaces (optional)
 export WORKSPACE_ROOTS="$HOME/reviews"   # more workspace roots, colon-separated (optional)
+export CS_NO_GRAPH="big-legacy-repo"     # repos kept without a tokensave graph on purpose (optional)
 ```
 
 **This file is what the MCP server reads.** The server that the plugin registers

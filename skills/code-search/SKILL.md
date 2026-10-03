@@ -53,10 +53,18 @@ repos rather than guessing.
 
 **If you learned cs before 1.16**, these changed (details in `docs/install.md`,
 "If you already use cs"):
+- A scope is the **absolute path** of the workspace you are in, or of any
+  directory inside it (since 1.16.0). A bare folder name still works when it is
+  unique. `cs_scopes` lists workspaces by path, across `TICKETS_ROOT` and
+  `WORKSPACE_ROOTS`.
 - `cs doctor` is the setup check. Refusals now say `check: cs doctor`.
-- Java needs no JDK.
-- Kotlin needs the exact JDK version its Gradle build declares. With another
-  version it answers empty rather than refusing, and only `cs doctor` sees that.
+- Java needs no JDK. Kotlin needs one only when its build (or a build it
+  includes) requests a Gradle toolchain, and then exactly that version; `cs`
+  refuses when it is not findable. A build pinned by `sourceCompatibility` /
+  `jvmTarget` alone needs none.
+- Legacy .NET Framework C# loads with the .NET SDK, minus its reference
+  assemblies.
+- `CS_NO_GRAPH` in `fleet.env` marks repos kept without a graph on purpose.
 
 **When a command refuses for a missing engine or toolchain, or `cs impls` /
 `cs refs` comes back empty, run `cs doctor` (`cs_doctor` over MCP) before
@@ -538,9 +546,10 @@ installed.
   ctags index), not the repo's most-common one, so a mostly-JavaScript repo with
   a C# component still routes correctly. `--engine=tokensave` forces the graph;
   an `--engine` a subcommand cannot serve is refused rather than ignored.
-  That matters for code where the toolchain cannot be installed at all: .NET
-  Framework C# is Windows-only to build, so on macOS or Linux `resolved` is
-  unavailable *by construction* there. A graph answer is weaker in a specific
+  That matters where the toolchain is missing or cannot be installed. (Legacy
+  .NET Framework C# is not such a case: the .NET SDK loads it on macOS and
+  Linux too, minus its reference assemblies, so framework and package types do
+  not resolve while the repo's own do.) A graph answer is weaker in a specific
   way — it cannot see reflection, DI registration, or generated code, and
   `cs refs` remains the only thing that bridges a DI registration. It also
   answers about the code as of its last sync, so `cs` states the graph's age on

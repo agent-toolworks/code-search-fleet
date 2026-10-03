@@ -79,8 +79,17 @@ echo 'export FLEET_ROOT="$HOME/code/fleet"' >> ~/.config/repo-fleet/fleet.env
 git clone git@github.com:acme/a.git ~/code/fleet/a
 ```
 
-**Check:** the `fleet` row of `"$CS_ROOT/scripts/cs" doctor` reads `✓ … N
-repo(s)`. A folder there that is not a git clone is listed as not searched.
+**Ticket workspaces** (optional) are a second level: a folder per ticket under
+`TICKETS_ROOT`, holding worktrees of only the repos that ticket changes, which
+`cs` layers over the fleet. Further roots, such as a `_reviews/` beside
+`_tickets/`, go in `WORKSPACE_ROOTS`, colon-separated. All three settings, and
+`CS_NO_GRAPH` for repos kept without a tokensave graph on purpose, are in
+[Setting up a fleet](../README.md#setting-up-a-fleet).
+
+**Check:** in `"$CS_ROOT/scripts/cs" doctor`, the `fleet` row reads `✓ … N
+repo(s)`, and the `workspaces` row lists each root with its workspace count. A
+folder in the fleet that is not a git clone is listed as not searched. A
+configured workspace root that does not exist is flagged.
 
 ## 5. Fix what `cs doctor` flags
 
@@ -99,8 +108,9 @@ Kotlin repos is never asked for a JDK.
 way around that. Give the user the exact line, prefixed with `!`, so they can
 run it in this session, then re-run `cs doctor`.
 
-**Check:** `cs doctor` exits 0, or flags only what the user chose to leave. For
-example, tokensave graphs are optional.
+**Check:** `cs doctor` exits 0, or flags only what the user chose to leave. A
+repo kept without a tokensave graph on purpose belongs in `CS_NO_GRAPH`, and
+then it is not flagged.
 
 ## 6. Restart Claude Code, and check again over MCP
 
@@ -121,10 +131,19 @@ the repos?"*, or *"who calls the `/orders` endpoint?"*. The answer ends with a
 provenance line saying which kind of evidence it rests on. See
 [How far to trust an answer](../README.md#how-far-to-trust-an-answer).
 
+From inside a ticket workspace, the same question answers from your branch
+layered over the fleet. Over MCP, the `scope` is the workspace's absolute path,
+and your own working directory at any depth works:
+
+```sh
+"$CS_ROOT/scripts/cs" --ticket="$PWD" uses '/orders'    # or: cs_uses {"scope": "<that path>", ...}
+"$CS_ROOT/scripts/cs" scopes                              # every workspace, by path
+```
+
 Optionally, to prove the tool itself on this machine:
 
 ```sh
-"$CS_ROOT/scripts/verify-search"      # 260+ checks on a throwaway fixture fleet, a few minutes
+"$CS_ROOT/scripts/verify-search"      # the full suite, on a throwaway fixture fleet, a few minutes
 ```
 
 ## What `cs doctor` says, and what to do
@@ -134,12 +153,14 @@ Optionally, to prove the tool itself on this machine:
 | `✗ fleet  root does not exist` / `no repositories in …` | step 4 |
 | `fleet … not git repos, so not searched: x` | `x` is not a clone. Clone it properly, or move it out |
 | `! python3 … older than 3.11` | put a newer Python first on `PATH`. On macOS with Homebrew the printed fix is `echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile`. `/usr/bin` otherwise wins with Apple's 3.9, which cannot read Gradle version catalogs |
-| `! Kotlin … the builds ask for JDK N … installed but keg-only` | paste the printed `export JAVA_HOME=…` line. Homebrew's JDKs are invisible until `JAVA_HOME` points at them |
-| `! Kotlin … the builds ask for JDK N, and none is findable` | `brew install openjdk@N`, then the printed `JAVA_HOME` line. It must be **that** version: with another JDK the Kotlin server answers *empty*, not an error |
-| `! C# … no runnable dotnet` | `brew install --cask dotnet-sdk`. .NET Framework repos cannot load on macOS or Linux; there `cs impls` falls back to a tokensave graph |
+| `! Kotlin … request a JDK N toolchain … installed but keg-only` | paste the printed `export JAVA_HOME=…` line. Homebrew's JDKs are invisible until `JAVA_HOME` points at them |
+| `! Kotlin … request a JDK N toolchain, and none is findable` | `brew install openjdk@N`, then the printed `JAVA_HOME` line. It must be **that** version: with another, the Kotlin server answers *empty*, so `cs` refuses. The request can come from a build the repo includes (`includeBuild`) |
+| `✓ Kotlin … request no Gradle toolchain` | nothing to do: a build pinned only by `sourceCompatibility` / `jvmTarget` is built on the Kotlin server's own runtime, with no JDK |
+| `! C# … no runnable dotnet` | `brew install --cask dotnet-sdk`. It loads legacy .NET Framework projects too, on macOS and Linux, without their reference assemblies: framework and package types do not resolve, the repo's own do. Meanwhile `cs impls --engine=tokensave` answers where a graph exists |
 | `! TypeScript` / `JavaScript … no runnable node` | `brew install node` |
 | `? Python` / `Go` / `Rust` | not checked by `cs`. An empty `cs impls` / `cs refs` there is not proof of absence |
-| `! tokensave  MISSING` / `graphs in N of M repo(s)` | `brew install aovestdipaperino/tap/tokensave`, then `cd <repo> && tokensave init` in each repo. fleet-workspace's refresh keeps graphs synced |
+| `! tokensave  MISSING` / `graphs in N of M repo(s)` | `brew install aovestdipaperino/tap/tokensave`, then `cd <repo> && tokensave init` in each repo. fleet-workspace's refresh keeps graphs synced. A repo left unindexed **on purpose** goes in `CS_NO_GRAPH="…"` in `fleet.env`, and stops being flagged |
+| `! workspaces  configured but missing` | create the directory, or correct `TICKETS_ROOT` / `WORKSPACE_ROOTS` in `fleet.env`. `--ticket=` and an MCP `scope` under it refuse otherwise |
 | `! serena  uv MISSING` | `brew install uv` |
 | `! forge  … not authenticated` | `gh auth login` |
 | `! ripgrep` / `structural` / `ctags` / `timeout` | re-run `bootstrap`, or the printed `brew install` |
@@ -156,24 +177,39 @@ claude plugin update code-search@agent-toolworks
 Then restart Claude Code and run `cs_doctor` again. A new version can need
 something new. See [updating.md](updating.md).
 
-## If you already use cs: what changed in 1.16–1.17
+<a id="if-you-already-use-cs-what-changed-in-116117"></a>
+
+## If you already use cs: what changed
 
 For people, and for agents whose notes, `CLAUDE.md` or memory describe cs from
 before 1.16. Update anything that says otherwise:
 
+- **A scope is a path** (1.16.0, #59). Over MCP, and with `--ticket=`, the scope
+  is the absolute path of the workspace you are working in, or of any directory
+  inside it. A bare folder name still works when it is unique. Workspaces can
+  live under several roots: `TICKETS_ROOT`, plus `WORKSPACE_ROOTS` (colon-
+  separated), nested at any depth. `cs scopes` / `cs_scopes` lists them by
+  path, and those paths are the values to pass. Notes that say "a scope is a
+  folder name under `TICKETS_ROOT`" are out of date.
 - **`cs doctor` / `cs_doctor` is the setup check** (1.17.0). Refusals now end
   with `check: cs doctor`; until 1.17.1 they said `cs engines`. `cs engines`
   still exists, as the shorter "what is installed" view. When a tool refuses,
   or `cs impls` / `cs refs` come back empty, run `cs_doctor` before concluding
-  anything.
+  anything. It exits 3 when it flags something, a code of its own: not a
+  refusal (1) and not a zero-hit answer (2).
 - **Java needs no JDK** (1.16.2). cs used to refuse Java queries without one.
-  `java MISSING` in `cs engines` now concerns Kotlin only.
-- **Kotlin needs the JDK version its Gradle build declares**
-  (`jvmToolchain(21)`). With a JDK of another version, `cs` cannot refuse,
-  because `java` runs, and the server answers empty. Only `cs doctor` catches
-  this. The Kotlin refusal now names the version, and gives the `JAVA_HOME`
-  line when that JDK is installed but keg-only (1.17.2).
-- **`cs doctor` exits 3** when it flags something. That code is its own: it
-  is not a refusal (1) and not a zero-hit answer (2).
-- **`verify-engines`**: tokensave's C# interface edges are a capability, so
-  losing them reports a regression. There is a new `serena-java` probe (1.16.2).
+- **Kotlin needs a JDK only when its build requests a Gradle toolchain**
+  (1.18.0). A `jvmToolchain(N)` request, the repo's own or one in a build it
+  pulls in with `includeBuild`, needs a JDK of exactly N that Gradle can find,
+  and `cs` refuses when there is none, because the server would answer empty.
+  A build pinned only by `sourceCompatibility` / `jvmTarget` needs no JDK; cs
+  refused those before 1.18 if `java` did not run. The refusal names the
+  version, and gives the `JAVA_HOME` line when that JDK is installed but
+  keg-only.
+- **Legacy .NET Framework C# loads with the .NET SDK** (1.18.0), on macOS and
+  Linux too, minus its reference assemblies. cs used to call that impossible.
+- **`CS_NO_GRAPH`** in `fleet.env` (1.18.0) names repos kept without a tokensave
+  graph on purpose, so `cs doctor` can come clean on a fleet that has them.
+- **`verify-engines`** probes tokensave's C# interface edges as a capability
+  (1.16.2), and Serena on Java without a JDK, Kotlin without a toolchain
+  request, and .NET Framework projects (1.18.0).

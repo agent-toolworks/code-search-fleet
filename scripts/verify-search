@@ -194,6 +194,35 @@ else
     err "reserve-implementation"; fail=$((fail + 1))
     rerun_hints+=("FLEET_ROOT=$FLEET_ROOT $here/cs refs IInventoryStore inventory-api-dotnet src/Domain/IInventoryStore.cs | sed 's|\"\\([a-z]*\\)/|\"inventory-api-dotnet/\\1/|g' | $here/score-seams reserve-implementation -")
   fi
+
+  # An address must land on the line it names. Serena's lines are 0-based and
+  # were printed as they came, so every LSP address was one line short -- the
+  # `{` above a class, a blank line above an annotation -- and the scored check
+  # above could not see it: it matches file names, never line content (#76).
+  # A reference's line must hold the symbol; an implementation's declaration
+  # must start there or within 4 lines (annotations come first).
+  impls_raw=$("$here/cs" impls IInventoryStore inventory-api-dotnet 2>/dev/null)
+  addr_re='^([^:]+):([0-9]+): \[([^]]*)\] (.*)$'
+  addr_bad=(); addr_n=0
+  while IFS= read -r _l; do
+    [[ "$_l" =~ $addr_re ]] || continue
+    _f="$FLEET_ROOT/${BASH_REMATCH[1]}"; _n=${BASH_REMATCH[2]}; _rest=${BASH_REMATCH[4]}
+    addr_n=$((addr_n + 1))
+    sed -n "${_n},$((_n + 4))p" "$_f" 2>/dev/null | grep -qw -- "${_rest##*/}" \
+      || addr_bad+=("impls ${BASH_REMATCH[1]}:$_n")
+  done <<< "$impls_raw"
+  while IFS= read -r _l; do
+    [[ "$_l" =~ $addr_re ]] || continue
+    _f="$FLEET_ROOT/${BASH_REMATCH[1]}"; _n=${BASH_REMATCH[2]}
+    addr_n=$((addr_n + 1))
+    sed -n "${_n}p" "$_f" 2>/dev/null | grep -q IInventoryStore || addr_bad+=("refs ${BASH_REMATCH[1]}:$_n")
+  done <<< "$refs_out"
+  if [[ $addr_n -ge 3 && ${#addr_bad[@]} -eq 0 ]]; then
+    ok "every language-server address lands on the line it names ($addr_n checked)"; pass=$((pass + 1))
+  else
+    err "language-server addresses that miss their line (of $addr_n): ${addr_bad[*]:-none parsed}"
+    fail=$((fail + 1)); failed_ids+=("lsp-line-addresses")
+  fi
 fi
 
 # ---- engine parity ---------------------------------------------------------
@@ -819,6 +848,36 @@ else
 fi
 rm -rf "$notc"
 
+# ---- a language server that answered before its import finished ------------
+# Serena's Java wrapper stops waiting for the project import after 20s and
+# answers anyway; on a cold multi-module build that was `resolved · 0 hit(s)`
+# for an interface with two implementations (#76). serena_call.py reads the
+# server's own log for that, and the decision is asserted here on synthetic
+# logs, so it runs everywhere -- a real cold import cannot be made slow on cue.
+if python3 - "$here/lib/serena_call.py" <<'PY' 2>/dev/null
+import importlib.util, os, sys, tempfile, threading
+spec = importlib.util.spec_from_file_location("sc", sys.argv[1])
+sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
+d = tempfile.mkdtemp()
+def log(name, body):
+    p = os.path.join(d, name); open(p, "w").write(body); return p
+ok = "Language status update: {'type': 'ProjectStatus', 'message': 'OK'}\n"
+gave_up = "Did not receive project ready status within 20 seconds; proceeding anyway\n"
+assert sc.import_state(log("a", ok + "Project is ready\n"), 2, poll=0.1)[0] == "confirmed"
+assert sc.import_state(log("b", ok.replace("OK", "WARNING") + gave_up), 2, poll=0.1)[0] == "warned"
+late = log("c", gave_up)
+threading.Timer(0.5, lambda: open(late, "a").write(ok)).start()
+assert sc.import_state(late, 5, poll=0.1)[0] == "late"
+assert sc.import_state(log("d", gave_up), 1, poll=0.1)[0] == "never"
+PY
+then
+  ok "an answer given before the project import finished is re-asked, or refused — never reported as is"
+  pass=$((pass + 1))
+else
+  err "serena_call.py's import-state decision is wrong on a synthetic log"
+  fail=$((fail + 1)); failed_ids+=("lsp-import-not-ready")
+fi
+
 # ---- cs doctor -------------------------------------------------------------
 # The setup gaps that were found only by a query going wrong (#67) must be
 # named up front, per language the fleet actually holds. A Kotlin build asking
@@ -831,7 +890,7 @@ doc_fleet="$tc_fleet"
 doc_out=$(SHELL=/bin/bash FLEET_ROOT="$doc_fleet" "$here/cs" doctor 2>&1); doc_rc=$?
 if [[ $doc_rc -eq 3 ]] && matches "$doc_out" '^  ! Kotlin .*JDK 99' \
    && matches "$doc_out" 'refuse in: kt-comp, kt-svc' \
-   && matches "$doc_out" '1 request no Gradle toolchain' \
+   && matches "$doc_out" '1 requests no Gradle toolchain' \
    && matches "$doc_out" '^  ✓ Java .*no JDK needed' \
    && matches "$doc_out" 'C# .*\.NET Framework' \
    && matches "$doc_out" "echo 'export JAVA_HOME=.*' >> ~/\.bash" \
@@ -1480,6 +1539,27 @@ else
     else
       err "an inapplicable --engine was silently accepted: ${eng_bad[*]}"
       fail=$((fail + 1)); failed_ids+=("engine-flag-dropped")
+    fi
+
+    # A refusal's "answer now" is advice an agent will follow verbatim, so it
+    # must be a command that runs. It was one line shared by impls and refs --
+    # "rerun with --engine=tokensave" -- which cs refs refuses (#75). Followed
+    # here for a type and for a method, whose nearest graph questions differ.
+    an_bad=()
+    for an_q in "refs IInventoryStore inventory-api-dotnet src/Domain/IInventoryStore.cs" \
+                "refs ReserveAsync inventory-api-dotnet src/Domain/IInventoryStore.cs"; do
+      an_out=$(PATH="$ts_nodot:$PATH" "$here/cs" $an_q 2>&1)
+      an_cmd=$(printf '%s\n' "$an_out" | sed -n 's/^  answer now:  cs \([^(]*\)(.*/\1/p' | sed 's/ *$//')
+      if [[ -z "$an_cmd" ]]; then an_bad+=("${an_q#refs }: no answer-now line"); continue; fi
+      PATH="$ts_nodot:$PATH" "$here/cs" $an_cmd >/dev/null 2>&1
+      an_rc=$?
+      [[ $an_rc -eq 0 || $an_rc -eq 2 ]] || an_bad+=("'cs $an_cmd' exited $an_rc")
+    done
+    if [[ ${#an_bad[@]} -eq 0 ]]; then
+      ok "every refusal's answer-now command runs (a type and a method)"; pass=$((pass + 1))
+    else
+      err "an answer-now command does not run: ${an_bad[*]}"
+      fail=$((fail + 1)); failed_ids+=("answer-now-runs")
     fi
 
     # ---- cs def, the cross-repo graph alternative to the ctags index --------

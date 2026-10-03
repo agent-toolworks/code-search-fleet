@@ -32,13 +32,18 @@ Until then, run the installed scripts directly, as below.
 A plugin install does not put `cs` on `PATH`:
 
 ```sh
-CS_ROOT=$(ls -d ~/.claude/plugins/cache/agent-toolworks/code-search/*/ \
-          | grep -E '/[0-9]+(\.[0-9]+)*/$' | sort -V | tail -1)
+CS_ROOT=$(ls -d ~/.claude/plugins/cache/*/code-search/*/ 2>/dev/null \
+  | awk -F/ '{v=$(NF-1); print (v ~ /^[0-9]+(\.[0-9]+)*$/ ? v : "0"), $0}' \
+  | sort -V -k1,1 | tail -1 | cut -d' ' -f2-)
+[ -n "$CS_ROOT" ] || echo 'code-search is not installed: see claude plugin list'
 "$CS_ROOT/scripts/cs" doctor | head -3
 ```
 
 **Check:** the `cs` row names the version and the path it runs from. Every
-later step uses `$CS_ROOT`. For why the `grep` and `sort -V` are needed, see
+later step uses `$CS_ROOT`. It works whichever catalog installed the plugin
+(`agent-toolworks`, this repo's own, a team catalog). It picks the highest
+version across them, and a folder named after a pinned commit only when there is
+nothing else. Why that matters: see
 [updating.md](updating.md#running-the-scripts-from-a-terminal).
 
 ## 3. Install the engines

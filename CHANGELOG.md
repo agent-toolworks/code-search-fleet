@@ -8,6 +8,40 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.18.1 — 2026-10-03
+
+- **A language server that answered before its project import finished is
+  re-asked, or refused** (#76). Serena's Java wrapper stops waiting for the
+  import after 20 seconds, and only accepts the status `OK`. Past that it
+  answers anyway, and on a cold multi-module build that was
+  `resolved · 0 hit(s)` for an interface with two implementations.
+  `serena_call.py` now reads the server's own log for this. If the import
+  reported a status later, it asks again and returns that answer. If it never
+  reported one within the time left before `CS_TIMEOUT`, it exits 3, and `cs`
+  refuses: nothing was ruled out. If the import had already ended with a
+  warning, the answer stands, with a note. Reproduced by interrupting a first
+  import; the decision is tested on synthetic logs.
+- **Language-server line numbers are 1-based** (#76). Serena's are 0-based (the
+  LSP's), and were printed as they came, so every `cs impls` / `cs refs` address
+  landed one line short. `verify-search` now opens each reported file at the
+  reported line.
+- `cs refs` names the enclosing symbol of each reference
+  (`[in Method ReservationController/ReservationController]`); it printed only
+  that symbol's kind, so a call inside a method read `[Class]` (#76).
+- **A refusal's "answer now" is a command that runs** (#75). It was shared by
+  `cs impls` and `cs refs` ("rerun with `--engine=tokensave`"), and `cs refs`
+  refuses that flag. For `cs refs` it now asks the graph whether the symbol is
+  a type or a method, offers `cs impls … --engine=tokensave` or `cs callers …`
+  accordingly, and says either is narrower than a reference search.
+  `verify-search` follows each one.
+- `docs/install.md` / `docs/updating.md`: `CS_ROOT` no longer names a catalog,
+  so it is found whichever catalog installed the plugin. It is chosen by
+  version alone: sorting whole paths picked the alphabetically last catalog. A
+  folder named after a pinned commit is used only when it is the only one, and
+  a missing install is said rather than running `/scripts/cs` (#75).
+- `cs doctor`'s Kotlin row: singular and plural fixed, and a doubled
+  `findable (JAVA_HOME)JAVA_HOME` from 1.18.0 removed.
+
 ## 1.18.0 — 2026-10-03
 
 - **Kotlin is gated by what its build requests, not by `java` running** (#72).

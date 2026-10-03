@@ -2125,6 +2125,27 @@ graph_caveats() {  # <repo> <graph-dir> <substituted:0|1>
   warn "a graph index is per-repo: this answers about $repo alone. A caller in another repo of the fleet is a string, not an edge — cs uses '<symbol>' is the cross-repo half of the question."
 }
 
+# The graph question nearest to the one a refusal could not answer, as a command
+# that will run. This was one line shared by cs impls and cs refs -- "rerun with
+# --engine=tokensave" -- and cs refs refuses that flag, so the advice sent a
+# refs caller straight into a second refusal (#75). A graph has no reference
+# search; what it has is narrower: the call sites of a method (cs callers) and
+# the implementations of a type (cs impls), and which one applies depends on the
+# symbol, so the graph is asked which it is.
+graph_alternative() {  # <subcommand> <symbol> <repo> <repo-dir>
+  local rc=0
+  case "$1" in
+    refs)
+      have_tokensave && { python3 "$lib_dir/tokensave_call.py" impls "$4" "$3" "$2" >/dev/null 2>&1; rc=$?; }
+      if [[ $rc -eq 3 ]]; then
+        printf 'cs callers %s %s   (its call sites, from the tokensave graph: structural, and narrower than references — no DI registrations, no non-call uses)' "$2" "$3"
+      else
+        printf 'cs impls %s %s --engine=tokensave   (its implementations, from the tokensave graph: structural, and narrower than references — no DI registrations, no other uses)' "$2" "$3"
+      fi ;;
+    *) printf 'cs impls %s %s --engine=tokensave   (from the tokensave graph %s already has: structural)' "$2" "$3" "$3" ;;
+  esac
+}
+
 require_serena_toolchain() {
   local sub="$1" sym="$2" repo="$3" dir="$4" lang tc
   lang=$(symbol_language "$sym" "$dir") || lang=""
@@ -2133,9 +2154,14 @@ require_serena_toolchain() {
     return 0
   fi
   runtime_bundled "$lang" && return 0
-  local graph_now=""
-  tokensave_graph_at "$dir" && graph_now="
-  answer now:  $repo already has a tokensave graph — rerun with --engine=tokensave (structural)"
+  local graph_now="" graph_later
+  if have_tokensave && tokensave_graph_at "$dir"; then
+    graph_now="
+  answer now:  $(graph_alternative "$sub" "$sym" "$repo" "$dir")"
+    graph_later="the answer-now line above"
+  else
+    graph_later=$(graph_hint "$repo" "$dir")
+  fi
   if [[ "$lang" == kotlin ]]; then
     local want
     want=$(kotlin_jdk_unmet "$dir") || return 0
@@ -2146,7 +2172,7 @@ require_serena_toolchain() {
   where nothing was read. Refusing instead.
   fix:        $(toolchain_fix java "$dir" "$want")
   check:      cs doctor   (which JDKs are findable, and the fix)
-  without it, a tokensave graph answers cs impls: $(graph_hint "$repo" "$dir")
+  without it, a tokensave graph answers a narrower question: $graph_later
   weaker but available now:
     cs def $sym $repo      (structural: ctags, matches spelling not identity)
     cs uses '$sym'         (heuristic: text, comments filtered — cs why heuristic)"
@@ -2165,7 +2191,7 @@ require_serena_toolchain() {
   where nothing was read. Refusing instead.
   fix:        $(toolchain_fix "$tc" "$dir")
   check:      cs doctor   (what this machine lacks for the fleet's languages, and the fix)
-  without the toolchain, a tokensave graph answers cs impls: $(tokensave_graph_at "$dir" && printf 'rerun with --engine=tokensave' || graph_hint "$repo" "$dir")
+  without the toolchain, a tokensave graph answers a narrower question: $graph_later
   weaker but available now:
     cs def $sym $repo      (structural: ctags, matches spelling not identity)
     cs uses '$sym'         (heuristic: text, comments filtered — cs why heuristic)"
@@ -3449,12 +3475,13 @@ doc_kotlin() {  # <repo names> <count> <repo dirs>, one per line
   local parts="" n_free n_tc
   n_free=$(printf '%s' "$free_repos" | grep -c . || true)
   n_tc=$(printf '%s' "$tc_repos" | grep -c . || true)
-  [[ "$n_free" -gt 0 ]] && parts="$n_free request no Gradle toolchain: the Kotlin server builds them on its own runtime${rt:+ (Java $rt)}, no JDK needed"
+  local s_v="s" s_o="it"; [[ "$n_free" -gt 1 ]] && { s_v=""; s_o="them"; }
+  [[ "$n_free" -gt 0 ]] && parts="$n_free request$s_v no Gradle toolchain: the Kotlin server builds $s_o on its own runtime${rt:+ (Java $rt)}, no JDK needed"
   if [[ -z "$unmet_wants" ]]; then
     if [[ "$n_tc" -gt 0 ]]; then
       local where
       where=$(for want in $tc_wants; do printf '%s\n' "$have_majors" | awk -v m="$want" '$1 == m { print $2; exit }'; done | grep . | sort -u | paste -sd, - | sed 's/,/, /g')
-      parts="${parts:+$parts; }$n_tc request JDK $tc_wants: ${where:+findable ($where)}${where:-Gradle downloads it (foojay resolver)}"
+      parts="${parts:+$parts; }$n_tc request$([[ "$n_tc" -eq 1 ]] && printf s) JDK $tc_wants: $(if [[ -n "$where" ]]; then printf 'findable (%s)' "$where"; else printf 'Gradle downloads it (foojay resolver)'; fi)"
     fi
     doc_row ok Kotlin "$n repo(s) — ${parts:-nothing to check}"
   else

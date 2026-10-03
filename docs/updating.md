@@ -36,14 +36,10 @@ terminal (`"$CS_ROOT/scripts/cs" doctor`, see
 [below](#running-the-scripts-from-a-terminal)). It exits 0 when nothing is
 flagged and 3 when something is.
 
-Most of what it flags is set up once per machine:
-
-| It says | Do |
-|---|---|
-| `python3 … older than 3.11` | put a newer one first on `PATH`. On macOS with Homebrew, add `eval "$(/opt/homebrew/bin/brew shellenv)"` to `~/.zprofile`. `/usr/bin` otherwise wins with Apple's 3.9 |
-| `Kotlin … the builds ask for JDK N, and none is findable` | install `openjdk@N` and set `JAVA_HOME` to it in your shell profile. Homebrew's JDKs are keg-only, so installing alone is not enough. `cs doctor` prints the exact line |
-| `C# … no runnable dotnet` | `brew install --cask dotnet-sdk` |
-| `tokensave … graphs in N of M repos` | `cd <repo> && tokensave init` in the rest |
+Each flagged line prints its fix, ready to paste. The common ones, with what to
+do, are in [install.md](install.md#what-cs-doctor-says-and-what-to-do), and
+[what changed in 1.16–1.17](install.md#if-you-already-use-cs-what-changed-in-116117)
+is there too.
 
 Java needs nothing; its language server ships its own runtime (since 1.16.2;
 before that, cs refused Java without a JDK).

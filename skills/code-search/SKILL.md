@@ -1,6 +1,6 @@
 ---
 name: code-search
-description: Search across many repositories at once — find who calls an endpoint, where a symbol is defined, what implements an interface, which repo publishes a package, who owns the code (CODEOWNERS), and whether every repo pins the same version of a shared package. Use whenever a question spans more than one repo, or when grep alone gives noisy or incomplete answers. Trigger phrases: "who calls", "where is X defined", "what implements", "across the repos", "which repo", "find usages", "is this endpoint dead", "impact of changing", "who owns", "which team owns", "what version of", "version drift", "set up code search", "is cs working", "why did cs refuse".
+description: Search across many repositories at once — find who calls an endpoint, where a symbol is defined, what implements an interface, which repo publishes a package, who owns the code (CODEOWNERS), and whether every repo pins the same version of a shared package. Use whenever a question spans more than one repo, or when grep alone gives noisy or incomplete answers. Trigger phrases: "who calls", "where is X defined", "what implements", "across the repos", "which repo", "find usages", "is this endpoint dead", "impact of changing", "who owns", "which team owns", "what version of", "version drift", "set up code search", "install code search", "new machine", "is cs working", "why did cs refuse".
 ---
 
 # Searching a fleet of repositories
@@ -30,15 +30,33 @@ readability; run `"$CS"`.
 ## Setup
 
 ```sh
-"$CS" engines                        # what is installed here
 "$CS" doctor                         # what will not work on THESE repos, and the fix
-"${CLAUDE_PLUGIN_ROOT:-.}/scripts/bootstrap"   # install missing engines
-export FLEET_ROOT=~/code/fleet       # the directory holding all the repos
+"$CS" engines                        # the shorter view: what is installed here
+"${CLAUDE_PLUGIN_ROOT:-.}/scripts/bootstrap"   # install missing engines, then run cs doctor
 ```
 
+**Installing on a new machine, or asked to "set up code search": follow
+`"${CLAUDE_PLUGIN_ROOT:-.}/docs/install.md"` step by step.** Each step has a check, and the
+last one is `cs_doctor` over MCP agreeing with `cs doctor` in a terminal. Fixes
+that need a shell profile (`~/.zprofile`, `~/.zshrc`) or `~/.config` are often
+outside what you may edit. Do not work around that: give the user the exact line
+`cs doctor` printed, prefixed with `!` so they can run it here. Then tell them
+to restart Claude Code from a new terminal, because the MCP server keeps the
+environment it started with.
+
 **`FLEET_ROOT` is required** and there is no useful default — without it `cs`
-searches the current directory, which is not a fleet. If it is unset, ask the
-user for the directory holding their repos rather than guessing.
+searches the current directory, which is not a fleet. It belongs in
+`~/.config/repo-fleet/fleet.env` (`export FLEET_ROOT="$HOME/code/fleet"`), the
+one file both the CLI and the MCP server read. An `export` in a shell reaches
+only that shell. If it is unset, ask the user for the directory holding their
+repos rather than guessing.
+
+**If you learned cs before 1.16**, these changed (details in `docs/install.md`,
+"If you already use cs"):
+- `cs doctor` is the setup check. Refusals now say `check: cs doctor`.
+- Java needs no JDK.
+- Kotlin needs the exact JDK version its Gradle build declares. With another
+  version it answers empty rather than refusing, and only `cs doctor` sees that.
 
 **When a command refuses for a missing engine or toolchain, or `cs impls` /
 `cs refs` comes back empty, run `cs doctor` (`cs_doctor` over MCP) before
@@ -529,7 +547,7 @@ installed.
   every such answer; treat a stale graph as a source of confidently *wrong*
   answers rather than merely blind ones. A language *outside* that mapping — Python, Go, Rust — is
   not preflighted: `cs` warns that it did not check, and an empty result there
-  may still mean the project failed to load. Check `cs engines` before treating
+  may still mean the project failed to load. Check `cs doctor` before treating
   such a negative as strong.
 - **Symbol mode answers about one repo at one layer.** `cs callers`, `cs callees` and
   `cs impact` read a tokensave graph, and a graph index is **per-project**: the

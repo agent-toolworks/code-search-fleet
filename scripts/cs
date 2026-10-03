@@ -1468,7 +1468,7 @@ engines_ok_or_die() {  # <subcommand>
 $(engine_error_lines | sed 's/^/  /')
   nothing here was searched to completion, and a zero-hit result from a broken
   engine is precisely the manufactured negative this tool exists to prevent
-  check: cs engines   (which engines are present, and which answer kinds work)
+  check: cs doctor   (what is missing or broken here, and the fix)
   if you passed a regex, check it compiles: cs text needs a valid pattern"
 }
 
@@ -1676,11 +1676,87 @@ toolchain_languages() {  # <toolchain> -> the languages it unblocks, for message
 toolchain_install() {
   case "$1" in
     dotnet) echo "brew install --cask dotnet-sdk   (or https://dot.net)" ;;
-    java)   echo "brew install openjdk@21          (a JDK at the project's Gradle toolchain version, findable via JAVA_HOME)" ;;
+    java)   echo "$(have brew && echo 'brew install openjdk' || echo 'install a JDK'), then set JAVA_HOME to it (Homebrew's JDKs are keg-only)" ;;
     node)   echo "brew install node" ;;
   esac
 }
 CS_TOOLCHAINS="dotnet java node"
+
+# ---- JDKs, for Kotlin --------------------------------------------------------
+# Kotlin's requirement is a VERSION, not a binary: its server's Gradle import
+# needs a JDK at the toolchain version the build declares (#65). These are shared
+# by the refusal and by cs doctor, so the two cannot give different advice -- the
+# refusal used to say `brew install openjdk@21` whatever the build asked for, and
+# even when that JDK was installed already, merely keg-only (#70).
+
+# Toolchain versions a repo's Gradle build declares, one per line, ascending.
+kotlin_toolchain_versions() {  # <repo-dir>
+  find "$1" -maxdepth 3 \( -name build.gradle.kts -o -name build.gradle \) \
+       -not -path '*/build/*' -print 2>/dev/null \
+    | xargs grep -ohE '(jvmToolchain|JavaLanguageVersion\.of)\(\s*[0-9]+' 2>/dev/null \
+    | grep -oE '[0-9]+$' | sort -un
+}
+
+# Java majors a Gradle toolchain request can be met from: JAVA_HOME, and on
+# macOS whatever /usr/libexec/java_home has registered. "<major> <where>" lines.
+jdks_findable() {
+  local v
+  if [[ -n "${JAVA_HOME:-}" && -f "$JAVA_HOME/release" ]]; then
+    v=$(sed -n 's/^JAVA_VERSION="\([0-9]*\)\.\{0,1\}\([0-9]*\).*/\1 \2/p' "$JAVA_HOME/release" \
+        | awk '{print ($1 == "1" ? $2 : $1)}')
+    [[ -n "$v" ]] && printf '%s JAVA_HOME\n' "$v"
+  fi
+  if [[ -x /usr/libexec/java_home ]]; then
+    /usr/libexec/java_home -V 2>&1 \
+      | awk '/^[[:space:]]+[0-9]/ { split($1, p, "."); print (p[1] == "1" ? p[2] : p[1]), "java_home" }'
+  fi
+}
+
+# A JDK of that major that is installed but that nothing can see -- Homebrew's
+# openjdk formulae are keg-only. Prints its home, or fails.
+keg_jdk_home() {  # <major>
+  local h r
+  for h in /opt/homebrew/opt/openjdk@"$1" /opt/homebrew/opt/openjdk /usr/local/opt/openjdk@"$1" \
+           /usr/local/opt/openjdk /home/linuxbrew/.linuxbrew/opt/openjdk@"$1" /home/linuxbrew/.linuxbrew/opt/openjdk; do
+    for r in "$h/libexec/openjdk.jdk/Contents/Home" "$h/libexec"; do
+      [[ -f "$r/release" ]] || continue
+      grep -q "^JAVA_VERSION=\"$1[.\"]" "$r/release" && { printf '%s\n' "$r"; return 0; }
+    done
+  done
+  return 1
+}
+
+# A fix the user can paste: append <line> to the profile their shell reads for
+# it. Prose such as "put X before Y on PATH" left the last step to whoever read
+# it, and an agent that cannot edit a profile has to hand the user a command.
+#   path -- read by login shells (each new macOS terminal): PATH belongs here
+#   env  -- read by every interactive shell
+profile_line() {  # <path|env> <line, without single quotes>
+  local f
+  case "${SHELL##*/}" in
+    zsh)  [[ "$1" == path ]] && f="~/.zprofile" || f="~/.zshrc" ;;
+    bash) [[ "$(uname -s)" == Darwin ]] && f="~/.bash_profile" || f="~/.bashrc" ;;
+    *)    printf 'add to your shell profile: %s' "$2"; return ;;
+  esac
+  printf "echo '%s' >> %s" "$2" "$f"
+}
+
+toolchain_fix() {  # <toolchain> <repo-dir> -> the fix for this repo
+  local want keg
+  if [[ "$1" == java ]]; then
+    want=$(kotlin_toolchain_versions "$2" | tail -1)
+    if [[ -n "$want" ]] && keg=$(keg_jdk_home "$want"); then
+      printf 'JDK %s is installed but keg-only, so nothing finds it: %s' "$want" \
+        "$(profile_line env "export JAVA_HOME=\"$keg\"")"
+      return
+    elif [[ -n "$want" ]]; then
+      printf '%s (the build asks for %s), then set JAVA_HOME to it' \
+        "$(have brew && echo "brew install openjdk@$want" || echo "install a JDK $want")" "$want"
+      return
+    fi
+  fi
+  toolchain_install "$1"
+}
 
 # The dominant source language of a repo, or nothing if it cannot be told.
 #
@@ -1931,8 +2007,8 @@ require_serena_toolchain() {
   load the project, and return nothing — which cs would have labelled
   'resolved · 0 hit(s)', the strongest negative in the taxonomy, about a repo
   where nothing was read. Refusing instead.
-  install it: $(toolchain_install "$tc")
-  check:      cs engines   (per-kind availability, including this)
+  fix:        $(toolchain_fix "$tc" "$dir")
+  check:      cs doctor   (what this machine lacks for the fleet's languages, and the fix)
   where the toolchain cannot be installed at all (.NET Framework is Windows-only
   to build), a tokensave graph answers cs impls without one:
     cd $repo && tokensave init$(tokensave_graph_at "$dir" && printf '\n  NOTE: %s already has a graph — rerun with --engine=tokensave to use it' "$repo")
@@ -2954,7 +3030,7 @@ doc_list() {
   all=$(grep -v '^$' || true)
   n=$(printf '%s' "$all" | grep -c '' || true)
   if [[ "$n" -le 4 ]]; then printf '%s' "$all" | paste -sd, - | sed 's/,/, /g'
-  else printf '%s' "$all" | head -4 | paste -sd, - | sed 's/,/, /g'; printf ' (+%s more)' "$((n - 4))"; fi
+  else printf '%s (+%s more)' "$(printf '%s\n' "$all" | head -4 | paste -sd, - | sed 's/,/, /g')" "$((n - 4))"; fi
 }
 
 doc_python() {
@@ -2979,10 +3055,28 @@ doc_python() {
     cv=$("$c" -c 'import sys; sys.exit(1) if sys.version_info < (3, 11) else print("%d.%d" % sys.version_info[:2])' 2>/dev/null) || continue
     better="$c ($cv)"; break
   done
+  local fix bdir brew_bin
+  if [[ -n "$better" ]]; then
+    bdir=${better%%/python3*}
+    brew_bin=$(command -v brew 2>/dev/null || true)
+    [[ -z "$brew_bin" && -x "$bdir/brew" ]] && brew_bin="$bdir/brew"
+    if [[ -n "$brew_bin" && "${brew_bin%/brew}" == "$bdir" ]]; then
+      # Homebrew's own way of putting itself first, rather than a PATH edit
+      # that drifts from what `brew` expects.
+      fix="${better} is already installed, but ${p%/python3} comes first on PATH. Paste:
+  $(profile_line path "eval \"\$($brew_bin shellenv)\"")"
+    else
+      fix="${better} is already installed, but ${p%/python3} comes first on PATH. Paste:
+  $(profile_line path "export PATH=\"$bdir:\$PATH\"")"
+    fi
+  else
+    fix="install Python 3.11+ ($(have brew && echo 'brew install python' || echo 'from your OS')), and put it first on PATH"
+  fi
+  fix="$fix
+then open a new terminal, and restart Claude Code so the MCP server sees it"
   doc_row warn python3 "$v ($p) — older than 3.11, so no tomllib" \
     "cs versions / cs deps cannot read Gradle version catalogs (gradle/libs.versions.toml), and read pyproject.toml with a fallback scanner" \
-    "$([[ -n "$better" ]] && echo "${better} is already installed: put ${better%%/python3*} before ${p%/python3} on PATH" \
-       || echo "install Python 3.11+ ($(have brew && echo 'brew install python' || echo 'from your OS')) and put it first on PATH")"
+    "$fix"
 }
 
 doc_fleet() {
@@ -3021,18 +3115,25 @@ doc_engines() {
   # Coverage, not presence: a graph answers only in the repo it was built in, and
   # a repo without one is a place cs callers/callees/impact cannot see into.
   if have_tokensave; then
-    local d total=0 without="" n_with=0
+    local d total=0 without="" n_with=0 age oldest="" aged=""
     for d in $(real_dirs); do
       total=$((total + 1))
-      if tokensave_graph_at "$d"; then n_with=$((n_with + 1)); else without="$without${d##*/}
+      if tokensave_graph_at "$d"; then
+        n_with=$((n_with + 1))
+        age=$(tokensave_graph_age_secs "$d") || age=""
+        [[ -n "$age" && ( -z "$oldest" || "$age" -gt "$oldest" ) ]] && oldest="$age"
+      else without="$without${d##*/}
 "; fi
     done
+    # Age, because a graph answers about the code as of its last sync -- the
+    # one engine here that can be confidently wrong rather than merely blind.
+    [[ -n "$oldest" ]] && aged=", oldest last synced $(format_age "$oldest") ago"
     if [[ $total -eq 0 ]]; then
       doc_row ok tokensave "installed (no repos to graph yet)"
     elif [[ $n_with -eq $total ]]; then
-      doc_row ok tokensave "graphs in all $total repo(s)"
+      doc_row ok tokensave "graphs in all $total repo(s)$aged"
     else
-      doc_row warn tokensave "graphs in $n_with of $total repo(s)" \
+      doc_row warn tokensave "graphs in $n_with of $total repo(s)$aged" \
         "cs callers / callees / impact refuse in the rest, and cs impls has no fallback there where a toolchain is missing: $(printf '%s' "$without" | doc_list)" \
         "cd <repo> && tokensave init   (in each; fleet-workspace's refresh keeps them synced)"
     fi
@@ -3063,34 +3164,6 @@ doc_repo_languages() {  # <repo-dir>
       done | sort -u
 }
 
-# Java majors a Gradle toolchain request can be met from: JAVA_HOME, and on
-# macOS whatever /usr/libexec/java_home has registered. "<major> <where>" lines.
-doc_jdks_findable() {
-  local v
-  if [[ -n "${JAVA_HOME:-}" && -f "$JAVA_HOME/release" ]]; then
-    v=$(sed -n 's/^JAVA_VERSION="\([0-9]*\)\.\{0,1\}\([0-9]*\).*/\1 \2/p' "$JAVA_HOME/release" \
-        | awk '{print ($1 == "1" ? $2 : $1)}')
-    [[ -n "$v" ]] && printf '%s JAVA_HOME\n' "$v"
-  fi
-  if [[ -x /usr/libexec/java_home ]]; then
-    /usr/libexec/java_home -V 2>&1 \
-      | awk '/^[[:space:]]+[0-9]/ { split($1, p, "."); print (p[1] == "1" ? p[2] : p[1]), "java_home" }'
-  fi
-}
-
-# A JDK of that major that is installed but that nothing can see -- Homebrew's
-# openjdk formulae are keg-only. Prints its home, or fails.
-doc_keg_jdk() {  # <major>
-  local h r
-  for h in /opt/homebrew/opt/openjdk@"$1" /opt/homebrew/opt/openjdk /usr/local/opt/openjdk@"$1" \
-           /usr/local/opt/openjdk /home/linuxbrew/.linuxbrew/opt/openjdk@"$1" /home/linuxbrew/.linuxbrew/opt/openjdk; do
-    for r in "$h/libexec/openjdk.jdk/Contents/Home" "$h/libexec"; do
-      [[ -f "$r/release" ]] || continue
-      grep -q "^JAVA_VERSION=\"$1[.\"]" "$r/release" && { printf '%s\n' "$r"; return 0; }
-    done
-  done
-  return 1
-}
 
 doc_languages() {
   local d lang census langs repos n
@@ -3140,15 +3213,11 @@ doc_kotlin() {  # <repo names> <count> <repo dirs>, one per line
   local repos="$1" n="$2" dirs="$3" r want wants="" have_majors miss="" where keg fixes="" home
   while IFS= read -r r; do
     [[ -n "$r" ]] || continue
-    want=$(find "$r" -maxdepth 3 \
-             \( -name build.gradle.kts -o -name build.gradle \) -not -path '*/build/*' -print 2>/dev/null \
-           | xargs grep -ohE '(jvmToolchain|JavaLanguageVersion\.of)\(\s*[0-9]+' 2>/dev/null \
-           | grep -oE '[0-9]+$' | sort -un)
-    wants="$wants$want
+    wants="$wants$(kotlin_toolchain_versions "$r")
 "
   done <<< "$dirs"
   wants=$(printf '%s' "$wants" | grep -v '^$' | sort -un | tr '\n' ' ' | sed 's/ $//')
-  have_majors=$(doc_jdks_findable)
+  have_majors=$(jdks_findable)
   if [[ -z "$wants" ]]; then
     if have_toolchain java; then doc_row ok Kotlin "$n repo(s) — no toolchain version declared; java runs"
     else doc_row warn Kotlin "$n repo(s) — no runnable JDK" \
@@ -3160,12 +3229,14 @@ doc_kotlin() {  # <repo names> <count> <repo dirs>, one per line
     where=$(printf '%s\n' "$have_majors" | awk -v m="$want" '$1 == m { print $2; exit }')
     [[ -n "$where" ]] && continue
     miss="$miss $want"
-    if keg=$(doc_keg_jdk "$want"); then
-      fixes="${fixes}JDK $want is installed but invisible: export JAVA_HOME=\"$keg\"
+    if keg=$(keg_jdk_home "$want"); then
+      fixes="${fixes}JDK $want is installed but keg-only, so nothing finds it. Paste:
+  $(profile_line env "export JAVA_HOME=\"$keg\"")
 "
     else
       home=$(have brew && echo "\$(brew --prefix openjdk@$want)/libexec/openjdk.jdk/Contents/Home" || echo "<its home>")
-      fixes="${fixes}$(doc_install "openjdk@$want" "a JDK $want"), then: export JAVA_HOME=\"$home\"
+      fixes="${fixes}$(doc_install "openjdk@$want" "a JDK $want"), then paste:
+  $(profile_line env "export JAVA_HOME=\"$home\"")
 "
     fi
   done
@@ -3173,7 +3244,7 @@ doc_kotlin() {  # <repo names> <count> <repo dirs>, one per line
     doc_row ok Kotlin "$n repo(s) — JDK $wants findable ($(for want in $wants; do printf '%s\n' "$have_majors" | awk -v m="$want" '$1 == m { print $2; exit }'; done | sort -u | paste -sd, - | sed 's/,/, /g'))"
     return
   fi
-  fixes="${fixes}put it in your shell profile, and restart Claude Code so the MCP server sees it"
+  fixes="${fixes}then open a new terminal, and restart Claude Code so the MCP server sees it"
   if have_toolchain java; then
     doc_row warn Kotlin "$n repo(s) — the builds ask for JDK$miss, and none is findable" \
       "cs impls / cs refs return EMPTY rather than refusing in: $(printf '%s\n' "$repos" | doc_list) — java runs, so cs's own check passes, but the server's Gradle import fails and it answers []" \
@@ -3188,6 +3259,9 @@ cmd_doctor() {
   if [[ -t 1 ]]; then D_G=$'\033[32m'; D_Y=$'\033[33m'; D_R=$'\033[31m'; D_B=$'\033[1m'; D_O=$'\033[0m'
   else D_G=''; D_Y=''; D_R=''; D_B=''; D_O=''; fi
   printf '%ssetup%s\n' "$D_B" "$D_O"
+  # Where cs itself is, because a plugin install does not put it on PATH: this
+  # row is how a terminal user, or an installing agent, finds the copy to run.
+  doc_row ok cs "$(tr -d '[:space:]' < "$lib_dir/../../VERSION" 2>/dev/null || printf '?') at $(cd "$lib_dir/.." && pwd)/cs"
   doc_python
   doc_fleet
   printf '\n%sengines%s\n' "$D_B" "$D_O"
@@ -3197,6 +3271,11 @@ cmd_doctor() {
     doc_languages
   fi
   printf '\n%s%s ok, %s to fix, %s not checked%s\n' "$D_B" "$doc_n_ok" "$doc_n_flagged" "$doc_n_unchecked" "$D_O"
+  # The MCP server is started by Claude Code and keeps the environment it was
+  # started with, so a fix made in a shell is invisible to it until a restart --
+  # and this report describes only the environment it ran in.
+  printf 'this describes the environment it ran in: from a terminal, that shell; as cs_doctor, the MCP server Claude Code started\n'
+
   if [[ $doc_n_flagged -gt 0 ]]; then
     printf 'each "!" or "✗" line above says what it costs and how to fix it; exit %s\n' "$CS_EXIT_DOCTOR_FLAGGED"
     return "$CS_EXIT_DOCTOR_FLAGGED"
@@ -3556,7 +3635,7 @@ def_via_tokensave() {  # <symbol> [only-repo]
     one=$(python3 "$lib_dir/tokensave_call.py" def "$d" "$name" "$sym"); rc=$?
     [[ $rc -eq 4 ]] && die "cs def: the tokensave graph for $name could not be queried
   nothing was read there, so nothing was ruled out
-  check: cs engines   (graph presence and age)"
+  check: cs doctor   (graph coverage and age, and the fix)"
     [[ -n "$one" ]] && out="${out:+$out
 }$one"
   done
@@ -4049,13 +4128,13 @@ serena_answered_or_die() {  # <rc> <raw-file> <stderr-file> <subcommand> <symbol
     die "cs $sub: the language server did not answer for '$sym' in $repo (serena exited $rc)
   ${detail:-no diagnostic was produced}
   nothing was analysed, so this is NOT 'resolved · 0 hit(s)' — nothing was ruled out
-  check: cs engines   (is this language's toolchain installed and runnable?)
+  check: cs doctor   (is this language's toolchain installed, findable, and the version the build asks for?)
   weaker but available now: cs def $sym $repo, cs uses '$sym'"
   fi
   if [[ ! -s "$raw" ]]; then
     die "cs $sub: the language server exited cleanly but returned no content for '$sym' in $repo
   an empty response is not an empty result set — the project may have failed to load
-  check: cs engines   (per-kind availability, including the language toolchains)
+  check: cs doctor   (the toolchains this fleet's languages need, and the fix)
   weaker but available now: cs def $sym $repo, cs uses '$sym'"
   fi
   return 0
@@ -4100,7 +4179,7 @@ impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|fo
   weaker but available now: cs def $sym $repo, cs uses '$sym'" ;;
     4) die "cs impls: the tokensave graph could not be queried for '$sym' in $repo
   nothing was read, so nothing was ruled out
-  check: cs engines   (graph presence and age)" ;;
+  check: cs doctor   (graph coverage and age, and the fix)" ;;
   esac
   # A graph answers about the code as of its last sync, which makes staleness a
   # correctness problem rather than a tidiness one. Always stated.
@@ -4321,7 +4400,7 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
   weaker but available now: cs def $sym $repo, cs uses '$sym'" ;;
     4) die "cs $mode: the tokensave graph could not be queried for '$sym' in $repo
   nothing was read, so nothing was ruled out
-  check: cs engines   (graph presence and age)" ;;
+  check: cs doctor   (graph coverage and age, and the fix)" ;;
   esac
 
   graph_caveats "$repo" "$graph_dir" "$substituted"
@@ -4437,7 +4516,7 @@ fields_count_via_tokensave() {  # <field> [only-repo]
   ask the broad question deliberately with: cs fields '${field##*::}' --count" ;;
       4) die "cs fields --count: the tokensave graph for $name could not be queried
   nothing was read there, so nothing was ruled out
-  check: cs engines   (graph presence and age)" ;;
+  check: cs doctor   (graph coverage and age, and the fix)" ;;
       5) # Counted, but as REFERENCES rather than sites: the engine truncated
          # its output, so the site arrays are incomplete and distinct file:line
          # cannot be derived. tokensave has no paging to page around it -- it
@@ -4513,7 +4592,7 @@ fields_via_tokensave() {  # <field> [only-repo]
   ask the broad question deliberately with: cs fields '${field##*::}'" ;;
       4) die "cs fields: the tokensave graph for $name could not be queried
   nothing was read there, so nothing was ruled out
-  check: cs engines   (graph presence and age)" ;;
+  check: cs doctor   (graph coverage and age, and the fix)" ;;
       6) # Not a failure to answer -- a failure to LIST. The graph holds so many
          # sites for this field in $name that tokensave's own 15000-character
          # output overflows on the write list alone, so no complete listing can

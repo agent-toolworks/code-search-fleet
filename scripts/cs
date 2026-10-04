@@ -4438,10 +4438,11 @@ cmd_calls() {
 # result still reaches the caller with its PARTIAL warning attached.
 serena_answered_or_die() {  # <rc> <raw-file> <stderr-file> <subcommand> <symbol> <repo>
   local rc="$1" raw="$2" ef="$3" sub="$4" sym="$5" repo="$6" detail
-  detail=$(head -3 "$ef" 2>/dev/null | tr '\n' ' ')
+  detail=$(head -3 "$ef" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
   # Checked before the exit status, because a timeout is the more specific
   # diagnosis and run_timed reports it as a non-zero rc of its own.
   if timed_out; then
+    if [[ -s "$ef" ]]; then cat "$ef" >&2; fi
     die "cs $sub: the language server hit the ${CS_TIMEOUT:-120}s timeout on '$sym' in $repo — PARTIAL, not an answer
   it did not finish, so there is nothing here to call a negative; a 'resolved'
   label on an unfinished run would be the strongest claim on the weakest evidence
@@ -4451,7 +4452,7 @@ serena_answered_or_die() {  # <rc> <raw-file> <stderr-file> <subcommand> <symbol
     die "cs $sub: the language server refused the question for '$sym' in $repo
   ${detail:-no diagnostic was produced}
   nothing was looked up, so this is NOT an answer — nothing was ruled out
-  name a member as Type/Member, or by its bare name, with the file that declares it
+  name a member as Type.Member, Type/Member or its bare name, with the file that declares it
   find that file with: cs def ${sym##*[./]} $repo"
   fi
   if [[ "$rc" -ne 0 ]]; then
@@ -4624,8 +4625,11 @@ if pick:
   run_timed python3 "$lib_dir/serena_call.py" "$repo_dir" find_implementations \
         "{\"name_path\":\"$name_path\",\"relative_path\":\"$rel\"}" \
         >"$raw" 2>"$err_file"; rc=$?
-  if [[ -s "$err_file" ]]; then cat "$err_file" >&2; fi
   out=$(python3 "$lib_dir/serena_fmt.py" "$2" < "$raw")
+  # The server's notes (a re-ask, an import with warnings) are passed on; a
+  # failure's message is not, because the refusal below quotes it, and an
+  # agent reading stderr saw one event twice (#86).
+  if [[ -s "$err_file" ]] && [[ "$rc" -eq 0 || -n "$out" ]]; then cat "$err_file" >&2; fi
   if [[ -z "$out" ]]; then
     # Dies unless the emptiness is an answer rather than the absence of one.
     serena_answered_or_die "$rc" "$raw" "$err_file" impls "$1" "$2"
@@ -5588,8 +5592,11 @@ cmd_refs() {
   run_timed python3 "$lib_dir/serena_call.py" "$repo_dir" find_referencing_symbols \
         "{\"name_path\":\"$name_path\",\"relative_path\":\"$3\"}" \
         >"$raw" 2>"$err_file"; rc=$?
-  if [[ -s "$err_file" ]]; then cat "$err_file" >&2; fi
   out=$(python3 "$lib_dir/serena_fmt.py" "$2" < "$raw")
+  # The server's notes (a re-ask, an import with warnings) are passed on; a
+  # failure's message is not, because the refusal below quotes it, and an
+  # agent reading stderr saw one event twice (#86).
+  if [[ -s "$err_file" ]] && [[ "$rc" -eq 0 || -n "$out" ]]; then cat "$err_file" >&2; fi
   if [[ -z "$out" ]]; then
     serena_answered_or_die "$rc" "$raw" "$err_file" refs "$1" "$2"
     rm -f "$raw" "$err_file"

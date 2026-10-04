@@ -229,16 +229,18 @@ else
   # of a `resolved` answer, exit 0 (#83). The dotted name must find the call; a
   # name that matches nothing must be a refusal, never a hit.
   dot_out=$("$here/cs" refs IInventoryStore.ReserveAsync inventory-api-dotnet src/Domain/IInventoryStore.cs 2>/dev/null)
-  "$here/cs" refs NoSuchMember inventory-api-dotnet src/Domain/IInventoryStore.cs >/dev/null 2>&1; nosym_rc=$?
+  nosym_err=$("$here/cs" refs NoSuchMember inventory-api-dotnet src/Domain/IInventoryStore.cs 2>&1 >/dev/null); nosym_rc=$?
   nosym_env=$("$here/cs" refs NoSuchMember inventory-api-dotnet src/Domain/IInventoryStore.cs --porcelain 2>/dev/null)
   if matches "$dot_out" 'ReservationController\.cs:27: .*_store\.ReserveAsync' \
      && [[ $nosym_rc -eq 1 ]] && matches "$nosym_env" '"refused":true' \
-     && ! matches "$nosym_env" '"hits":[1-9]'; then
-    ok "cs refs finds a Type.Member name, and refuses a name the server cannot match instead of counting its error as a hit"
+     && ! matches "$nosym_env" '"hits":[1-9]' \
+     && [[ $(printf '%s\n' "$nosym_err" | grep -c 'No symbol matching') -eq 1 ]] \
+     && ! printf '%s\n' "$nosym_err" | grep -q ' $'; then
+    ok "cs refs finds a Type.Member name, and refuses a name the server cannot match instead of counting its error as a hit (said once)"
     pass=$((pass + 1))
   else
     err "cs refs on a dotted name or an unmatched one (unmatched exit $nosym_rc):"
-    printf '%s\n%s\n' "$dot_out" "$nosym_env" | sed 's/^/    /' >&2
+    printf '%s\n%s\n%s\n' "$dot_out" "$nosym_env" "$nosym_err" | sed 's/^/    /' >&2
     fail=$((fail + 1)); failed_ids+=("lsp-tool-error-refused")
   fi
 fi

@@ -8,6 +8,16 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.20.1 — 2026-10-04
+
+- **A language-server refusal states the server's error once** (#86). Since
+  1.20.0, `cs refs` / `cs impls` printed Serena's message as a raw `serena: …`
+  line before the `✗` refusal and again inside it, with a trailing space, so an
+  agent reading stderr saw one failure twice. It is now only in the refusal.
+  The server's notes on an answer (a re-ask after import, an import with
+  warnings) still print. The refusal's naming advice now lists `Type.Member`,
+  which `cs refs` accepts since 1.20.0.
+
 ## 1.20.0 — 2026-10-03
 
 - **A language-server error is a refusal, not a hit** (#83). When Serena's tool

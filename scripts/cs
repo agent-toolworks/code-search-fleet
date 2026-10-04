@@ -4447,6 +4447,13 @@ serena_answered_or_die() {  # <rc> <raw-file> <stderr-file> <subcommand> <symbol
   label on an unfinished run would be the strongest claim on the weakest evidence
   raise CS_TIMEOUT and rerun, or fall back to: cs def $sym $repo"
   fi
+  if [[ "$rc" -eq 5 ]]; then
+    die "cs $sub: the language server refused the question for '$sym' in $repo
+  ${detail:-no diagnostic was produced}
+  nothing was looked up, so this is NOT an answer — nothing was ruled out
+  name a member as Type/Member, or by its bare name, with the file that declares it
+  find that file with: cs def ${sym##*[./]} $repo"
+  fi
   if [[ "$rc" -ne 0 ]]; then
     die "cs $sub: the language server did not answer for '$sym' in $repo (serena exited $rc)
   ${detail:-no diagnostic was produced}
@@ -5567,10 +5574,19 @@ cmd_refs() {
   # python3 and the repo directory all passing says nothing about whether this
   # language can be loaded at all.
   require_serena_toolchain refs "$1" "$2" "$repo_dir"
+  # `Patient.GetAccessionList` is how the call reads in C# or Java source, and
+  # how an agent writes it; Serena separates a type and its member with `/` and
+  # matches no symbol for the dotted form (#83). Asked in Serena's spelling,
+  # and said so, since the name that was looked up is not the one typed.
+  local name_path="$1"
+  if [[ "$name_path" == *.* && "$name_path" != */* ]]; then
+    name_path=$(printf '%s' "$name_path" | tr . /)
+    info "asking the language server for '$name_path' (Type/Member), the spelling it matches, for '$1'"
+  fi
   local out raw err_file rc
   raw=$(cs_tmp cs-serena); err_file=$(cs_tmp cs-serena-err)
   run_timed python3 "$lib_dir/serena_call.py" "$repo_dir" find_referencing_symbols \
-        "{\"name_path\":\"$1\",\"relative_path\":\"$3\"}" \
+        "{\"name_path\":\"$name_path\",\"relative_path\":\"$3\"}" \
         >"$raw" 2>"$err_file"; rc=$?
   if [[ -s "$err_file" ]]; then cat "$err_file" >&2; fi
   out=$(python3 "$lib_dir/serena_fmt.py" "$2" < "$raw")

@@ -8,6 +8,26 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.20.0 — 2026-10-03
+
+- **A language-server error is a refusal, not a hit** (#83). When Serena's tool
+  failed, for instance on a name it matches no symbol for, its message
+  (`Error executing tool find_referencing_symbols: ValueError: No symbol
+  matching 'Patient.GetAccessionList' found`) was printed as the one result
+  line of `resolved · 1 hit(s)`, exit 0: a failed lookup read as a positive
+  answer, and a real zero could not be told apart from it. `cs refs` and
+  `cs impls` now refuse (exit 1, `"refused":true` in the envelope) with the
+  server's message, "nothing was ruled out", and how to name the symbol. If
+  you kept a `cs refs` answer whose only hit was an `Error executing tool`
+  line, it was not an answer: ask again.
+- **`cs refs Type.Member` works** (#83). That is how a C# or Java call reads,
+  and how an agent writes it, but Serena separates a type and its member with
+  `/` and matched nothing. `cs refs` now asks for `Patient.GetAccessionList` as
+  `Patient/GetAccessionList`, and says so on stderr. `Type/Member` and the bare
+  member name work as before. A namespace-qualified name
+  (`Acme.Domain.Patient.Get`) is not one Serena matches either way, and is now
+  refused with that advice.
+
 ## 1.19.2 — 2026-10-03
 
 - **The `cs refs` hint after a graph zero runs as printed** (#81). `cs callers`

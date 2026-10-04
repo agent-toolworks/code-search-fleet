@@ -237,6 +237,11 @@ before 1.16. Update anything that says otherwise:
   `[in Class PatientRelative]`. `[in Class …]` now means the reference is in no
   member, such as an attribute. The `cs refs` hint after a `cs callers` zero
   names the declaring file, so it runs as printed.
+- **A language-server error is a refusal** (1.20.0, #83). Until 1.20.0 a
+  `cs refs` / `cs impls` whose only hit was an `Error executing tool …` line
+  was Serena failing, counted as `resolved · 1 hit(s)`, exit 0. It now
+  refuses, exit 1. `cs refs Type.Member` is asked as `Type/Member` and finds
+  the references; it used to hit that error.
 - **`cs changes` / `cs_changes`** (1.19.0) lists what changed since a version,
   small fixes included, and the MCP instructions name the running version.
   This section is the summary; that command is the complete list.

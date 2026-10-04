@@ -393,7 +393,8 @@ TOOLS = [
     ("cs_refs", "refs",
      "What references this symbol, resolved by a language server — bridges "
      "dependency injection that text search cannot follow.",
-     [arg("symbol", "The symbol name."),
+     [arg("symbol", "The symbol name: a bare name, or a member as "
+                    "Type/Member (Type.Member is accepted and asked as Type/Member)."),
       arg("repo", "The repo directory name holding it."),
       arg("file", "Path to the file declaring it, relative to the repo."),
       SCOPE_ARG]),

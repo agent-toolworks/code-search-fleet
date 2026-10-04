@@ -8,6 +8,8 @@ Usage: serena_call.py <project-dir> <tool-name> [json-args]
 
 Exit 3 when the language server never finished importing the project in the
 time allowed: whatever it said is not an answer (see wait_until_imported).
+Exit 5 when the tool itself failed (an MCP result flagged isError, such as a
+name_path that matches no symbol): its message is on stderr, not an answer.
 """
 import glob
 import json
@@ -265,6 +267,14 @@ def main():
 
     text = "\n".join(item.get("text", "")
                      for item in res.get("result", {}).get("content", []))
+    # A tool that failed answers with a normal result flagged isError, its text
+    # an error message ("No symbol matching 'Patient.GetAccessionList' found").
+    # Printed on stdout it was formatted as the one hit of a `resolved` answer,
+    # exit 0 (#83). It is a refusal: nothing was looked up.
+    if res.get("result", {}).get("isError"):
+        proc.terminate()
+        print("serena: " + text.strip()[:300], file=sys.stderr)
+        return 5
     if tool == "find_referencing_symbols":
         ids = iter(range(10, 10000))
 

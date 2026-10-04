@@ -223,7 +223,57 @@ else
     err "language-server addresses that miss their line (of $addr_n): ${addr_bad[*]:-none parsed}"
     fail=$((fail + 1)); failed_ids+=("lsp-line-addresses")
   fi
+
+  # `Type.Member` is how a call reads in source and how an agent writes it.
+  # Serena matched no symbol for it, and its error was printed as the one hit
+  # of a `resolved` answer, exit 0 (#83). The dotted name must find the call; a
+  # name that matches nothing must be a refusal, never a hit.
+  dot_out=$("$here/cs" refs IInventoryStore.ReserveAsync inventory-api-dotnet src/Domain/IInventoryStore.cs 2>/dev/null)
+  "$here/cs" refs NoSuchMember inventory-api-dotnet src/Domain/IInventoryStore.cs >/dev/null 2>&1; nosym_rc=$?
+  nosym_env=$("$here/cs" refs NoSuchMember inventory-api-dotnet src/Domain/IInventoryStore.cs --porcelain 2>/dev/null)
+  if matches "$dot_out" 'ReservationController\.cs:27: .*_store\.ReserveAsync' \
+     && [[ $nosym_rc -eq 1 ]] && matches "$nosym_env" '"refused":true' \
+     && ! matches "$nosym_env" '"hits":[1-9]'; then
+    ok "cs refs finds a Type.Member name, and refuses a name the server cannot match instead of counting its error as a hit"
+    pass=$((pass + 1))
+  else
+    err "cs refs on a dotted name or an unmatched one (unmatched exit $nosym_rc):"
+    printf '%s\n%s\n' "$dot_out" "$nosym_env" | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("lsp-tool-error-refused")
+  fi
 fi
+
+# The same, on every machine: a server whose tool fails answers with a result
+# flagged isError, and serena_call.py must exit 5 with nothing on stdout -- that
+# stdout is what serena_fmt.py turned into a hit (#83).
+lsp_fake=$(mktemp -d)
+cat > "$lsp_fake/server.py" <<'PY'
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("id") == 1:
+        print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}}), flush=True)
+    elif msg.get("id") == 2:
+        print(json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"isError": True, "content": [
+            {"type": "text", "text": "Error executing tool find_referencing_symbols: ValueError: No symbol matching 'A.B' found"}]}}), flush=True)
+PY
+lsp_err_out=$(python3 - "$here/lib/serena_call.py" "$lsp_fake" <<'PY' 2>"$lsp_fake/err"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sc", sys.argv[1])
+sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
+sc.SERENA = [sys.executable, sys.argv[2] + "/server.py"]
+sys.argv = ["serena_call.py", sys.argv[2], "find_referencing_symbols", "{}"]
+sys.exit(sc.main())
+PY
+); lsp_err_rc=$?
+if [[ $lsp_err_rc -eq 5 && -z "$lsp_err_out" ]] && grep -q "No symbol matching" "$lsp_fake/err"; then
+  ok "a language-server tool error is a refusal (exit 5, message on stderr), not output"
+  pass=$((pass + 1))
+else
+  err "serena_call.py passed a tool error through (exit $lsp_err_rc, stdout: ${lsp_err_out:0:120})"
+  fail=$((fail + 1)); failed_ids+=("lsp-tool-error-exit")
+fi
+rm -rf "$lsp_fake"
 
 # ---- engine parity ---------------------------------------------------------
 # The answer must not depend on which text engine happens to be installed. This

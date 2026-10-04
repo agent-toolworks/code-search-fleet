@@ -77,6 +77,10 @@ MCP instructions name the running version. Details are in `docs/install.md`,
 - A C# or Kotlin `cs callers` / `cs callees` / `cs impact` answer says the graph
   has no edges through property accessors (since 1.19.1), and a zero there is
   `degraded`, not "unused".
+- `cs refs` takes a member as `Type.Member` (asked as `Type/Member`) since
+  1.20.0. Before, it hit a Serena error that was counted as one `resolved`
+  hit, exit 0. A language-server error is now a refusal, so a `resolved` hit
+  is always a real reference.
 - An answer a language server gave before its project import finished is
   asked again, or refused. It is never reported as it came, so a
   `resolved · 0 hit(s)` is a real zero.

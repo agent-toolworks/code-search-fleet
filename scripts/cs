@@ -1937,6 +1937,25 @@ symbol_language() {  # <symbol> <repo-dir>
   ext_language "$ext"
 }
 
+# The file to hand `cs refs` for a symbol, so the advice after a zero is a
+# command that runs rather than one with `<file>` in it (#81): the one file that
+# declares it, repo-relative. Two files declaring the name is a choice cs cannot
+# make for the reader, so that prints the placeholder and says how to choose.
+refs_file() {  # <symbol> <repo-name> <repo-dir>
+  local sym="$1" repo="$2" dir="$3" ct tags files n
+  if ct=$(ctags_bin); then
+    tags=$(cs_tmp cs-symfile)
+    (cd "$dir" && run_timed "$ct" -R --fields=+n -f "$tags" . >/dev/null 2>&1)
+    files=$(awk -F'\t' -v w="$sym" '$1 == w { sub(/^\.\//, "", $2); print $2 }' "$tags" | sort -u)
+    rm -f "$tags"
+  fi
+  n=$(printf '%s' "${files:-}" | grep -c .)
+  if [[ $n -eq 1 ]]; then printf '%s\n' "$files"
+  elif [[ $n -gt 1 ]]; then printf '<file>   (declared in %s files: cs def %s %s lists them)\n' "$n" "$sym" "$repo"
+  else printf '<file>\n'
+  fi
+}
+
 repo_language() {
   local dir="$1" ranked n ext
   ranked=$(find -L "$dir" -type d \( -name .git -o -name node_modules -o -name vendor \
@@ -4664,7 +4683,7 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
     ""|tokensave) ;;
     serena|lsp) die "cs $mode has no language-server route
   a language server resolves references, not a call graph — the nearest resolved
-  answer is: cs refs $sym $repo <file-declaring-it>" ;;
+  answer is: cs refs $sym $repo $(refs_file "$sym" "$repo" "$dir")" ;;
     *) die "cs $mode has no engine named '$force_engine'
   it answers from: tokensave (graph), and nothing else" ;;
   esac
@@ -4720,11 +4739,12 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
     [[ -n "$gap_lang" ]] && CS_DEGRADED="${CS_DEGRADED:+$CS_DEGRADED; }a $mode zero in $gap_lang is not 'unused': calls made inside property accessors are not edges in tokensave's $gap_lang graph — check cs uses '$sym' --word"
     report_answer 0 0
     case "$mode" in
-      callers) if [[ -n "$gap_lang" ]]; then
+      callers) local rf; rf=$(refs_file "$sym" "$repo" "$dir")
+               if [[ -n "$gap_lang" ]]; then
                  hint "cs uses '$sym' --word   (a call inside a $gap_lang property accessor is not in the graph; this finds it as text)" \
-                      "cs refs $sym $repo <file>   (a language server sees accessor calls and DI registrations the graph cannot)"
+                      "cs refs $sym $repo $rf   (a language server sees accessor calls and DI registrations the graph cannot)"
                else hint "cs uses '$sym'          (a caller in another repo is a string, not an edge)" \
-                    "cs refs $sym $repo <file>   (a language server sees a DI registration the graph cannot)"
+                    "cs refs $sym $repo $rf   (a language server sees a DI registration the graph cannot)"
                fi ;;
       callees) hint "cs def $sym $repo       (confirm the symbol is the one you mean)" \
                     "cs calls '<pattern>'    (a call shape the graph did not record)" ;;

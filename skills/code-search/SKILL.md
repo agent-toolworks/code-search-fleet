@@ -70,7 +70,10 @@ MCP instructions name the running version. Details are in `docs/install.md`,
 - Language-server line numbers are 1-based since 1.18.1. Before, every
   `cs impls` / `cs refs` address was one line short, so an older answer
   you kept points one line above the symbol.
-- A `cs refs` line names its enclosing symbol (`[in Method Foo/Bar]`).
+- A `cs refs` line names its enclosing symbol (`[in Method Foo/Bar]`). Since
+  1.19.2 a hit inside a C# property is `[in Property Foo/Bar]`, not
+  `[in Class Foo]`, and the `cs refs` hint after a `cs callers` zero names the
+  declaring file, so run it as printed.
 - A C# or Kotlin `cs callers` / `cs callees` / `cs impact` answer says the graph
   has no edges through property accessors (since 1.19.1), and a zero there is
   `degraded`, not "unused".

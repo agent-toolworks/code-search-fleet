@@ -12,6 +12,7 @@ time allowed: whatever it said is not an answer (see wait_until_imported).
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -33,6 +34,8 @@ SERENA = ["uvx", "--from", "git+https://github.com/oraios/serena", "serena",
 NOT_READY = "proceeding anyway"
 IMPORT_DONE = "'type': 'ProjectStatus'"
 LOG_ROOT = os.path.expanduser("~/.serena/logs")
+# The `>` line of a reference's context snippet; see serena_fmt.py.
+REF_LINE = re.compile(r"^\s*>\s*(\d+):", re.MULTILINE)
 
 
 def descendants(pid):
@@ -89,6 +92,88 @@ def import_state(log, budget, alive=lambda: True, poll=2):
             return ("late", int(time.time() - t0))
         time.sleep(poll)
     return ("never", int(time.time() - t0))
+
+
+# find_referencing_symbols names the symbol ENCLOSING each reference, and a
+# language server's "enclosing" stops at methods: a call inside a C# property
+# getter, an expression-bodied property or a field initializer came back as
+# `Class PatientRelative`, which read as "not inside anything more specific"
+# just where the reader was checking whether the caller is a getter (#81). The
+# server does know the property and its range -- find_symbol lists it as a
+# child -- so while it is still running, each type named as a container is
+# asked for its members, and a reference that falls inside one is moved there.
+# Nothing is guessed: a reference no member holds keeps the type it was given.
+TYPE_KINDS = ("Class", "Struct", "Interface", "Enum")
+
+
+def _ref_line(entry):
+    """The reference's own line, 0-based as Serena reports it, or None."""
+    m = REF_LINE.search(entry.get("content_around_reference") or "")
+    return int(m.group(1)) if m else None
+
+
+def _members(text):
+    """[(start, end, kind, name)] for the members find_symbol listed."""
+    try:
+        found = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    out = []
+    for sym in found if isinstance(found, list) else []:
+        children = sym.get("children") if isinstance(sym, dict) else None
+        for kind, members in (children or {}).items():
+            if kind in TYPE_KINDS:
+                continue          # a nested type is its own container already
+            for m in members or []:
+                if not isinstance(m, dict):
+                    continue
+                loc = m.get("body_location") or {}
+                start, end = loc.get("start_line"), loc.get("end_line")
+                if isinstance(start, int) and isinstance(end, int) and m.get("name"):
+                    out.append((start, end, kind, m["name"]))
+    return out
+
+
+def narrow_containers(text, ask):
+    """text with type-level containers narrowed to the member that holds them."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if not isinstance(data, dict):
+        return text
+    cache, changed = {}, False
+    for path, kinds in data.items():
+        if not isinstance(kinds, dict):
+            continue
+        for kind in [k for k in kinds if k in TYPE_KINDS]:
+            kept = []
+            for entry in kinds[kind] or []:
+                line = _ref_line(entry) if isinstance(entry, dict) else None
+                name_path = entry.get("name_path") if isinstance(entry, dict) else None
+                if line is None or not name_path:
+                    kept.append(entry)
+                    continue
+                key = (path, name_path)
+                if key not in cache:
+                    cache[key] = _members(ask("find_symbol", {
+                        "name_path_pattern": "/" + name_path,
+                        "relative_path": path, "depth": 1,
+                        "include_body": False}))
+                holders = [m for m in cache[key] if m[0] <= line <= m[1]]
+                if not holders:
+                    kept.append(entry)
+                    continue
+                start, end, mkind, mname = min(holders, key=lambda m: m[1] - m[0])
+                moved = dict(entry, name_path=name_path + "/" + mname,
+                             body_location={"start_line": start, "end_line": end})
+                kinds.setdefault(mkind, []).append(moved)
+                changed = True
+            if kept:
+                kinds[kind] = kept
+            else:
+                del kinds[kind]
+    return json.dumps(data) if changed else text
 
 
 def main():
@@ -168,17 +253,34 @@ def main():
         print("serena: the project import finished with warnings (not OK), so "
               "part of it may not have loaded; an empty answer is weaker than "
               "usual.", file=sys.stderr)
-    proc.terminate()
 
     if not res:
+        proc.terminate()
         print("serena: call timed out", file=sys.stderr)
         return 1
     if "error" in res:
+        proc.terminate()
         print("serena: " + json.dumps(res["error"])[:300], file=sys.stderr)
         return 1
 
-    for item in res.get("result", {}).get("content", []):
-        print(item.get("text", ""))
+    text = "\n".join(item.get("text", "")
+                     for item in res.get("result", {}).get("content", []))
+    if tool == "find_referencing_symbols":
+        ids = iter(range(10, 10000))
+
+        def ask(name, arguments):
+            n = next(ids)
+            send({"jsonrpc": "2.0", "id": n, "method": "tools/call",
+                  "params": {"name": name, "arguments": arguments}})
+            msg = read_until(n, timeout=60)
+            if not msg or "error" in msg:
+                return None
+            return "\n".join(item.get("text", "")
+                             for item in msg.get("result", {}).get("content", []))
+
+        text = narrow_containers(text, ask)
+    proc.terminate()
+    print(text)
     return 0
 
 

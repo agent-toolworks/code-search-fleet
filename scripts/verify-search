@@ -866,18 +866,21 @@ if command -v tokensave >/dev/null 2>&1; then
   acc_shim=$(mktemp -d)
   printf '#!/bin/sh\nexit 127\n' > "$acc_shim/dotnet"; printf '#!/bin/sh\nexit 0\n' > "$acc_shim/uvx"; chmod +x "$acc_shim"/*
   acc_out=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims 2>&1); acc_rc=$?
+  acc_lsp=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims --engine=serena 2>&1)
   acc_env=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims --porcelain 2>/dev/null)
   acc_ref=$(PATH="$acc_shim:$PATH" FLEET_ROOT="$acc_fleet" "$here/cs" refs GetAccessionList lims Data/Patient.cs 2>&1)
   acc_txt=$(FLEET_ROOT="$acc_fleet" "$here/cs" uses 'GetAccessionList' --word 2>/dev/null)
   if [[ $acc_rc -eq 2 ]] && matches "$acc_out" 'answer:.*C# property accessors are not in the graph' \
      && matches "$acc_env" '"degraded":"[^"]*property accessors' \
      && matches "$acc_ref" "and: +cs uses 'GetAccessionList' --word" \
-     && matches "$acc_txt" 'PatientRelative\.cs:4:'; then
-    ok "a C# graph zero names the property-accessor hole, and the advice pairs it with the text search that fills it"
+     && matches "$acc_txt" 'PatientRelative\.cs:4:' \
+     && matches "$acc_out" 'cs refs GetAccessionList lims Data/Patient\.cs ' \
+     && matches "$acc_lsp" 'answer is: cs refs GetAccessionList lims Data/Patient\.cs$'; then
+    ok "a C# graph zero names the property-accessor hole, and the advice pairs it with the text search that fills it and a cs refs that runs as printed"
     pass=$((pass + 1))
   else
     err "the C# property-accessor gap was not disclosed (callers exit $acc_rc):"
-    printf '%s\n%s\n' "$acc_out" "$acc_ref" | grep -E 'answer|and:|degraded' | sed 's/^/    /' >&2
+    printf '%s\n%s\n%s\n' "$acc_out" "$acc_ref" "$acc_lsp" | grep -E 'answer|and:|degraded|cs refs' | sed 's/^/    /' >&2
     fail=$((fail + 1)); failed_ids+=("graph-accessor-gap")
   fi
   rm -rf "$acc_shim" "$(dirname "$acc_fleet")"
@@ -932,6 +935,50 @@ then
 else
   err "serena_call.py's import-state decision is wrong on a synthetic log"
   fail=$((fail + 1)); failed_ids+=("lsp-import-not-ready")
+fi
+
+# ---- a reference inside a property, named as the property -------------------
+# A language server's "enclosing symbol" stops at methods, so a call inside a C#
+# getter or an expression-bodied property came back labelled with its class
+# (#81). serena_call.py asks the still-running server for the type's members
+# and moves the reference into the one whose range holds it. Asserted on
+# Serena's own reply shapes, measured on a C# fixture, so it runs everywhere.
+if python3 - "$here/lib/serena_call.py" <<'PY' 2>/dev/null
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("sc", sys.argv[1])
+sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
+def ref(line, text):
+    return {"name_path": "Lims.Data/PatientRelative",
+            "body_location": {"start_line": 10, "end_line": 28},
+            "content_around_reference": "...  %d:\n  >  %d:%s\n..." % (line - 1, line, text)}
+refs = {"Data/Patient.cs": {"Class": [ref(18, "return Patient.Get(RelatedId);"),
+                                      ref(22, "public int[] Expr => Patient.Get(1);"),
+                                      ref(29, "[Obsolete]")],
+                            "Method": [{"name_path": "Lims.Data/PatientRelative/M",
+                                        "body_location": {"start_line": 24, "end_line": 27},
+                                        "content_around_reference": "  >  26:return Patient.Get(2);"}]}}
+members = [{"name_path": "Lims.Data/PatientRelative", "kind": "Class",
+            "children": {"Property": [{"name": "AccessionList", "body_location": {"start_line": 14, "end_line": 20}},
+                                      {"name": "Expr", "body_location": {"start_line": 22, "end_line": 22}}],
+                         "Method": [{"name": "M", "body_location": {"start_line": 24, "end_line": 27}}]}}]
+asked = []
+def ask(tool, args):
+    asked.append((tool, args["name_path_pattern"]))
+    return json.dumps(members)
+out = json.loads(sc.narrow_containers(json.dumps(refs), ask))["Data/Patient.cs"]
+props = sorted(e["name_path"] for e in out["Property"])
+assert props == ["Lims.Data/PatientRelative/AccessionList", "Lims.Data/PatientRelative/Expr"], props
+assert [e["content_around_reference"] for e in out["Class"]] == [refs["Data/Patient.cs"]["Class"][2]["content_around_reference"]]
+assert len(out["Method"]) == 1
+assert asked == [("find_symbol", "/Lims.Data/PatientRelative")], asked
+assert sc.narrow_containers("not json", ask) == "not json"
+PY
+then
+  ok "a reference inside a C# property is named as that property, not its class"
+  pass=$((pass + 1))
+else
+  err "serena_call.py did not narrow a class-level reference to the property holding it"
+  fail=$((fail + 1)); failed_ids+=("refs-property-container")
 fi
 
 # ---- cs doctor -------------------------------------------------------------

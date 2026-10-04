@@ -232,6 +232,11 @@ before 1.16. Update anything that says otherwise:
   `impact` say so in the provenance line, a zero is marked `degraded`, and the
   `cs refs` refusal pairs `cs callers` with `cs uses '<name>' --word`, the text
   search that finds those calls. Until 1.19.1, such a zero looked like "unused".
+- **A `cs refs` hit inside a property names the property** (1.19.2, #81):
+  `[in Property PatientRelative/AccessionList]`, where it said
+  `[in Class PatientRelative]`. `[in Class …]` now means the reference is in no
+  member, such as an attribute. The `cs refs` hint after a `cs callers` zero
+  names the declaring file, so it runs as printed.
 - **`cs changes` / `cs_changes`** (1.19.0) lists what changed since a version,
   small fixes included, and the MCP instructions name the running version.
   This section is the summary; that command is the complete list.

@@ -8,6 +8,23 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.19.2 — 2026-10-03
+
+- **The `cs refs` hint after a graph zero runs as printed** (#81). `cs callers`
+  ending in nothing advised `cs refs <sym> <repo> <file>` with a literal
+  `<file>`, so an agent needed a `cs def` round trip before it could follow the
+  advice. The hint, and the `cs callers --engine=serena` refusal, now name the
+  declaring file (`cs refs GetAccessionList lims Data/Patient.cs`). When
+  several files declare the name, `<file>` stays, with a pointer to `cs def`.
+- **A `cs refs` hit inside a property is labelled with the property** (#81).
+  The language server names the method around a reference, but for a call
+  inside a C# getter or an expression-bodied property it named the class:
+  `[in Class PatientRelative]`, just where a reader is checking whether the
+  caller is a getter. cs now asks the server for that type's members and
+  labels the hit `[in Property PatientRelative/AccessionList]` (a field
+  initializer, `[in Field …]`). `[in Class …]` now means the reference is in
+  no member at all, such as an attribute or a base-type list.
+
 ## 1.19.1 — 2026-10-03
 
 - **A C# or Kotlin graph answer names the graph's property-accessor hole** (#79).

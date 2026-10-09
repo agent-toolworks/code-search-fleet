@@ -285,10 +285,12 @@ def segments(command):
 
 def expand(token, cwd):
     """Resolve a path-like token the way the shell would, without globbing."""
-    h = home()
-    for prefix in ("${HOME}", "$HOME"):
+    h, root = home(), fleet_root()
+    # $FLEET_ROOT is how the docs and fleet.env spell the fleet, so an agent may too.
+    for prefix, value in (("${HOME}", h), ("$HOME", h),
+                          ("${FLEET_ROOT}", root), ("$FLEET_ROOT", root)):
         if token == prefix or token.startswith(prefix + "/"):
-            token = h + token[len(prefix):]
+            token = value + token[len(prefix):]
     token = os.path.expanduser(token)
     if not os.path.isabs(token):
         token = os.path.join(cwd or "/", token)
@@ -357,8 +359,11 @@ def recursive_grep(words):
 def bash_is_cross_repo(command, cwd):
     for seg in segments(command):
         words = list(seg)
-        # Skip leading env assignments (`X=1 rg …`) and `command`/`env` wrappers.
-        while words and (re.match(r"^\w+=", words[0]) or words[0] in ("command", "env")):
+        # Skip leading env assignments (`X=1 rg …`) and flagless wrappers (`time rg …`).
+        # A wrapper with flag values (`nice -n 5 rg`, `sudo -u x rg`) or `xargs grep`
+        # still passes: that needs real argument parsing, and the guard fails open.
+        while words and (re.match(r"^\w+=", words[0])
+                         or words[0] in ("command", "env", "time", "nice", "sudo")):
             words.pop(0)
         if not words:
             continue

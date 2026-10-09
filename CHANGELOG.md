@@ -20,7 +20,7 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
   `PreToolUse` hook (`hooks/hooks.json`), off unless `CS_DISCONNECT_GUARD=1`,
   that reads the drop from the session transcript, blocks the first tool call
   after it once per agent, and blocks grep spanning two or more clones under
-  `FLEET_ROOT` until the server is back or the command ends in
+  `FLEET_ROOT` until the server is back or the command carries
   `# cs-down-ack`. `CS_DISCONNECT_ACK` changes the marker, and
   `CS_DISCONNECT_FILES_ARE_READS=0` counts named files toward their clone. See
   docs/mcp.md § "When the tools disappear mid-session".

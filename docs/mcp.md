@@ -235,7 +235,7 @@ list changing (`deferred_tools_delta`), and while this plugin's server is absent
   and ask for `/mcp`;
 - it blocks `grep` / `rg` / `find`-family commands and the Grep tool when they
   span **two or more clones under `FLEET_ROOT`** (the root itself, a glob over
-  its children, or two named clones), unless the Bash command ends in
+  its children, or two named clones), unless the Bash command carries
   `# cs-down-ack`, meaning the user agreed to a textual fallback. A search inside
   one clone passes, and so does naming existing files in several clones, which
   is a read of known locations rather than a search.
@@ -247,7 +247,7 @@ disconnect. The hook fails open on anything it cannot read.
 | Key | Does |
 |---|---|
 | `CS_DISCONNECT_GUARD` | `1` turns the hook on; anything else, or unset, leaves it off |
-| `CS_DISCONNECT_ACK` | the marker a Bash command ends with (`# <marker>`) to run a cross-repo grep anyway, default `cs-down-ack` |
+| `CS_DISCONNECT_ACK` | the marker a Bash command carries (`# <marker>`) to run a cross-repo grep anyway, default `cs-down-ack` |
 | `CS_DISCONNECT_FILES_ARE_READS` | `1` (default): existing files named in several clones are a read and pass. `0`: a file counts toward its clone, like a directory |
 
 The keys and `FLEET_ROOT` resolve the way `cs` resolves its own (environment,

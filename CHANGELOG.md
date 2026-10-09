@@ -8,8 +8,6 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
-## 1.21.1 — 2026-10-09
-
 - **A language server that did not start is named as such** (#90). The Kotlin
   server Serena downloaded (kotlin-server 263.4702.0) is a JetBrains
   pre-release build that has expired: it exits at start-up, so every
@@ -23,6 +21,23 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
   case. If you see this on Kotlin, install a current kotlin-server and set
   `ls_path` as in docs/install.md, "Kotlin language server". `verify-engines`
   now names the cause on its `serena-kt` line.
+
+## 1.22.0 — 2026-10-09
+
+- **An agent that loses the MCP server is told to tell the user** (#92). When
+  the server dropped mid-session, the harness removed every `cs_*` tool and
+  said so once; an agent could carry on answering cross-repo questions with
+  `grep`, giving textual answers where cs gives resolved ones, without the user
+  knowing. The MCP instructions now say: if the `cs_*` tools disappear, the
+  server has disconnected; tell the user, ask them to reconnect (`/mcp`), and
+  label any grep answer textual. The plugin also ships an optional
+  `PreToolUse` hook (`hooks/hooks.json`), off unless `CS_DISCONNECT_GUARD=1`,
+  that reads the drop from the session transcript, blocks the first tool call
+  after it once per agent, and blocks grep spanning two or more clones under
+  `FLEET_ROOT` until the server is back or the command carries
+  `# cs-down-ack`. `CS_DISCONNECT_ACK` changes the marker, and
+  `CS_DISCONNECT_FILES_ARE_READS=0` counts named files toward their clone. See
+  docs/mcp.md § "When the tools disappear mid-session".
 
 ## 1.21.0 — 2026-10-09
 

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# PreToolUse hook, registered by hooks/hooks.json: when the cs MCP server has
+# disconnected mid-session, block the first tool call once and say so, and block
+# cross-repo grep until the server is back or the user agrees to a grep fallback.
+# The behaviour is documented in scripts/lib/disconnect_guard.py and
+# docs/mcp.md § "When the tools disappear mid-session".
+#
+# Off unless CS_DISCONNECT_GUARD=1. The hook is registered for every tool call of
+# every plugin user, so the disabled path is this script and nothing more: no
+# Python, no state, exit 0.
+#
+# The configuration is resolved by sourcing scripts/lib/common.sh, the same file
+# `cs` and `cs-mcp` read, so FLEET_ROOT and the CS_DISCONNECT_* keys follow the
+# documented precedence: environment, then fleet.env, then the default.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$here/lib/common.sh" 2>/dev/null || exit 0
+[[ "${CS_DISCONNECT_GUARD:-0}" == 1 ]] || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
+
+export FLEET_ROOT CS_DISCONNECT_ACK CS_DISCONNECT_FILES_ARE_READS
+exec python3 "$here/lib/disconnect_guard.py"

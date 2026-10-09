@@ -203,3 +203,58 @@ A run in that file with a `started` line and no exit line was killed outright
 (SIGKILL, or the interpreter crashed): the one ending nothing inside the
 process can report. `cs-mcp --self-check` prints where the log goes, or that it
 is off.
+
+### When the tools disappear mid-session
+
+When the server drops, the harness removes every `cs_*` tool and mentions it
+once. An agent that carries on can answer the next cross-repo question with
+`grep` over the fleet: a `textual` answer where cs would have given a `resolved`
+one, and the user does not know the trade was made. Reconnecting takes one
+`/mcp`, so the user should hear about it at once.
+
+The instructions the server sends on connect say so, and they are still in
+context after the drop: *if the `cs_*` tools disappear mid-session, the server
+has disconnected; tell the user and ask them to reconnect it (`/mcp` in Claude
+Code) before answering any cross-repo question with grep, and label such an
+answer textual.*
+
+The plugin also ships an **optional** `PreToolUse` hook, `hooks/hooks.json`,
+that enforces it in Claude Code. It is registered with the plugin and does
+nothing unless you turn it on:
+
+```sh
+# ~/.config/repo-fleet/fleet.env
+export CS_DISCONNECT_GUARD=1
+```
+
+Turned on, it reads the session transcript for the harness's record of the tool
+list changing (`deferred_tools_delta`), and while this plugin's server is absent:
+
+- it blocks the **first tool call after the drop, once per agent** (the main
+  thread and each subagent), with a message telling the agent to tell the user
+  and ask for `/mcp`;
+- it blocks `grep` / `rg` / `find`-family commands and the Grep tool when they
+  span **two or more clones under `FLEET_ROOT`** (the root itself, a glob over
+  its children, or two named clones), unless the Bash command carries
+  `# cs-down-ack`, meaning the user agreed to a textual fallback. A search inside
+  one clone passes, and so does naming existing files in several clones, which
+  is a read of known locations rather than a search.
+
+A reconnect clears both. Prose that merely quotes the tool names or the event
+never trips it, and a session in which the server never appeared is not a
+disconnect. The hook fails open on anything it cannot read.
+
+| Key | Does |
+|---|---|
+| `CS_DISCONNECT_GUARD` | `1` turns the hook on; anything else, or unset, leaves it off |
+| `CS_DISCONNECT_ACK` | the marker a Bash command carries (`# <marker>`) to run a cross-repo grep anyway, default `cs-down-ack` |
+| `CS_DISCONNECT_FILES_ARE_READS` | `1` (default): existing files named in several clones are a read and pass. `0`: a file counts toward its clone, like a directory |
+
+The keys and `FLEET_ROOT` resolve the way `cs` resolves its own (environment,
+then `fleet.env`, then the default) because the hook sources the same
+`scripts/lib/common.sh`. It keeps a few bytes of state per session under
+`$XDG_STATE_HOME/code-search/disconnect-guard/` (`~/.local/state/…` by
+default), safe to delete. The tool and server names it watches for are read
+from the plugin's manifest and `.mcp.json`, so it follows a rename. A manual
+`mcp__cs__*` registration is a different server, and the hook does not watch it.
+`verify-search` runs its fixture cases.

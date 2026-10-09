@@ -78,7 +78,7 @@ MCP instructions name the running version. Details are in `docs/install.md`,
   has no edges through property accessors (since 1.19.1), and a zero there is
   `degraded`, not "unused".
 - A `cs refs` / `cs impls` refusal that says *the language server did not
-  start* is about setup, not the symbol (since 1.21.1): do not rename and
+  start* is about setup, not the symbol (since 1.22.1): do not rename and
   retry. An expired Kotlin build is fixed by the steps in `docs/install.md`,
   "Kotlin language server"; tell the user. Meanwhile use `cs def` / `cs uses`.
 - `cs refs` takes a member as `Type.Member` (asked as `Type/Member`) since
@@ -88,6 +88,11 @@ MCP instructions name the running version. Details are in `docs/install.md`,
 - An answer a language server gave before its project import finished is
   asked again, or refused. It is never reported as it came, so a
   `resolved · 0 hit(s)` is a real zero.
+- If the `cs_*` MCP tools disappear mid-session, the server has disconnected.
+  Tell the user and ask them to reconnect it (`/mcp`) before answering a
+  cross-repo question with grep, and label that answer textual. With
+  `CS_DISCONNECT_GUARD=1` a hook blocks the next tool call to make sure of it,
+  and blocks cross-repo grep until the user agrees (`# cs-down-ack`).
 
 **When a command refuses for a missing engine or toolchain, or `cs impls` /
 `cs refs` comes back empty, run `cs doctor` (`cs_doctor` over MCP) before

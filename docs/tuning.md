@@ -19,6 +19,7 @@
 | `CS_JSON` | `1` for one JSON object on stdout instead of result lines (same as `--porcelain`) |
 | `CS_CTAGS_BIN` | use exactly this universal-ctags; if it does not validate, ctags counts as absent |
 | `CS_NO_GRAPH` | repos kept without a tokensave graph on purpose, space-separated, usually in `fleet.env`. `cs doctor` names them instead of flagging them, and a graph refusal there says why instead of prescribing `tokensave init` |
+| `CS_DISCONNECT_GUARD` | `1` turns on the optional hook that stops the agent when the MCP server disconnects mid-session; with it, `CS_DISCONNECT_ACK` and `CS_DISCONNECT_FILES_ARE_READS`. See [mcp.md](mcp.md#when-the-tools-disappear-mid-session) |
 
 `CS_TAGS_TTL` is scoped, because the two scopes `cs def` answers for have
 different keys rather than different tastes in staleness. The symbol index is

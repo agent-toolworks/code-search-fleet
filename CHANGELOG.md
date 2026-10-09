@@ -8,6 +8,23 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.21.0 — 2026-10-09
+
+- **The MCP server says why it stopped** (#88). Every way out of the server
+  was silent: the client closing stdin, a SIGTERM / SIGHUP / SIGINT (SIGINT
+  even exited 0), a broken pipe. A client that lost the server saw only its
+  tools vanish. Each ending now writes one line to stderr, which Claude Code
+  keeps in its MCP log, with uptime, calls answered, the last call, and the
+  tool still running if there was one. New `CS_MCP_LOG` (`1` for
+  `~/.cache/cs-mcp.log`, or a path) also appends start, every call (name,
+  duration, outcome, never the arguments) and the exit to a file. A run with no
+  exit line there was SIGKILLed or crashed. If the server drops again, set
+  `CS_MCP_LOG=1` before starting `claude` and attach the file. A message that
+  is not a JSON object, or has non-object `params`, used to crash the server;
+  it now gets a `-32600` error and the server carries on. `cs` runs with stdin
+  on `/dev/null`, so nothing it starts can read the protocol stream. See
+  docs/mcp.md § "When the server stops".
+
 ## 1.20.1 — 2026-10-04
 
 - **A language-server refusal states the server's error once** (#86). Since

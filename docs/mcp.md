@@ -169,3 +169,37 @@ which would otherwise collapse into one at the boundary.
 
 `verify-search` covers all of this, including a differential that issues the
 same request from two working directories and requires the answers to match.
+
+## When the server stops
+
+A client that loses the server sees only that the `cs_*` tools are gone. The
+server says why on **stderr**, which Claude Code keeps in its MCP log, one line
+for each way it can end:
+
+```
+cs-mcp[4182] stdin closed by the client: exiting; up 7h02m11s, 41 call(s) answered, last cs_text, 5.2s, ok
+cs-mcp[4182] received SIGTERM: exiting; up 0h12m03s, 3 call(s) answered; cs_refs was running and gets no reply
+cs-mcp[4182] stdout closed by the client mid-reply: exiting; …
+cs-mcp[4182] exiting on an unhandled error; …   (followed by the traceback)
+```
+
+There is no idle timer, watchdog or worker pool: between calls the server is
+blocked reading stdin, and it leaves that only when stdin closes or a signal
+arrives. A closed stdin is how a client normally ends a session, so that line
+says the client closed the pipe, not that the server gave up. A message that is
+not a JSON object is answered with a `-32600` error and the server carries on
+(before 1.21.0 it crashed). Nothing `cs` runs can read the protocol stream:
+`cs` is started with stdin on `/dev/null`.
+
+The server keeps no file of its own unless you ask. `CS_MCP_LOG` appends start,
+every call (tool name, duration, `ok` / `isError`, never the arguments) and the
+exit line to a file, which survives whatever the client does with stderr:
+
+```sh
+export CS_MCP_LOG=1      # -> ~/.cache/cs-mcp.log; any other value is a path; set it before starting claude
+```
+
+A run in that file with a `started` line and no exit line was killed outright
+(SIGKILL, or the interpreter crashed): the one ending nothing inside the
+process can report. `cs-mcp --self-check` prints where the log goes, or that it
+is off.

@@ -64,8 +64,11 @@ where python3 runs and nothing here should add an install step to that.
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import time
+import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CS = os.path.join(HERE, "cs")
@@ -87,6 +90,25 @@ PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 # wedged engine returns an error instead of hanging the client forever. `cs`
 # has its own per-engine CS_TIMEOUT; this is the backstop for the whole call.
 CALL_TIMEOUT = int(os.environ.get("CS_MCP_TIMEOUT", "600"))
+
+# Why the server stopped. A client that loses this server sees only that its
+# tools vanished (#88), and every way out of the loop below used to be silent:
+# stdin closing, a signal, a broken pipe. Each now names itself on stderr, which
+# the client's MCP log keeps. CS_MCP_LOG also appends start, every call and the
+# exit to a file the client cannot lose -- the same values as CS_LOG: unset or 0
+# for off, 1 for the default path, anything else is the path. A run in that file
+# with no exit line was killed outright (SIGKILL, or the process crashed) --
+# the one ending nothing inside the process can report.
+_log = os.environ.get("CS_MCP_LOG", "")
+if _log.lower() in ("", "0", "false", "no", "off"):
+    LOG_PATH = ""
+elif _log.lower() in ("1", "true", "yes", "on"):
+    LOG_PATH = os.path.join(os.environ.get("XDG_CACHE_HOME")
+                            or os.path.expanduser("~/.cache"), "cs-mcp.log")
+else:
+    LOG_PATH = _log
+STARTED = time.time()
+LIFE = {"calls": 0, "running": None, "last": None}
 
 # A scope is "fleet", a workspace id (a folder name, looked up under every
 # workspace root), or an ABSOLUTE path to a workspace or anywhere inside one --
@@ -612,6 +634,9 @@ def run_cs(sub, argv, scope=None, flags=()):
             cmd,
             cwd=CS_CWD,
             env=env,
+            # Not the protocol stream: anything cs runs that reads stdin would
+            # take the client's next request out of it.
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=CALL_TIMEOUT,
@@ -675,7 +700,7 @@ def run_cs_plain(sub, argv=(), scope=None):
         cmd.append(scope_flag(scope))
     try:
         proc = subprocess.run(
-            cmd, cwd=CS_CWD, stdout=subprocess.PIPE,
+            cmd, cwd=CS_CWD, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, timeout=CALL_TIMEOUT,
         )
     except FileNotFoundError:
@@ -890,6 +915,12 @@ def call_tool(name, arguments):
 
 def handle(msg):
     """One request in, one response out — or None for a notification."""
+    # A message that is not an object used to raise right here, outside every
+    # handler, and take the server down with a traceback.
+    if not isinstance(msg, dict) or not isinstance(msg.get("params") or {}, dict):
+        return error(msg.get("id") if isinstance(msg, dict) else None, -32600,
+                     "invalid request: a message is a JSON object, and its "
+                     "params, when present, an object")
     mid = msg.get("id")
     method = msg.get("method")
     params = msg.get("params") or {}
@@ -918,16 +949,61 @@ def handle(msg):
         arguments = params.get("arguments") or {}
         if name not in BY_NAME:
             return error(mid, -32602, f"unknown tool: {name}")
+        LIFE["running"], t0 = name, time.time()
         try:
             text, is_error = call_tool(name, arguments)
         except ToolError as e:
             text, is_error = str(e), True
         except Exception as e:  # never take the transport down over one call
             text, is_error = f"cs-mcp failed to run this query: {e}", True
+        LIFE["calls"] += 1
+        LIFE["running"] = None
+        LIFE["last"] = "%s, %.1fs, %s" % (name, time.time() - t0,
+                                          "isError" if is_error else "ok")
+        note("call " + LIFE["last"], stderr=False)
         return ok(mid, {"content": [{"type": "text", "text": text}],
                         "isError": is_error})
 
     return error(mid, -32601, f"method not found: {method}")
+
+
+def lifetime():
+    """How long the server ran and what it was doing, for an exit line."""
+    up = int(time.time() - STARTED)
+    s = "up %dh%02dm%02ds, %d call(s) answered" % (up // 3600, up // 60 % 60,
+                                                  up % 60, LIFE["calls"])
+    if LIFE["last"]:
+        s += ", last %s" % LIFE["last"]
+    if LIFE["running"]:
+        s += "; %s was running and gets no reply" % LIFE["running"]
+    return s
+
+
+def note(msg, stderr=True):
+    """One line to stderr (never stdout: that is the protocol) and to the log.
+    Neither may fail the server -- it is called on the way out, often because
+    a pipe has just closed."""
+    line = "cs-mcp[%d] %s" % (os.getpid(), msg)
+    if stderr:
+        try:
+            sys.stderr.write(line + "\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
+    if LOG_PATH:
+        try:
+            os.makedirs(os.path.dirname(LOG_PATH) or ".", exist_ok=True)
+            with open(LOG_PATH, "a") as f:
+                f.write(time.strftime("%Y-%m-%dT%H:%M:%SZ ", time.gmtime()) + line + "\n")
+        except Exception:
+            pass
+
+
+def on_signal(signum, frame):
+    note("received %s: exiting; %s" % (signal.Signals(signum).name, lifetime()))
+    # SystemExit unwinds through subprocess.run, which kills a running cs on
+    # the way out rather than leaving it searching for nobody.
+    raise SystemExit(128 + signum)
 
 
 def server_version():
@@ -968,6 +1044,8 @@ def main():
         # whether every tool call is about to refuse.
         print("cs: %s" % CS)
         print("cs cwd: %s   (this process is in %s)" % (CS_CWD, os.getcwd()))
+        print("log: %s" % (LOG_PATH or "off -- set CS_MCP_LOG=1 to record "
+                           "start, calls and exit reason"))
         try:
             print(run_cs_plain("scopes"))
         except ToolError as e:
@@ -990,11 +1068,16 @@ def main():
         print(__doc__)
         return 0
 
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, on_signal)
+    note("started: cs %s, python %s" % (server_version(), sys.version.split()[0]),
+         stderr=False)
+
     # stdout belongs to the protocol and nothing else: a stray print here
     # corrupts the stream and the client sees the server as broken rather than
     # as noisy. Everything diagnostic goes to stderr.
-    for line in sys.stdin:
-        line = line.strip()
+    for raw in sys.stdin.buffer:
+        line = raw.decode("utf-8", "replace").strip()
         if not line:
             continue
         try:
@@ -1009,12 +1092,24 @@ def main():
         for reply in replies:
             sys.stdout.write(json.dumps(reply) + "\n")
         sys.stdout.flush()
+    # The only way out of the loop: the client closed our stdin. That is how
+    # a client ends a session, so this line is ordinary -- and when the client
+    # says the server vanished, it is the line that says who closed what.
+    note("stdin closed by the client: exiting; " + lifetime())
     return 0
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (BrokenPipeError, KeyboardInterrupt):
-        # The client went away. Not an error worth a traceback on stderr.
+    except BrokenPipeError:
+        # The client stopped reading while a reply was being written.
+        note("stdout closed by the client mid-reply: exiting; " + lifetime())
+        # Point stdout at /dev/null so the interpreter's own flush at exit
+        # does not print a second, louder complaint about the same pipe.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         sys.exit(0)
+    except Exception:
+        note("exiting on an unhandled error; %s\n%s"
+             % (lifetime(), traceback.format_exc().rstrip()))
+        sys.exit(1)

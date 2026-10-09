@@ -313,6 +313,25 @@ else
   err "serena_call.py did not name a server that never started (exit $lsp_ns_rc): $(cat "$lsp_fake/err")"
   fail=$((fail + 1)); failed_ids+=("lsp-not-started")
 fi
+# With ls_path set (docs/install.md), Serena never logs its own install dir; the
+# version is in the launch command's path. It is the version that tells a user
+# whether their build expired or Serena ignored the setting.
+lsp_ver=$(python3 - "$here/lib/serena_call.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sc", sys.argv[1])
+sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
+print(sc.why_not_started(
+    "INFO Starting language server process via command: "
+    "['/u/.local/share/kotlin-server/kotlin-server-263.6379.0/bin/intellij-server', '--stdio']\n"
+    "INFO This build of kotlin-server has expired.\n"))
+PY
+)
+if printf '%s' "$lsp_ver" | grep -q '(kotlin-server 263.6379.0) is a pre-release build that has expired'; then
+  ok "an expired build run through ls_path is named by its own version"; pass=$((pass + 1))
+else
+  err "the expiry diagnosis lost the version of an ls_path build: $lsp_ver"
+  fail=$((fail + 1)); failed_ids+=("lsp-not-started-ls-path")
+fi
 rm -rf "$lsp_fake"
 
 # ---- engine parity ---------------------------------------------------------
@@ -2692,7 +2711,7 @@ rm -rf "$FLEET_ROOT/inventory-api-dotnet/.tokensave"
 info ""
 info "${C_BOLD}reason codes${C_OFF}"
 bad_reason=$(grep -nE 'impls_via_tokensave "\$[0-9]" "\$[0-9]" "\$[a-z_]+" ' "$here/cs" \
-             | grep -vE '(toolchain-missing|forced|lsp-unresolved)[[:space:]]*$' || true)
+             | grep -vE '(toolchain-missing|forced|lsp-unresolved|lsp-not-started)[[:space:]]*$' || true)
 if [[ -z "$bad_reason" ]]; then
   ok "every impls_via_tokensave call passes a known reason code"; pass=$((pass + 1))
 else

@@ -188,7 +188,7 @@ v=263.6379.0                            # the newest at https://github.com/Kotli
 a=kotlin-server-$v-aarch64.sit          # Apple silicon; Intel Mac: kotlin-server-$v.sit; Linux: kotlin-server-$v[-aarch64].tar.gz
 mkdir -p ~/.local/share/kotlin-server && cd ~/.local/share/kotlin-server
 curl -fLO "https://download.jetbrains.com/language-server/kotlin-server/$v/$a"
-curl -fsL "https://download.jetbrains.com/language-server/kotlin-server/$v/$a.sha256"; shasum -a 256 "$a"   # the two must match
+curl -fsL "https://download.jetbrains.com/language-server/kotlin-server/$v/$a.sha256" | shasum -a 256 -c -   # prints "<file>: OK"; Linux: sha256sum -c -
 ditto -x -k "$a" .                      # a .sit is a zip; on Linux: tar xzf "$a"
 ls "$PWD/kotlin-server-$v/bin/intellij-server"
 ```

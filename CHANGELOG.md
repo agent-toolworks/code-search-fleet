@@ -20,7 +20,9 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
   refuses with *the language server did not start*, the reason read from
   Serena's log (an expired Kotlin build, a refused download) with the fix, and
   the log's path. `cs impls` used to warn *could not locate* the symbol in this
-  case. If you see this on Kotlin, install a current kotlin-server and set
+  case; when it falls back to a tokensave graph, its answer line now gives
+  *the language server did not start* as the reason. The expired build's
+  version is named whether Serena installed it or `ls_path` points at it. If you see this on Kotlin, install a current kotlin-server and set
   `ls_path` as in docs/install.md, "Kotlin language server". `verify-engines`
   now names the cause on its `serena-kt` line.
 

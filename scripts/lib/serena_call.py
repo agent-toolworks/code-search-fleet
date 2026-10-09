@@ -58,7 +58,11 @@ KOTLIN_FIX = ("install a current kotlin-server from "
 def why_not_started(log):
     """A one-line reason with its fix, read from Serena's log, or None."""
     if re.search(r"(kotlin-server|EAP build) has expired", log):
-        m = re.findall(r"kotlin_language_server-(\d[\d.]*\d)", log)
+        # Serena's own install dir, or the kotlin-server-<v> dir an ls_path
+        # points into: with ls_path set, Serena never logs the former, and the
+        # version is what says whether the user's build expired or Serena
+        # ignored the setting.
+        m = re.findall(r"kotlin(?:_language)?[-_]server-(\d[\d.]*\d)", log)
         return ("the Kotlin language server Serena runs (kotlin-server {}) is a "
                 "pre-release build that has expired, and it exits at start-up; {}"
                 .format(m[-1] if m else "?", KOTLIN_FIX))

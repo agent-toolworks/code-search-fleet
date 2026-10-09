@@ -4496,7 +4496,7 @@ serena_answered_or_die() {  # <rc> <raw-file> <stderr-file> <subcommand> <symbol
 # labelling every answer with how it was obtained is the stated reason it
 # exists. So the three routes get three sentences, and the toolchain is resolved
 # HERE from the repo rather than passed in by a caller that may not know it.
-impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|forced|lsp-unresolved>
+impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|forced|lsp-unresolved|lsp-not-started>
   local sym="$1" repo="$2" dir="$3" reason="$4" out rc age tc lang note
   lang=$(symbol_language "$sym" "$dir") || lang=$(repo_language "$dir") || lang=""
   tc=""
@@ -4504,6 +4504,7 @@ impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|fo
   case "$reason" in
     forced)         note="graph requested explicitly" ;;
     lsp-unresolved) note="the language server did not resolve the symbol" ;;
+    lsp-not-started) note="the language server did not start" ;;
     *)              note="no ${tc:-language toolchain} here, so no language server" ;;
   esac
   # Through graph_note, so this route names WHICH index answered and how old it
@@ -4614,18 +4615,21 @@ if pick:
   # question before the refusal does.
   # The lookup's own failure, not "could not locate": a server that never
   # started has not looked, and its reason is the one thing worth reading (#90).
-  local lookup_why=""
-  grep -q '^serena: the language server did not start: ' "$lookup_err" 2>/dev/null \
-    && lookup_why=$(head -1 "$lookup_err" | sed 's/^serena: //')
+  local lookup_why="" lookup_log=""
+  if grep -q '^serena: the language server did not start: ' "$lookup_err" 2>/dev/null; then
+    lookup_why=$(head -1 "$lookup_err" | sed 's/^serena: //')
+    lookup_log=$(sed -n 2p "$lookup_err")
+  fi
   rm -f "$lookup_err"
   if [[ -z "$name_path" || -z "$rel" ]]; then
     if [[ -n "$lookup_why" ]] && have_tokensave && tokensave_graph_at "$repo_dir"; then
       warn "$lookup_why — falling back to the tokensave graph"
-      impls_via_tokensave "$1" "$2" "$repo_dir" lsp-unresolved
+      impls_via_tokensave "$1" "$2" "$repo_dir" lsp-not-started
       return $?
     fi
     [[ -n "$lookup_why" ]] && die "cs impls: $lookup_why
-  nothing was analysed, so this is NOT an answer — nothing was ruled out
+  '$1' in $2 was not looked up, so this is NOT an answer — nothing was ruled out
+  $lookup_log
   weaker but available now: cs def $1 $2, cs uses '$1'"
     if have_tokensave && tokensave_graph_at "$repo_dir"; then
       warn "the language server could not locate '$1' in $2 — falling back to the tokensave graph"

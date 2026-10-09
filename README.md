@@ -288,7 +288,7 @@ The long version, with the incident behind each behaviour, is
 |---|---|
 | [docs/install.md](docs/install.md) | **start here on a new machine**: step by step, what `cs doctor` flags and the fix, what changed for existing users |
 | [docs/answer-kinds.md](docs/answer-kinds.md) | every answer kind, refusal and disclosure, and why each exists |
-| [docs/mcp.md](docs/mcp.md) | the MCP server: tool names, calling the tools, the required scope, manual registration |
+| [docs/mcp.md](docs/mcp.md) | the MCP server: tool names, calling the tools, the required scope, manual registration, what happens when it disconnects |
 | [docs/updating.md](docs/updating.md) | updating the plugin, version mechanics, `CS_ROOT`, the version gate, cutting a release |
 | [docs/tuning.md](docs/tuning.md) | environment variables, the two levels (fleet and ticket), the opt-in query log |
 | [docs/verifying.md](docs/verifying.md) | `verify-search`, `verify-engines`, the fixture, layering in your own incidents |

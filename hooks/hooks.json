@@ -1,0 +1,16 @@
+{
+  "description": "Optional, off unless CS_DISCONNECT_GUARD=1: tells the agent, and through it the user, when the cs MCP server has disconnected mid-session, and blocks cross-repo grep until it is back or the user agrees to a textual fallback. See docs/mcp.md.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/cs-disconnect-guard\""
+          }
+        ]
+      }
+    ]
+  }
+}

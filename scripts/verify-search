@@ -4601,6 +4601,10 @@ assert "cs_scopes" in init["instructions"], "instructions do not point at cs_sco
 version = open(os.environ["CS_HERE"] + "/../VERSION").read().strip()
 assert "cs " + version in init["instructions"], "instructions do not name the running version"
 assert "cs_changes" in init["instructions"], "instructions do not point at cs_changes"
+# Already in context when the server drops, which is when it is needed: the agent
+# is told to raise the disconnect with the user rather than fall back to grep.
+assert "disconnected" in init["instructions"] and "/mcp" in init["instructions"], \
+    "instructions do not say what to do when the server disconnects"
 tools = json.loads(lines[1].split("\t", 1)[1])["tools"]
 assert len(tools) >= 15, "suspiciously few tools: %d" % len(tools)
 here = os.environ["CS_HERE"]
@@ -5252,6 +5256,24 @@ else
 fi
 
 rm -rf "$qlog_dir"
+
+# ---- the disconnect guard ---------------------------------------------------
+# The optional PreToolUse hook in hooks/hooks.json. Its cases live in
+# fixtures/disconnect-guard/cases.py rather than here because the guard judges
+# Bash commands: payloads written into this script could be judged by a guard
+# enabled on the machine running it. The cases run the hook through its wrapper
+# in a throwaway HOME, so the config resolution is the one users get.
+dg_out=$(python3 "$repo_root_dir/fixtures/disconnect-guard/cases.py" "$here/cs-disconnect-guard" 2>&1)
+dg_pass=$(grep -c '^PASS ' <<< "$dg_out")
+dg_fail=$(grep '^FAIL ' <<< "$dg_out")
+if [[ -z "$dg_fail" && "$dg_pass" -gt 0 ]] && matches "^$dg_pass of $dg_pass cases passed" "$dg_out"; then
+  ok "the disconnect guard passes its $dg_pass fixture cases"
+  pass=$((pass + 1))
+else
+  err "the disconnect guard failed its fixture cases"
+  while IFS= read -r _l; do [[ -n "$_l" ]] && info "    $_l"; done <<< "${dg_fail:-$dg_out}"
+  fail=$((fail + 1)); failed_ids+=("disconnect-guard")
+fi
 
 info ""
 if [[ $skipped -gt 0 ]]; then

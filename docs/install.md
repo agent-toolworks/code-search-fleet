@@ -245,6 +245,12 @@ before 1.16. Update anything that says otherwise:
 - **`cs changes` / `cs_changes`** (1.19.0) lists what changed since a version,
   small fixes included, and the MCP instructions name the running version.
   This section is the summary; that command is the complete list.
+- **If the `cs_*` tools disappear mid-session, the server has disconnected**
+  (1.22.0, #92). Tell the user and ask them to reconnect it (`/mcp` in Claude
+  Code) before answering a cross-repo question with grep, and label such an
+  answer textual. The MCP instructions now say so. An optional hook,
+  `CS_DISCONNECT_GUARD=1` in `fleet.env`, enforces it: see
+  [mcp.md](mcp.md#when-the-tools-disappear-mid-session).
 - **`verify-engines`** probes tokensave's C# interface edges as a capability
   (1.16.2), and Serena on Java without a JDK, Kotlin without a toolchain
   request, and .NET Framework projects (1.18.0).

@@ -536,6 +536,10 @@ come back empty, call cs_doctor before concluding anything: it checks this \
 machine against the languages the fleet holds and names the fix to give the \
 user.
 
+If the cs_* tools disappear mid-session, this server has disconnected: tell the \
+user and ask them to reconnect it (`/mcp` in Claude Code) before answering any \
+cross-repo question with grep, and label such an answer textual.
+
 This is cs {version}. If cs behaves differently from what you remember or \
 from your notes, call cs_changes: it lists what changed in recent versions, \
 small fixes included.\

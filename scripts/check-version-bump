@@ -42,7 +42,8 @@ market=".claude-plugin/marketplace.json"
 # .mcp.json ships at the plugin root — installing the plugin registers the MCP
 # server from it — so a change to the server command it names is exactly the
 # "new artifact under an unchanged version string" failure this gate exists for.
-SHIPPED_RE='^(scripts/|skills/|\.mcp\.json|\.claude-plugin/marketplace\.json)'
+# hooks/ ships for the same reason: installing the plugin registers its hooks.
+SHIPPED_RE='^(scripts/|skills/|hooks/|\.mcp\.json|\.claude-plugin/marketplace\.json)'
 
 version_in() {  # <json text>
   sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<< "$1" | head -1

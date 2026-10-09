@@ -8,6 +8,23 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.22.0 — 2026-10-09
+
+- **An agent that loses the MCP server is told to tell the user** (#92). When
+  the server dropped mid-session, the harness removed every `cs_*` tool and
+  said so once; an agent could carry on answering cross-repo questions with
+  `grep`, giving textual answers where cs gives resolved ones, without the user
+  knowing. The MCP instructions now say: if the `cs_*` tools disappear, the
+  server has disconnected; tell the user, ask them to reconnect (`/mcp`), and
+  label any grep answer textual. The plugin also ships an optional
+  `PreToolUse` hook (`hooks/hooks.json`), off unless `CS_DISCONNECT_GUARD=1`,
+  that reads the drop from the session transcript, blocks the first tool call
+  after it once per agent, and blocks grep spanning two or more clones under
+  `FLEET_ROOT` until the server is back or the command ends in
+  `# cs-down-ack`. `CS_DISCONNECT_ACK` changes the marker, and
+  `CS_DISCONNECT_FILES_ARE_READS=0` counts named files toward their clone. See
+  docs/mcp.md § "When the tools disappear mid-session".
+
 ## 1.21.0 — 2026-10-09
 
 - **The MCP server says why it stopped** (#88). Every way out of the server

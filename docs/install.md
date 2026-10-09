@@ -202,6 +202,9 @@ ls_specific_settings:
     ls_path: /Users/you/.local/share/kotlin-server/kotlin-server-263.6379.0/bin/intellij-server
 ```
 
+Keep the space after `ls_path:`. Without it YAML reads the whole line as a key
+with no value, Serena ignores it without a word, and the expired build keeps
+running (the refusal still names 263.4702.0).
 Nothing needs restarting: each `cs impls` / `cs refs` starts a fresh Serena.
 The build carries its own Java runtime, so it needs no `JAVA_HOME` beyond what
 the doctor table above asks for. `ls_path` overrides the version Serena

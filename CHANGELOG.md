@@ -8,6 +8,8 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.22.1 — 2026-10-09
+
 - **A language server that did not start is named as such** (#90). The Kotlin
   server Serena downloaded (kotlin-server 263.4702.0) is a JetBrains
   pre-release build that has expired: it exits at start-up, so every

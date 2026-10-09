@@ -4697,6 +4697,33 @@ else
   fail=$((fail + 1)); failed_ids+=("mcp-scope-validation")
 fi
 
+# Why the server stopped (#88). A client that loses the server sees only its
+# tools vanish, and every way out used to be silent: a closed stdin, a signal,
+# a broken pipe. A message that was not a JSON object went further and crashed
+# the server. Each ending must name itself on stderr, a bad message must be
+# answered and survived, and CS_MCP_LOG must keep start, calls and the exit.
+mcp_dir=$(mktemp -d)
+mcp_eof=$( { printf '5\n'; mcp_req cs_text '{"pattern":"orders","scope":"fleet","count":true}'; } \
+  | CS_MCP_LOG="$mcp_dir/log" "$here/cs-mcp" 2>"$mcp_dir/err")
+(sleep 5; echo) | CS_MCP_LOG= "$here/cs-mcp" >/dev/null 2>"$mcp_dir/err.term" &
+mcp_pid=$!
+sleep 1
+kill -TERM "$mcp_pid" 2>/dev/null
+wait "$mcp_pid" 2>/dev/null
+if printf '%s' "$mcp_eof" | grep -q '"code": -32600' \
+   && printf '%s' "$mcp_eof" | grep -q '"isError": false' \
+   && grep -q 'stdin closed by the client: exiting; .*1 call(s) answered, last cs_text' "$mcp_dir/err" \
+   && grep -q 'received SIGTERM: exiting' "$mcp_dir/err.term" \
+   && grep -q 'started: cs ' "$mcp_dir/log" \
+   && grep -q 'call cs_text, .*s, ok' "$mcp_dir/log" \
+   && grep -q 'stdin closed by the client' "$mcp_dir/log"; then
+  ok "the MCP server survives a malformed message and says why it stopped"
+  pass=$((pass + 1))
+else
+  err "the MCP server's exit was not explained: $mcp_eof / $(cat "$mcp_dir"/err* "$mcp_dir/log" 2>/dev/null)"
+  fail=$((fail + 1)); failed_ids+=("mcp-exit-reason")
+fi
+
 # THE cwd CHECK, as a DIFFERENTIAL: the same request is issued twice, from two
 # working directories -- one of them inside a ticket workspace -- and the two
 # answers must be identical.

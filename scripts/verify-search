@@ -275,6 +275,44 @@ else
   err "serena_call.py passed a tool error through (exit $lsp_err_rc, stdout: ${lsp_err_out:0:120})"
   fail=$((fail + 1)); failed_ids+=("lsp-tool-error-exit")
 fi
+
+# A server that never started is not a refused question (#90): exit 6, the
+# reason from Serena's log when it is a known one (here an expired Kotlin
+# build), and the log's path -- not Serena's generic "not initialized" line,
+# which cs used to answer with advice on naming the symbol.
+mkdir -p "$lsp_fake/logs/2026-01-01"
+cat > "$lsp_fake/server.py" <<'PY'
+import json, os, sys
+with open(os.path.join(sys.argv[1], "logs", "2026-01-01", "mcp_x_%d.txt" % os.getpid()), "w") as f:
+    f.write("INFO Using Kotlin Language Server script at /x/kotlin_language_server-263.4702.0/bin/\n"
+            "INFO This build of kotlin-server has expired.\n")
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("id") == 1:
+        print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}}), flush=True)
+    elif msg.get("id") == 2:
+        print(json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"isError": True, "content": [
+            {"type": "text", "text": "Error executing tool find_implementations: Exception: The language server manager is not initialized, indicating a problem during project initialisation.\nFailed to start 1 language server(s):\nkotlin: Error processing request initialize"}]}}), flush=True)
+PY
+lsp_ns_out=$(python3 - "$here/lib/serena_call.py" "$lsp_fake" <<'PY' 2>"$lsp_fake/err"
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("sc", sys.argv[1])
+sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
+sc.SERENA = [sys.executable, sys.argv[2] + "/server.py", sys.argv[2]]
+sc.LOG_ROOT = os.path.join(sys.argv[2], "logs")
+sys.argv = ["serena_call.py", sys.argv[2], "find_implementations", "{}"]
+sys.exit(sc.main())
+PY
+); lsp_ns_rc=$?
+if [[ $lsp_ns_rc -eq 6 && -z "$lsp_ns_out" ]] \
+   && grep -q '^serena: the language server did not start: the Kotlin language server Serena runs (kotlin-server 263.4702.0) is a pre-release build that has expired.*ls_path' "$lsp_fake/err" \
+   && grep -q "^serena's log: $lsp_fake/logs/" "$lsp_fake/err"; then
+  ok "a language server that did not start exits 6 with its reason and fix from Serena's log"
+  pass=$((pass + 1))
+else
+  err "serena_call.py did not name a server that never started (exit $lsp_ns_rc): $(cat "$lsp_fake/err")"
+  fail=$((fail + 1)); failed_ids+=("lsp-not-started")
+fi
 rm -rf "$lsp_fake"
 
 # ---- engine parity ---------------------------------------------------------

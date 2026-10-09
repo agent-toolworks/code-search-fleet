@@ -248,7 +248,7 @@ probe_serena_java() {
 # absent, and its jvmToolchain is swapped for a floor; JAVA_HOME is unset.
 probe_serena_kotlin_floor() {
   have uvx || { record serena-kt "-" capability MISSING "uv not installed"; return; }
-  local ver tmp out
+  local ver tmp out why
   ver=$(version_of serena)
   tmp=$(mktemp -d)
   cp -R "$F/checkout-service-kotlin" "$tmp/svc" && rm -rf "$tmp/svc/.serena" "$tmp/svc/build"
@@ -256,10 +256,14 @@ probe_serena_kotlin_floor() {
   sed -i.bak 's/jvmToolchain(21)/compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21) }/' \
     "$tmp/svc/build.gradle.kts" && rm -f "$tmp/svc/build.gradle.kts.bak"
   out=$(env -u JAVA_HOME python3 "$here/lib/serena_call.py" "$tmp/svc" find_implementations \
-        '{"name_path":"CheckoutResult","relative_path":"src/main/kotlin/com/acme/checkout/CheckoutService.kt"}' 2>/dev/null)
+        '{"name_path":"CheckoutResult","relative_path":"src/main/kotlin/com/acme/checkout/CheckoutService.kt"}' 2>"$tmp/err")
+  why=$(sed -n 's/^serena: the language server did not start: //p' "$tmp/err" | head -1)
   rm -rf "$tmp"
   if printf '%s' "$out" | grep -q 'CheckoutResult/Accepted'; then
     record serena-kt "${ver:-unknown}" capability PASS "Kotlin with no Gradle toolchain request, on the server's own runtime (no JAVA_HOME)"
+  elif [[ -n "$why" ]]; then
+    # Not the claim this probe tests: no Kotlin server ran at all (#90).
+    record serena-kt "${ver:-unknown}" capability FAIL "the Kotlin server did not start: ${why%%;*}"
   else
     record serena-kt "${ver:-unknown}" capability FAIL "a Kotlin build with no toolchain request did not resolve without JAVA_HOME — cs lets those through, so check the server's bundled runtime"
   fi

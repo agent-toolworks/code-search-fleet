@@ -10,6 +10,8 @@ Exit 3 when the language server never finished importing the project in the
 time allowed: whatever it said is not an answer (see wait_until_imported).
 Exit 5 when the tool itself failed (an MCP result flagged isError, such as a
 name_path that matches no symbol): its message is on stderr, not an answer.
+Exit 6 when no language server started: the reason, from Serena's log when it
+is one with a known fix, and the log's path are on stderr.
 """
 import glob
 import json
@@ -38,6 +40,33 @@ IMPORT_DONE = "'type': 'ProjectStatus'"
 LOG_ROOT = os.path.expanduser("~/.serena/logs")
 # The `>` line of a reference's context snippet; see serena_fmt.py.
 REF_LINE = re.compile(r"^\s*>\s*(\d+):", re.MULTILINE)
+
+
+# A language server that did not start reaches the caller as one generic line
+# ("The language server manager is not initialized"), and the reason is only in
+# Serena's log. The reasons with a known fix are named from there (#90): JetBrains
+# ships kotlin-server as pre-release builds that stop starting on a date, and its
+# CDN refuses the unsigned download URL Serena builds, so Serena can neither run
+# the build it has nor fetch another.
+NOT_STARTED = "language server manager is not initialized"
+KOTLIN_FIX = ("install a current kotlin-server from "
+              "https://github.com/Kotlin/kotlin-lsp/releases and point Serena at it: "
+              "ls_specific_settings: {kotlin: {ls_path: <unpacked>/bin/intellij-server}} "
+              "in ~/.serena/serena_config.yml (docs/install.md, \"Kotlin language server\")")
+
+
+def why_not_started(log):
+    """A one-line reason with its fix, read from Serena's log, or None."""
+    if re.search(r"(kotlin-server|EAP build) has expired", log):
+        m = re.findall(r"kotlin_language_server-(\d[\d.]*\d)", log)
+        return ("the Kotlin language server Serena runs (kotlin-server {}) is a "
+                "pre-release build that has expired, and it exits at start-up; {}"
+                .format(m[-1] if m else "?", KOTLIN_FIX))
+    m = re.search(r"Error downloading file '(https://\S*kotlin\S*?)': (\d{3})", log)
+    if m:
+        return ("Serena could not download the Kotlin language server ({} answered "
+                "{}); {}".format(m.group(1), m.group(2), KOTLIN_FIX))
+    return None
 
 
 def descendants(pid):
@@ -272,6 +301,20 @@ def main():
     # Printed on stdout it was formatted as the one hit of a `resolved` answer,
     # exit 0 (#83). It is a refusal: nothing was looked up.
     if res.get("result", {}).get("isError"):
+        # Not a question the server refused: no server ran. Exit 6, so cs does
+        # not answer it with advice on how to name the symbol.
+        if NOT_STARTED in text:
+            log = own_log(proc.pid)
+            proc.terminate()
+            failed = [l.strip() for l in text.splitlines()
+                      if l.strip() and not l.lstrip().startswith("{")]
+            print("serena: the language server did not start: "
+                  + (why_not_started(read(log) if log else "")
+                     or " ".join(failed[1:3])[:300] or failed[0][:300]),
+                  file=sys.stderr)
+            if log:
+                print("serena's log: " + log, file=sys.stderr)
+            return 6
         proc.terminate()
         print("serena: " + text.strip()[:300], file=sys.stderr)
         return 5

@@ -51,7 +51,9 @@ guess about other people's repos, and some entries are wrong for some of them:
 `bin` and `build` are generated in most layouts and hand-written source in
 others, and a Go fleet keeps real dependencies in `vendor`. An excluded
 directory produces a silent false negative — the hit simply is not there — so
-removing an entry has to be as easy as adding one:
+removing an entry has to be as easy as adding one. The list applies to the
+ctags index behind `cs def` as well as to text search (since 1.23.0), so the two
+agree about which files exist:
 
 ```sh
 CS_EXCLUDE_REMOVE="bin vendor" cs uses "/api/v1/orders"

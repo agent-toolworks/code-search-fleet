@@ -8,6 +8,59 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.23.0 — 2026-10-09
+
+- **A Kotlin symbol in a Java-majority repo is looked up, and a build-output
+  copy is never the answer** (#95). Serena writes `<repo>/.serena/project.yml`
+  on its first run in a repo and enables one language server, the language
+  with the most files. In a Gradle repo with more `.java` than `.kt`/`.kts`
+  the Kotlin server never started, and `cs impls` / `cs refs` on a Kotlin
+  symbol refused with *could not locate symbol* and advice on spelling it.
+  Now, when that file does not exist yet and the question is in a language
+  that is not the repo's majority, cs writes it with both servers (and
+  `**/bin/**` ignored when Java is on; see below). A question in the majority
+  language still leaves the file to Serena, and cs never edits an existing
+  file. When an existing file leaves out the symbol's language, the refusal
+  says so: *'X' is Kotlin, and repo's Serena project enables only: java*, with
+  the fix (add `kotlin` to `language_servers:`). `cs refs` gives this refusal
+  before starting a server. Separately, JDTLS imports a Gradle build into
+  `bin/` and copies every `.kt` file there. `cs impls` looked up the first match,
+  the copy, which no server owns, and reported its empty answer as
+  `resolved · 0 hit(s)` for an interface with three implementations. It now
+  skips matches that git does not track under `bin/`, `build/`, `out/`,
+  `target/` or `obj/`, and refuses when those are the only matches. When
+  `cs impls` falls back to a tokensave graph for either cause, the answer line
+  names that cause (*no Kotlin language server is enabled in the repo's Serena
+  project*, *found the symbol only in build-output copies*). It used to say
+  *the language server did not resolve the symbol*, which is not what
+  happened. `cs def` listed the same `bin/` copy as a second definition,
+  because the ctags index ignored the exclusion list text search uses (`bin`,
+  `build`, `out`, `target`, `obj` and the rest). The index now applies that
+  list, so `cs def` and `cs uses` agree about which files exist, and
+  `CS_EXCLUDE_REMOVE=bin` brings a `bin/` of real sources back to both. `cs doctor`
+  has a `project.yml` row that flags a project file leaving out a language
+  its repo is written in (3 tracked files and 5% of the source files cs
+  recognises, `.kts` not counted), and visible `bin/` copies. Where that language's toolchain is missing, the row names it
+  as the first step: Serena starts a repo's servers all or none, so adding a
+  server that cannot start would break the repo's other answers. If you were told to add `- kotlin` by hand, cs now does it
+  for repos it sets up. For repos already set up, run `cs doctor` to find them.
+
+- **A Kotlin graph answer no longer says cs refs "needs java"** (#97). When
+  `cs impls` answered from a tokensave graph on a Kotlin repo, its closing
+  warning said `cs refs` needs `java`, which has not been true since 1.18.0
+  and sent readers to install a JDK they did not need. It now names what
+  Kotlin needs: a Kotlin language server that starts (docs/install.md,
+  "Kotlin language server"), and a JDK only when the build requests
+  `jvmToolchain(N)`, then exactly N, naming the version when the build asks
+  for one that is not findable. The answer line's reason for a Kotlin repo with no
+  usable JDK says the same, where it said *no java here*.
+- **`verify-search` skips the Gradle-catalog check on a Python without
+  `tomllib`** (#96). With Apple's Python 3.9 first on `PATH`,
+  `versions-gradle-catalog` could only fail, which looked like a regression
+  in the catalog reader on a clean tree. It is now reported as SKIPPED with
+  the reason, the same setup gap `cs doctor` names on its `python3` row. A
+  skip is not a pass: put a Python 3.11+ first on `PATH` to run it.
+
 ## 1.22.1 — 2026-10-09
 
 - **A language server that did not start is named as such** (#90). The Kotlin

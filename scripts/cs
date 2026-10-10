@@ -2155,12 +2155,20 @@ tokensave_graph_index_version() {  # <dir>
 }
 # The release whose C# edges cs relies on (tokensave #637, #642, #643).
 TS_CSHARP_EDGES=7.15.0
-# Success when the graph was last fully indexed before those edges existed, or
-# does not say. A graph whose files were re-extracted one at a time keeps its
-# old full-index version, so it stays caveated: the conservative reading.
+# Success when the graph holds C# and was last fully indexed before those edges
+# existed, or does not say when. A graph whose files were re-extracted one at a
+# time keeps its old full-index version, so it stays caveated: the conservative
+# reading. A graph with no C# in it lacks none of them, and flagging it made
+# cs doctor ask for a re-index of every Java or Python repo after an upgrade
+# (review of #101); the graph says which languages it holds.
 graph_predates_csharp_edges() {  # <dir>
-  local v
-  v=$(tokensave_graph_index_version "$1") || return 1
+  local js v
+  have_tokensave || return 1
+  js=$(tokensave status "$1" --json 2>/dev/null | tr -d '\n')
+  [[ -n "$js" ]] || return 1
+  printf '%s' "$js" | sed -n 's/.*"files_by_language"[[:space:]]*:[[:space:]]*{\([^}]*\)}.*/\1/p' \
+    | grep -q '"C#"' || return 1
+  v=$(printf '%s' "$js" | sed -n 's/.*"last_full_index_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
   [[ -z "$v" ]] || version_lt "$v" "$TS_CSHARP_EDGES"
 }
 
@@ -3538,7 +3546,7 @@ doc_engines() {
 or, for a repo left unindexed on purpose: add it to CS_NO_GRAPH=\"…\" in ~/.config/repo-fleet/fleet.env"
     fi
     if [[ -n "$stale" ]]; then
-      doc_row warn graphs "$(printf '%s' "$stale" | grep -c .) last fully indexed before tokensave $TS_CSHARP_EDGES: $(printf '%s' "$stale" | doc_list)" \
+      doc_row warn graphs "$(printf '%s' "$stale" | grep -c .) with C#, last fully indexed before tokensave $TS_CSHARP_EDGES: $(printf '%s' "$stale" | doc_list)" \
         "their C# answers miss the edges $TS_CSHARP_EDGES added (calls inside property accessors, interface implementations, calls through a receiver's type), and say so on each answer" \
         "cd <repo> && tokensave sync --force   (in each)"
     fi

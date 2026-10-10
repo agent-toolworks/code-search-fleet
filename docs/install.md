@@ -175,7 +175,7 @@ Optionally, to prove the tool itself on this machine:
 | `! TypeScript` / `JavaScript … no runnable node` | `brew install node` |
 | `? Python` / `Go` / `Rust` | not checked by `cs`. An empty `cs impls` / `cs refs` there is not proof of absence |
 | `✗ tokensave  7.x — older than 7.15.0, the oldest cs supports` | `brew upgrade aovestdipaperino/tap/tokensave`, then `tokensave sync --force` in each repo with a graph. An upgrade alone does not re-index every graph |
-| `! graphs  N last fully indexed before tokensave 7.15.0: …` | `cd <repo> && tokensave sync --force` in each. Until then their C# answers lack the edges 7.15.0 added, and say so |
+| `! graphs  N with C#, last fully indexed before tokensave 7.15.0: …` | `cd <repo> && tokensave sync --force` in each. Until then their C# answers lack the edges 7.15.0 added, and say so. A graph with no C# is never listed |
 | `! <engine>  … newer than tested` / `older than tested` (under `versions`) | nothing has to change: it is a note, and the exit status ignores it. Nothing has verified cs's answers on that version yet, so mention it when you report a wrong answer |
 | `✗ <engine>  … older than X, the oldest cs supports` (under `versions`) | the printed `brew upgrade` |
 | `! tokensave  MISSING` / `graphs in N of M repo(s)` | `brew install aovestdipaperino/tap/tokensave`, then `cd <repo> && tokensave init` in each repo. fleet-workspace's refresh keeps graphs synced. A repo left unindexed **on purpose** goes in `CS_NO_GRAPH="…"` in `fleet.env`, and stops being flagged |

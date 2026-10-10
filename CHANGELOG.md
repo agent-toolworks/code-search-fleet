@@ -35,7 +35,8 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
     edges are in the graph, not the binary, and 7.15.0 does not re-index
     every older graph by itself: one built by 7.13.0 is re-indexed when it is
     first opened, one built by 7.14.x is not (measured with the release
-    binaries). `cs doctor` lists the graphs last fully indexed before 7.15.0.
+    binaries). `cs doctor` lists the graphs that hold C# and were last fully
+    indexed before 7.15.0.
   - **Serena is pinned to a commit** (1de556f). It used to run whatever
     Serena's `main` branch held that day, and every build reports 2.0.0.dev0,
     so no one could say which code had answered. A newer Serena now reaches

@@ -1128,18 +1128,24 @@ if have_tokensave; then
     sqlite3 "$acc_fleet/lims/.tokensave/tokensave.db" \
       "UPDATE metadata SET value = '7.14.1' WHERE key = 'last_full_index_version';
        DELETE FROM edges WHERE kind = 'calls';"
+    # A graph with no C# lacks none of those edges, however old: it must not
+    # be flagged, or doctor asks for a re-index of every Kotlin/Java/Python repo.
+    sqlite3 "$acc_fleet/kt/.tokensave/tokensave.db" \
+      "UPDATE metadata SET value = '7.14.1' WHERE key = 'last_full_index_version';"
+    acc_kt_old=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers accessionList kt 2>&1)
     acc_old=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims 2>&1)
     acc_old_env=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims --porcelain 2>/dev/null)
     acc_doc=$(FLEET_ROOT="$acc_fleet" "$here/cs" doctor 2>&1)
     if matches "$acc_old" 'last fully indexed by tokensave 7\.14\.1, before 7\.15\.0.*tokensave sync --force' \
        && matches "$acc_old" 'answer:.*C# property accessors are not in the graph' \
        && matches "$acc_old_env" '"degraded":"[^"]*property accessors' \
-       && matches "$acc_doc" 'graphs +1 last fully indexed before tokensave 7\.15\.0: lims'; then
-      ok "a C# graph last fully indexed before tokensave 7.15.0 keeps the accessor caveat, and cs doctor names it with sync --force"
+       && matches "$acc_doc" 'graphs +1 with C#, last fully indexed before tokensave 7\.15\.0: lims$' \
+       && ! matches "$acc_kt_old" 'last fully indexed'; then
+      ok "a C# graph last fully indexed before tokensave 7.15.0 keeps the accessor caveat, and cs doctor names it with sync --force; an old graph without C# is not flagged"
       pass=$((pass + 1))
     else
       err "a pre-7.15.0 C# graph was answered without its caveat:"
-      printf '%s\n' "$acc_old" "$(printf '%s\n' "$acc_doc" | grep graphs)" | grep -E 'answer|indexed|graphs' | sed 's/^/    /' >&2
+      printf '%s\n' "$acc_old" "$(printf '%s\n' "$acc_doc" | grep graphs)" "$acc_kt_old" | grep -E 'answer|indexed|graphs' | sed 's/^/    /' >&2
       fail=$((fail + 1)); failed_ids+=("graph-predates-csharp-edges")
     fi
   else

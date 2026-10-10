@@ -792,7 +792,14 @@ else
   fail=$((fail + 1)); failed_ids+=("versions-pyproject-pep508")
 fi
 
-if matches "$man_out" 'android-app[[:space:]]+4\.12\.0[[:space:]]+gradle/libs\.versions\.toml <- app/build\.gradle\.kts' \
+# A Gradle catalog is TOML, and cs reads it only with tomllib (Python 3.11+),
+# so on an older python3 -- Apple's 3.9 first on PATH -- this check could only
+# fail, looking like a regression in the reader (#96). cs doctor names that as
+# setup; here it is a skip, with the same reason.
+man_py=$(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo "?")
+if ! python3 -c 'import tomllib' >/dev/null 2>&1; then
+  skip "versions-gradle-catalog" "python3 $man_py has no tomllib (3.11+), so cs cannot read a Gradle catalog here — cs doctor names the fix"
+elif matches "$man_out" 'android-app[[:space:]]+4\.12\.0[[:space:]]+gradle/libs\.versions\.toml <- app/build\.gradle\.kts' \
    && matches "$man_out" 'com\.squareup\.okhttp3:logging-interceptor' \
    && matches "$man_out" 'android-app[[:space:]]+0\.26\.0'; then
   ok "a Gradle version catalog is read, version.ref and bundles included"
@@ -1085,6 +1092,34 @@ if command -v tokensave >/dev/null 2>&1; then
   rm -rf "$acc_shim" "$(dirname "$acc_fleet")"
 else
   skip "the C# property-accessor caveat" "tokensave not installed"
+fi
+
+# ---- what a Kotlin graph answer says cs refs needs (#97) ----------------------
+# The warning read language_toolchain, whose Kotlin entry still said `java`, and
+# sent the reader to install a JDK the Kotlin server does not need. It needs a
+# server that starts, and a JDK only for a jvmToolchain(N) request.
+if command -v tokensave >/dev/null 2>&1; then
+  ktg_fleet=$(mktemp -d)/fleet
+  mkdir -p "$ktg_fleet/kt/src/main/kotlin/x"
+  printf 'package x\n\ninterface Shape { fun area(): Double }\nclass Circle : Shape { override fun area() = 3.0 }\n' \
+    > "$ktg_fleet/kt/src/main/kotlin/x/Shape.kt"
+  printf 'kotlin {\n    jvmToolchain(99)\n}\n' > "$ktg_fleet/kt/build.gradle.kts"
+  (cd "$ktg_fleet/kt" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i \
+     && tokensave init </dev/null >/dev/null 2>&1)
+  ktg_out=$(FLEET_ROOT="$ktg_fleet" "$here/cs" impls Shape kt --engine=tokensave 2>&1)
+  if matches "$ktg_out" 'Circle' \
+     && matches "$ktg_out" 'it needs a Kotlin language server that starts .*jvmToolchain\(N\), and then exactly N \(this build requests 99\)' \
+     && ! matches "$ktg_out" 'needs java'; then
+    ok "a Kotlin graph answer names what cs refs needs there: a Kotlin server that starts, and the JDK its build requests"
+    pass=$((pass + 1))
+  else
+    err "a Kotlin graph answer misstated what cs refs needs:"
+    printf '%s\n' "$ktg_out" | grep -E 'needs|answer' | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("graph-kotlin-prerequisite")
+  fi
+  rm -rf "$(dirname "$ktg_fleet")"
+else
+  skip "what a Kotlin graph answer says cs refs needs" "tokensave not installed"
 fi
 
 # ---- telling users and agents what changed -----------------------------------
@@ -1783,7 +1818,7 @@ else
     # the half that was actively untrue.
     for o in "$forced_out" "$auto_out"; do
       if matches "$o" 'it needs '; then
-        matches "$o" 'it needs (dotnet|java|node|a working language server)' \
+        matches "$o" 'it needs (dotnet|java|node|a working language server|a Kotlin language server that starts)' \
           || prov_bad+=("names-a-non-toolchain")
       fi
     done

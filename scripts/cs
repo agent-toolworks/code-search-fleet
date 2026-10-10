@@ -1651,13 +1651,18 @@ have_toolchain() {
 
 # The mapping is deliberately short. A toolchain named here and absent produces
 # a REFUSAL, so a wrong entry blocks a query that would have worked -- which is
-# its own kind of damage. These three are the runtimes the server itself cannot
+# its own kind of damage. These two are the runtimes the server itself cannot
 # start without; a language not listed is not preflighted, and `cs why resolved`
 # says so rather than implying the check was made.
+#
+# Kotlin is not listed. Its entry said `java`, which stopped being true in
+# 1.18.0: the Kotlin server runs on its own runtime, and a JDK is needed only
+# for a jvmToolchain(N) request, then exactly N (kotlin_jdk_unmet). The callers
+# that preflight handled Kotlin before reaching it, but a graph answer's warning
+# read the entry and told the reader cs refs "needs java" (#97).
 language_toolchain() {  # <language> -> the binary its language server needs
   case "$1" in
     csharp)                echo dotnet ;;
-    kotlin)                echo java ;;
     typescript|javascript) echo node ;;
     *) return 1 ;;
   esac
@@ -4644,11 +4649,14 @@ impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|fo
   lang=$(symbol_language "$sym" "$dir") || lang=$(repo_language "$dir") || lang=""
   tc=""
   [[ -n "$lang" ]] && tc=$(language_toolchain "$lang" || true)
+  local kt_want=""
+  [[ "$lang" == kotlin ]] && kt_want=$(kotlin_jdk_unmet "$dir" || true)
   case "$reason" in
     forced)         note="graph requested explicitly" ;;
     lsp-unresolved) note="the language server did not resolve the symbol" ;;
     lsp-not-started) note="the language server did not start" ;;
-    *)              note="no ${tc:-language toolchain} here, so no language server" ;;
+    *) if [[ -n "$kt_want" ]]; then note="no JDK $kt_want for the build's jvmToolchain request here, so no language server"
+       else note="no ${tc:-language toolchain} here, so no language server"; fi ;;
   esac
   # Through graph_note, so this route names WHICH index answered and how old it
   # is on the same terms as symbol mode. The age was already warned about on
@@ -4671,7 +4679,9 @@ impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|fo
     warn "answered from a tokensave graph last synced $(format_age "$age") ago — it cannot see changes made since (cd $(real_dir_of "$dir") && tokensave sync)"
   # Names the real prerequisite, or says nothing specific rather than something
   # untrue: the reader cannot learn what cs refs needs from anywhere else here.
-  if [[ -n "$tc" ]]; then
+  if [[ "$lang" == kotlin ]]; then
+    warn "this is a GRAPH answer, not a language server: it cannot see reflection, DI registration, or generated code. cs refs is the only thing here that bridges a DI registration, and it needs a Kotlin language server that starts (docs/install.md, \"Kotlin language server\"), plus a JDK only when the build requests jvmToolchain(N), and then exactly N${kt_want:+ (this build requests $kt_want)}."
+  elif [[ -n "$tc" ]]; then
     warn "this is a GRAPH answer, not a language server: it cannot see reflection, DI registration, or generated code. cs refs is the only thing here that bridges a DI registration, and it needs $tc."
   else
     warn "this is a GRAPH answer, not a language server: it cannot see reflection, DI registration, or generated code. cs refs is the only thing here that bridges a DI registration, and it needs a working language server for this repo's language."

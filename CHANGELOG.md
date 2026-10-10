@@ -36,6 +36,22 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
   server that cannot start would break the repo's other answers. If you were told to add `- kotlin` by hand, cs now does it
   for repos it sets up. For repos already set up, run `cs doctor` to find them.
 
+- **A Kotlin graph answer no longer says cs refs "needs java"** (#97). When
+  `cs impls` answered from a tokensave graph on a Kotlin repo, its closing
+  warning said `cs refs` needs `java`, which has not been true since 1.18.0
+  and sent readers to install a JDK they did not need. It now names what
+  Kotlin needs: a Kotlin language server that starts (docs/install.md,
+  "Kotlin language server"), and a JDK only when the build requests
+  `jvmToolchain(N)`, then exactly N, naming the version when the build asks
+  for one that is not findable. The answer line's reason for a Kotlin repo with no
+  usable JDK says the same, where it said *no java here*.
+- **`verify-search` skips the Gradle-catalog check on a Python without
+  `tomllib`** (#96). With Apple's Python 3.9 first on `PATH`,
+  `versions-gradle-catalog` could only fail, which looked like a regression
+  in the catalog reader on a clean tree. It is now reported as SKIPPED with
+  the reason, the same setup gap `cs doctor` names on its `python3` row. A
+  skip is not a pass: put a Python 3.11+ first on `PATH` to run it.
+
 ## 1.22.1 — 2026-10-09
 
 - **A language server that did not start is named as such** (#90). The Kotlin

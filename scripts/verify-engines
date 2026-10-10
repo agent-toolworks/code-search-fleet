@@ -435,8 +435,10 @@ probe_tokensave_accessors() {
     (cd "$tmp/$lang" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm p \
        && tokensave init </dev/null >/dev/null 2>&1)
     case "$lang" in cs) gap=Gap; ctl=Ctl ;; kt) gap=gap; ctl=ctl ;; esac
-    [[ -n "$(python3 "$here/lib/tokensave_call.py" callers "$tmp/$lang" "$lang" "$ctl" 2>/dev/null)" ]] || control_missing+=("$lang")
-    [[ -n "$(python3 "$here/lib/tokensave_call.py" callers "$tmp/$lang" "$lang" "$gap" 2>/dev/null)" ]] && found+=("$lang")
+    # Edges only: since #107 cs callers also lists calls tokensave left unbound,
+    # and an unbound row is not the edge this probe is about.
+    [[ -n "$(python3 "$here/lib/tokensave_call.py" callers "$tmp/$lang" "$lang" "$ctl" 2>/dev/null | grep -v '(unbound call: ')" ]] || control_missing+=("$lang")
+    [[ -n "$(python3 "$here/lib/tokensave_call.py" callers "$tmp/$lang" "$lang" "$gap" 2>/dev/null | grep -v '(unbound call: ')" ]] && found+=("$lang")
   done
   rm -rf "$tmp"
   local nocontrol=" ${control_missing[*]:-} " has=" ${found[*]:-} "

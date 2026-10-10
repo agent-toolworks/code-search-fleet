@@ -10,6 +10,20 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## 1.25.0 — 2026-10-10
 
+- **`cs callers` lists the calls tokensave saw but did not bind** (#107). A
+  call tokensave cannot pin to one node is no edge, so `cs callers` dropped
+  it and answered as if complete. Three measured cases:
+  - a C# getter calling a method name two classes share (since 1.24.0
+    removed the C# accessor caveat, that miss carried no caveat at all);
+  - a TypeScript function imported from another package;
+  - a Python call through an injected object.
+  Those call sites are now read from the graph's `unresolved_refs` and
+  listed after the edges, marked `(unbound call: <the call as written> …)`.
+  The answer line counts them apart (`N unbound call site(s) listed apart
+  from the hits`), and the hit count is still the number of edges. An
+  unbound row may call another method of that name: read the call before
+  relying on it. `cs impact` cannot walk from those calls. Its answer line
+  says how many there are, and an impact zero with any is `degraded`.
 - **`cs refs` finds a namespace-qualified member** (#102).
   `cs refs Acme.Inventory.Domain.IInventoryStore.ReserveAsync <repo> <file>`,
   which is how a member reads in a stack trace, was split at every dot,

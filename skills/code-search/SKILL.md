@@ -94,6 +94,11 @@ MCP instructions name the running version. Details are in `docs/install.md`,
   to `.serena/project.yml`. cs now writes that file itself for a repo it sets
   up, and `cs impls` no longer answers from a `bin/` copy of the source,
   which gave a false `resolved · 0 hit(s)`.
+- A `cs callers` row marked `(unbound call: …)` (since 1.25.0) is a call
+  tokensave saw but did not bind to one node, often a method name several
+  types share. It is counted apart from the hits and may call another method
+  of that name, so read the call before you rely on it. Before 1.25.0 such
+  calls were dropped, and their zero carried no caveat.
 - `cs refs` takes a namespace-qualified member (`Ns.Type.Member`, as a stack
   trace prints it) since 1.25.0. It is asked as `Type/Member`; before, it was
   refused.

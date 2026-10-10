@@ -38,7 +38,7 @@ Four traps, all reproduced against tokensave 7.9.0 rather than taken on trust:
      and the interface method did not. Every exact-name node is asked, and the
      set is named on stderr so the reader can see what was actually queried.
 
-Usage: tokensave_call.py <impls|def|callers|callees|impact|fields|field-counts>
+Usage: tokensave_call.py <impls|def|callers|callees|impact|fields|field-counts|unbound-count>
                          <repo-dir>
                          <repo-name> <symbol>
 Exit:  0 found, 1 nothing found (an honest negative), 3 the symbol does not
@@ -196,6 +196,65 @@ def _rows(project, node, mode):
     return doc if isinstance(doc, list) else []
 
 
+# A call tokensave saw but could not bind to ONE node -- a method name two
+# classes share, a receiver whose type it cannot see, an import across a
+# package boundary -- is no edge, so `callers` cannot return it (#107). It is
+# kept, though, in the graph's `unresolved_refs` table, and that is read here
+# directly: `tokensave tool ambiguous_calls` lists the same thing but takes no
+# name, caps at 200 rows, and the CLI cuts its reply at 15000 characters --
+# about 30 rows, so on a real repo the call asked about is often not in it.
+# The table also holds calls that DID bind (one row per spelling), so a row is
+# dropped when its caller has a `calls` edge on that line to a node of this name.
+# Both tables count lines from 0.
+UNBOUND_MARK = "unbound call: "
+
+
+def _graph_db(project):
+    """The graph's database, for reading only. Not `mode=ro`: a graph closed
+    cleanly has no -shm file, and SQLite refuses to open a WAL database
+    read-only without one."""
+    import sqlite3
+    con = sqlite3.connect(f"{project}/.tokensave/tokensave.db", timeout=10)
+    con.execute("PRAGMA query_only = ON")
+    return con
+
+
+def _unbound_callers(project, symbol):
+    """Unbound call sites whose callee is named `symbol`, as (file, line, kind,
+    name, reference) with 1-based lines, or None if the table could not be read."""
+    import sqlite3
+    try:
+        con = _graph_db(project)
+        rows = con.execute(
+            "SELECT u.file_path, u.line, n.kind, n.name, u.reference_name"
+            "  FROM unresolved_refs u LEFT JOIN nodes n ON n.id = u.from_node_id"
+            " WHERE u.reference_kind = 'calls' AND u.reference_name LIKE ?"
+            "   AND NOT EXISTS (SELECT 1 FROM edges e JOIN nodes t ON t.id = e.target"
+            "                    WHERE e.source = u.from_node_id AND e.kind = 'calls'"
+            "                      AND e.line = u.line AND t.name = ?)"
+            " ORDER BY u.file_path, u.line",
+            ("%" + symbol, symbol)).fetchall()
+        con.close()
+    except sqlite3.Error as e:
+        print(f"tokensave: the graph's unbound calls could not be read ({e}) — "
+              f"a call tokensave saw but did not bind is not listed",
+              file=sys.stderr)
+        return None
+    out, seen = [], set()
+    for file, line, kind, name, ref in rows:
+        # LIKE ignores case and reads `_` as a wildcard; the name must match exactly.
+        ref = " ".join(ref.split())
+        if not (ref == symbol or any(ref.endswith(s + symbol)
+                                     for s in (".", "::", "->"))):
+            continue
+        key = (file, line)
+        if key in seen:   # one call, filed under more than one spelling
+            continue
+        seen.add(key)
+        out.append((file, line + 1, kind or "?", name or "?", ref))
+    return out
+
+
 def graph_edges(project, repo, symbol, mode):
     """cs callers / cs callees / cs impact, as `repo/path:line: text` lines."""
     nodes, rc = _seeds(project, symbol, mode)
@@ -238,7 +297,17 @@ def graph_edges(project, repo, symbol, mode):
         # show, and a quietly shorter answer is a quietly wrong one.
         print(f"tokensave: {no_location} matching node(s) had no file location "
               f"in the graph and are not listed below", file=sys.stderr)
-    return 0 if seen else 1
+
+    # Listed after the edges and marked, not merged into them: an edge names
+    # its target, and these name only a callee's name. cs counts them apart.
+    # `cs impact` cannot walk from them; it states their number (unbound-count).
+    unbound = []
+    if mode == "callers":
+        unbound = _unbound_callers(project, symbol) or []
+        for file, line, kind, name, ref in unbound:
+            print(f"{repo}/{file}:{line}: [{kind}] {name} ({UNBOUND_MARK}{ref}"
+                  f" — tokensave saw it but did not bind it to one node)")
+    return 0 if seen or unbound else 1
 
 
 def defs(project, repo, symbol):
@@ -637,6 +706,12 @@ def main():
         return field_counts(project, repo, symbol)
     if mode in ("callers", "callees", "impact"):
         return graph_edges(project, repo, symbol, mode)
+    if mode == "unbound-count":
+        unbound = _unbound_callers(project, symbol)
+        if unbound is None:
+            return 4
+        print(len(unbound))
+        return 0
     if mode != "impls":
         print(f"unknown mode: {mode}", file=sys.stderr)
         return 4

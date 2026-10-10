@@ -314,6 +314,13 @@ before 1.16. Update anything that says otherwise:
   user, or add the language yourself if they agree. `cs impls` no longer
   looks up a build-output copy (JDTLS's `bin/`), which answered
   `resolved · 0 hit(s)`. `cs doctor` lists the repos affected.
+- **`cs callers` lists unbound calls** (1.25.0, #107). A call tokensave saw
+  but could not bind to one node is now listed after the edges, marked
+  `(unbound call: …)`, and counted apart from the hits on the answer line.
+  Examples: a method name two classes share, a receiver whose type it cannot
+  see, a function imported across packages. An unbound row may call another
+  method of that name, so read the call before relying on it. Before 1.25.0
+  these calls were dropped without a caveat, and a zero was clean.
 - **`cs refs` takes a namespace-qualified member** (1.25.0, #102), such as
   `Acme.Inventory.Domain.IInventoryStore.ReserveAsync` from a stack trace. It
   is asked as `IInventoryStore/ReserveAsync`, and cs says so. Before 1.25.0 it

@@ -2657,7 +2657,7 @@ EOF
 #   heuristic   a text match with prose filtered out. Best effort at "is this a
 #               use", and the filter can be wrong in both directions.
 #   textual     a byte or regex match. An occurrence, which is not a use.
-CS_KIND=""; CS_ENGINE=""; CS_NOTE=""; CS_TRUNCATED=""; CS_DEGRADED=""; CS_NOTES=""
+CS_KIND=""; CS_ENGINE=""; CS_NOTE=""; CS_TRUNCATED=""; CS_DEGRADED=""; CS_NOTES=""; CS_LISTED_APART=""
 
 answer() { CS_KIND="$1"; CS_ENGINE="$2"; CS_NOTE="${3:-}"; }
 
@@ -2929,7 +2929,7 @@ report_answer() {
   # Only on a ZERO, and only for a fleet-reading subcommand: on a positive
   # answer the bound is not what the reader is about to act on, and a note that
   # fires on every query stops being read.
-  if [[ "$hits" == "0" && -n "$CS_KIND" ]]; then
+  if [[ "$hits" == "0" && -n "$CS_KIND" && -z "${CS_LISTED_APART:-}" ]]; then
     case "$CS_SUB" in
       which|why|engines|scopes|repos|gaps) ;;
       *) warn "this negative is bounded by the CORPUS, not just the search: $(count_fleet_repos) repo(s) are in view, and a repo that was never cloned cannot be searched by any query. Escalate before reporting absence: cs gaps '$CS_QUERY'" ;;
@@ -5108,6 +5108,18 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
   check: cs doctor   (graph coverage and age, and the fix)" ;;
   esac
 
+  # Calls tokensave saw but bound to no node are no edges, so impact cannot walk
+  # from them (#107). Said in the provenance line, which an MCP caller reads;
+  # cs callers lists them.
+  local n_unwalked=0
+  if [[ "$mode" == impact ]]; then
+    n_unwalked=$(python3 "$lib_dir/tokensave_call.py" unbound-count "$graph_dir" "$repo" "$sym" 2>/dev/null) || n_unwalked=0
+    if [[ "$n_unwalked" -gt 0 ]]; then
+      CS_NOTE="$CS_NOTE; not walked from $n_unwalked unbound call site(s) to '$sym' — cs callers $sym $repo lists them"
+      warn "$n_unwalked call site(s) to '$sym' are UNBOUND (tokensave saw the call but did not bind it to one node), so this impact does not walk from them — cs callers $sym $repo lists them"
+    fi
+  fi
+
   graph_caveats "$repo" "$graph_dir" "$substituted"
   warn "this is a GRAPH answer, not a language server: it cannot see reflection, DI registration, or generated code. cs refs is the only thing here that bridges a DI registration."
   [[ -n "$gap_lang" ]] && warn "tokensave's $gap_lang graph has no edges out of property accessors (get/set/init) or into properties: a call made inside a getter or setter is missing from this answer (cs uses '$sym' --word finds it as text)"
@@ -5115,6 +5127,7 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
   if [[ $rc -ne 0 || -z "$out" ]]; then
     # A zero from a graph with a known hole in it is not "nothing calls this".
     [[ -n "$gap_lang" ]] && CS_DEGRADED="${CS_DEGRADED:+$CS_DEGRADED; }a $mode zero in $gap_lang is not 'unused': calls made inside property accessors are not edges in tokensave's $gap_lang graph — check cs uses '$sym' --word"
+    [[ "$n_unwalked" -gt 0 ]] && CS_DEGRADED="${CS_DEGRADED:+$CS_DEGRADED; }an impact zero with $n_unwalked unbound call site(s) to '$sym' is not 'nothing depends on it' — cs callers $sym $repo lists them"
     report_answer 0 0
     case "$mode" in
       callers) local rf; rf=$(refs_file "$sym" "$repo" "$dir")
@@ -5131,8 +5144,21 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
     esac
     return $CS_EXIT_NO_HITS
   fi
+  # Unbound call sites (#107): tokensave saw a call by this name and bound it to
+  # no node, so it is no edge. Listed, marked, and kept out of the hit count,
+  # which stays the number of edges.
+  local n_unbound
+  n_unbound=$(printf '%s\n' "$out" | grep -c '(unbound call: ' || true)
+  if [[ "$n_unbound" -gt 0 ]]; then
+    local which="$n_unbound of the rows below are UNBOUND calls"
+    [[ "$n_unbound" -eq 1 ]] && which="1 row below is an UNBOUND call"
+    warn "$which: tokensave saw a call to '$sym' there but did not bind it to one node (a name several types share, a receiver whose type it cannot see, an import across packages). It may call another '$sym' — read the call before relying on it."
+    CS_NOTE="$CS_NOTE; $n_unbound unbound call site(s) listed apart from the hits"
+    # Not a zero to bound by the corpus: there are call sites to read.
+    CS_LISTED_APART="$n_unbound"
+  fi
   emit_capped "$out"
-  report_answer "$(n_hits_in "$out")" "$(n_repos_in "$out")"
+  report_answer "$(( $(n_hits_in "$out") - n_unbound ))" "$(n_repos_in "$out")"
 }
 
 cmd_callers() {

@@ -9,7 +9,7 @@
     {
       "name": "code-search",
       "description": "Search across many repositories at once — who calls an endpoint, where a symbol is defined, what implements an interface, which repo publishes a package, and when a cross-repo seam last changed. Routes each question to whichever of five engines can answer it, and labels every answer with the kind of evidence behind it.",
-      "version": "1.24.0",
+      "version": "1.25.0",
       "author": {
         "name": "Zvi Rahamim"
       },

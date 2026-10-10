@@ -8,6 +8,28 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.26.0 — 2026-10-10
+
+- **`cs callers`, `callees` and `impact` answer for a method with many callers**
+  (#108). `tokensave tool` cuts every reply at 15,000 characters, about 50
+  caller rows. So a method with more callers than that, or a name with more
+  than about 70 nodes, was refused with *tokensave callers returned no
+  parseable JSON*. Those were the methods most worth asking about.
+  - **The fix:** the symbol lookup and the three questions now read the
+    graph's database directly. They follow tokensave 7.15.0's own logic, and
+    were checked against its CLI on every node of the fixture fleet and on a
+    400-node sample of a 21,000-node Rust graph: every reply that fit agrees.
+    `cs def`'s graph fallback uses the same lookup.
+  - **Callers are listed one row per call site:** a method that calls yours on
+    three lines is three rows. tokensave's tool listed only the first, so a
+    count can go up after upgrading. The answer line says *a row per call site*.
+  - **`cs impls`' graph fallback still reads through the CLI.** It refuses
+    when the reply was cut, and says the CLI cut it at 15,000 characters. It
+    used to parse the cut text as a shorter list of implementations.
+    `cs fields` already handled a cut reply and is unchanged.
+  - **Long lists of nodes are shortened:** *'X' is N nodes … ALL were asked*
+    names the first 10 and says how many more.
+
 ## 1.25.1 — 2026-10-10
 
 - **Without uv, `cs refs` and `cs impls` say what to do** (found by #105).

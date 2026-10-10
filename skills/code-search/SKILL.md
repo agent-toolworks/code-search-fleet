@@ -94,6 +94,12 @@ MCP instructions name the running version. Details are in `docs/install.md`,
   to `.serena/project.yml`. cs now writes that file itself for a repo it sets
   up, and `cs impls` no longer answers from a `bin/` copy of the source,
   which gave a false `resolved · 0 hit(s)`.
+- `cs callers` lists a row per call site (since 1.26.0), so a caller that
+  calls on three lines is three rows; before, it was one. A method with more
+  than about 50 callers was refused as *no parseable JSON* before 1.26.0, and
+  is now answered. A refusal saying tokensave's CLI *cut the reply … at
+  15,000 characters* means the answer is too large, not empty: narrow it,
+  or use `cs uses`.
 - A `cs refs` / `cs impls` refusal that says *Serena runs through uv, which
   is not installed* (since 1.25.1) is setup: tell the user `brew install uv`,
   and meanwhile run its *answer now* line. `cs impls` answers from the graph

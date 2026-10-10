@@ -583,7 +583,7 @@ $ cs callers ReserveAsync inventory-api-dotnet
 tokensave: 'ReserveAsync' is 2 nodes in this graph and ALL were asked
   (src/Infrastructure/SqlInventoryStore.cs:14, src/Domain/IInventoryStore.cs:5)
 inventory-api-dotnet/src/Controllers/ReservationController.cs:27: [method] Reserve (calls)
-answer: structural via tokensave (graph) (scoped to inventory-api-dotnet; fleet layer, synced 0d ago; direct callers) · 1 hit(s)
+answer: structural via tokensave (graph) (scoped to inventory-api-dotnet; fleet layer, synced 0d ago; direct callers, a row per call site) · 1 hit(s)
 ```
 
 Three subcommands, not ninety. The tool behind this fronts dead code, coupling,
@@ -629,7 +629,7 @@ where a non-human caller sees it without reading stderr:
 $ cs callers ReserveAsync inventory-api-dotnet --ticket=PROJ-9
 ! the PROJ-9 workspace copy of inventory-api-dotnet has no graph, so its FLEET
   copy answered — this describes main, not your branch
-answer: structural via tokensave (graph) (scoped to …; fleet layer, synced 0d ago; direct callers) · 1 hit(s)
+answer: structural via tokensave (graph) (scoped to …; fleet layer, synced 0d ago; direct callers, a row per call site) · 1 hit(s)
 ! degraded: answered from inventory-api-dotnet's FLEET index (main) although the
   scope is PROJ-9 — graph indexes are per-project and there is no union of the
   two, so your branch's edits to inventory-api-dotnet are invisible in this answer

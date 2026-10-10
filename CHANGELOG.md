@@ -30,6 +30,21 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
   - **Long lists of nodes are shortened:** *'X' is N nodes … ALL were asked*
     names the first 10 and says how many more.
 
+## 1.25.1 — 2026-10-10
+
+- **Without uv, `cs refs` and `cs impls` say what to do** (found by #105).
+  They refused with one line, *serena needs uv installed*, with no fix and no
+  graph to turn to. `cs refs` now names `brew install uv`, `cs doctor`, and
+  an *answer now* command from the tokensave graph (`cs callers` for a
+  method, `cs impls --engine=tokensave` for a type), the same as when a
+  toolchain is missing. `cs impls` answers from the graph when the repo has
+  one, and its answer line says uv is missing.
+- **CI installs tokensave** (#105), at exactly the version
+  `fixtures/verified-versions.tsv` records, and checks it against the
+  release's SHA256SUMS. Before, CI had no tokensave, so a green check
+  covered none of the graph paths (`cs callers` / `callees` / `impact` /
+  `fields`, the tokensave refusals and caveats). Nothing changes for users.
+
 ## 1.25.0 — 2026-10-10
 
 - **`cs callers` lists the calls tokensave saw but did not bind** (#107). A

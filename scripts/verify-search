@@ -3039,7 +3039,7 @@ rm -rf "$FLEET_ROOT/inventory-api-dotnet/.tokensave"
 info ""
 info "${C_BOLD}reason codes${C_OFF}"
 bad_reason=$(grep -nE 'impls_via_tokensave "\$[0-9]" "\$[0-9]" "\$[a-z_]+" ' "$here/cs" \
-             | grep -vE '(toolchain-missing|forced|lsp-unresolved|lsp-not-started|lsp-off|build-copies)(;[[:space:]]*fi)?[[:space:]]*$' || true)
+             | grep -vE '(toolchain-missing|forced|lsp-unresolved|lsp-not-started|lsp-off|build-copies|uv-missing)(;[[:space:]]*fi)?[[:space:]]*$' || true)
 if [[ -z "$bad_reason" ]]; then
   ok "every impls_via_tokensave call passes a known reason code"; pass=$((pass + 1))
 else

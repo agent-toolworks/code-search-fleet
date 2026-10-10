@@ -28,10 +28,19 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
   the copy, which no server owns, and reported its empty answer as
   `resolved · 0 hit(s)` for an interface with three implementations. It now
   skips matches that git does not track under `bin/`, `build/`, `out/`,
-  `target/` or `obj/`, and refuses when those are the only matches. `cs doctor`
+  `target/` or `obj/`, and refuses when those are the only matches. When
+  `cs impls` falls back to a tokensave graph for either cause, the answer line
+  names that cause (*no Kotlin language server is enabled in the repo's Serena
+  project*, *found the symbol only in build-output copies*). It used to say
+  *the language server did not resolve the symbol*, which is not what
+  happened. `cs def` listed the same `bin/` copy as a second definition,
+  because the ctags index ignored the exclusion list text search uses (`bin`,
+  `build`, `out`, `target`, `obj` and the rest). The index now applies that
+  list, so `cs def` and `cs uses` agree about which files exist, and
+  `CS_EXCLUDE_REMOVE=bin` brings a `bin/` of real sources back to both. `cs doctor`
   has a `project.yml` row that flags a project file leaving out a language
-  its repo is written in (3 tracked files, `.kts` not counted), and visible
-  `bin/` copies. Where that language's toolchain is missing, the row names it
+  its repo is written in (3 tracked files and 5% of the source files cs
+  recognises, `.kts` not counted), and visible `bin/` copies. Where that language's toolchain is missing, the row names it
   as the first step: Serena starts a repo's servers all or none, so adding a
   server that cannot start would break the repo's other answers. If you were told to add `- kotlin` by hand, cs now does it
   for repos it sets up. For repos already set up, run `cs doctor` to find them.

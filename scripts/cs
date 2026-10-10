@@ -1207,6 +1207,14 @@ if [[ -n "${CS_EXCLUDE_REMOVE:-}" ]]; then
   CS_EXCLUDE_DIRS=(${_keep[@]+"${_keep[@]}"})
   unset _keep _d _r _drop
 fi
+# The same list for ctags, which had none: `cs uses` skipped JDTLS's bin/ copy
+# of a Kotlin file and `cs def` listed it as a second definition (#95), so two
+# engines disagreed about one file. The list, not .gitignore, for the reason
+# above: a copy in a bin/ that .gitignore does not cover is still a copy, and
+# CS_EXCLUDE_REMOVE=bin brings a bin/ of real sources back for both.
+CS_CTAGS_EXCLUDES=()
+for _d in ${CS_EXCLUDE_DIRS[@]+"${CS_EXCLUDE_DIRS[@]}"}; do CS_CTAGS_EXCLUDES+=("--exclude=$_d"); done
+unset _d
 
 # A non-default exclusion list changes which files are searched, and nothing
 # said so. The answer line was identical in shape either way -- only the hit
@@ -1934,7 +1942,7 @@ symbol_language() {  # <symbol> <repo-dir>
   local sym="$1" dir="$2" ct tags ext
   ct=$(ctags_bin) || return 1
   tags=$(cs_tmp cs-symlang)
-  run_timed "$ct" -R --fields=+n -f "$tags" "$dir" >/dev/null 2>&1
+  run_timed "$ct" -R --fields=+n ${CS_CTAGS_EXCLUDES[@]+"${CS_CTAGS_EXCLUDES[@]}"} -f "$tags" "$dir" >/dev/null 2>&1
   ext=$(awk -F'\t' -v w="$sym" '$1 == w { print $2 }' "$tags" \
         | sed -n 's/.*\.\([A-Za-z0-9_]\{1,\}\)$/\1/p' | tr 'A-Z' 'a-z' | head -1)
   rm -f "$tags"
@@ -1950,7 +1958,7 @@ refs_file() {  # <symbol> <repo-name> <repo-dir>
   local sym="$1" repo="$2" dir="$3" ct tags files n
   if ct=$(ctags_bin); then
     tags=$(cs_tmp cs-symfile)
-    (cd "$dir" && run_timed "$ct" -R --fields=+n -f "$tags" . >/dev/null 2>&1)
+    (cd "$dir" && run_timed "$ct" -R --fields=+n ${CS_CTAGS_EXCLUDES[@]+"${CS_CTAGS_EXCLUDES[@]}"} -f "$tags" . >/dev/null 2>&1)
     files=$(awk -F'\t' -v w="$sym" '$1 == w { sub(/^\.\//, "", $2); print $2 }' "$tags" | sort -u)
     rm -f "$tags"
   fi
@@ -3527,9 +3535,10 @@ doc_repo_languages() {  # <repo-dir>
 
 # Each Serena project file against the languages its repo is written in (#95).
 # Serena's own file enables only the majority language, and the minority's
-# symbols are then refused; a repo is "written in" a language at 3 tracked
-# source files, not counting .kts, so a Java repo's Gradle scripts do not make
-# it a Kotlin one. And JDTLS's bin/ copies of the .kt sources, where Serena can
+# symbols are then refused. A repo is "written in" a language at 3 tracked
+# source files AND 5% of the ones cs recognises, not counting .kts, so a Java
+# repo's Gradle scripts do not make it a Kotlin one, and 10 .py files in a
+# 4,600-file TypeScript monorepo do not ask for a server that might not start. And JDTLS's bin/ copies of the .kt sources, where Serena can
 # see them: a lookup that lands on a copy gets an empty answer.
 doc_serena_projects() {
   local d name on keys missing miss="" copies="" n_proj=0 f k tc w
@@ -3540,9 +3549,9 @@ doc_serena_projects() {
     keys=$({ git -C "$d" ls-files 2>/dev/null || find "$d" -type f 2>/dev/null; } \
       | sed -n 's/.*\.\([A-Za-z0-9_]\{1,\}\)$/\1/p' | tr 'A-Z' 'a-z' | grep -vx kts \
       | sort | uniq -c | while read -r n ext; do
-          [[ "$n" -ge 3 ]] || continue
-          lang=$(ext_language "$ext") && serena_ls_key "$lang"
-        done | sort -u)
+          lang=$(ext_language "$ext") && printf '%s %s\n' "$(serena_ls_key "$lang")" "$n"
+        done | awk '$1 != "" { c[$1] += $2; t += $2 }
+                    END { for (k in c) if (c[k] >= 3 && c[k] * 20 >= t) print k }' | sort -u)
     # A server that cannot start stops every server in the repo (Serena's
     # manager starts all or none), so a language whose toolchain is missing is
     # named with it: adding that one first would break the repo's other answers.
@@ -4078,6 +4087,8 @@ view_fingerprint() {
   data=$({ for d in $(real_dirs); do
              printf '%s %s\n' "$d" "$(git -C "$d" rev-parse HEAD 2>/dev/null || echo nogit)"
            done
+           # An index built under another exclusion list holds other files.
+           printf '~exclude %s\n' "${CS_EXCLUDE_DIRS[*]-}"
          } | sort)
   # cksum is POSIX and therefore the backstop: a weak checksum is still a
   # correct cache KEY, because a collision only costs a rebuild.
@@ -4235,7 +4246,7 @@ cmd_def() {
     # moment a new one is created; -mmin +1440 keeps today's other checkouts.
     find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'cs-tags-*.tags' -mmin +1440 -delete 2>/dev/null
     local tmp_tags="$tags.$$.building"
-    run_timed "$ct" -R --links=yes --fields=+n -f "$tmp_tags" "$view"/*/ 2>/dev/null
+    run_timed "$ct" -R --links=yes --fields=+n ${CS_CTAGS_EXCLUDES[@]+"${CS_CTAGS_EXCLUDES[@]}"} -f "$tmp_tags" "$view"/*/ 2>/dev/null
     # A ctags run that fails PARTWAY leaves a non-empty index covering some of
     # the fleet, which the -s check below happily accepts -- so a symbol in an
     # unindexed repo comes back "not defined anywhere" with a normal structural
@@ -4644,7 +4655,7 @@ serena_answered_or_die() {  # <rc> <raw-file> <stderr-file> <subcommand> <symbol
 # labelling every answer with how it was obtained is the stated reason it
 # exists. So the three routes get three sentences, and the toolchain is resolved
 # HERE from the repo rather than passed in by a caller that may not know it.
-impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|forced|lsp-unresolved|lsp-not-started>
+impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|forced|lsp-unresolved|lsp-not-started|lsp-off|build-copies>
   local sym="$1" repo="$2" dir="$3" reason="$4" out rc age tc lang note
   lang=$(symbol_language "$sym" "$dir") || lang=$(repo_language "$dir") || lang=""
   tc=""
@@ -4655,6 +4666,10 @@ impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|fo
     forced)         note="graph requested explicitly" ;;
     lsp-unresolved) note="the language server did not resolve the symbol" ;;
     lsp-not-started) note="the language server did not start" ;;
+    # The cause the warning above names, not "did not resolve": the server
+    # never looked (#95). The answer line is the part an agent carries forward.
+    lsp-off)        note="no $(lang_label "$lang") language server is enabled in the repo's Serena project" ;;
+    build-copies)   note="the language server found the symbol only in build-output copies" ;;
     *) if [[ -n "$kt_want" ]]; then note="no JDK $kt_want for the build's jvmToolchain request here, so no language server"
        else note="no ${tc:-language toolchain} here, so no language server"; fi ;;
   esac
@@ -4813,18 +4828,21 @@ elif copies:
   weaker but available now: cs def $1 $2, cs uses '$1'"
     # The cause, when it is that no server for the symbol's language ran (#95),
     # or that the only matches were build-output copies; spelling is neither.
-    local why_not="" off q_lang
+    local why_not="" why_code="" off q_lang
     q_lang=$(question_language "$1" "$repo_dir" "$file" || true)
     if [[ -n "$q_lang" ]] && off=$(serena_project_lacks "$repo_dir" "$q_lang"); then
+      why_code=lsp-off
       why_not=$(serena_lang_off impls "$1" "$2" "$repo_dir" "$q_lang" "$off")
     elif [[ -n "$copies" ]]; then
+      why_code=build-copies
       why_not="cs impls: the language server found '$1' in $2 only in build output ($copies)
   git does not track those files, so they are copies no language server owns, and a copy's answer is empty — it was not asked, and nothing was ruled out
   fix: add the build directory (bin/ for JDTLS) to $2's .gitignore, or to ignored_paths: in $(real_dir_of "$repo_dir")/.serena/project.yml, then rerun"
     fi
     if [[ -n "$why_not" ]] && have_tokensave && tokensave_graph_at "$repo_dir"; then
       warn "$(printf '%s\n' "$why_not" | head -1 | sed 's/^cs impls: //') — falling back to the tokensave graph"
-      impls_via_tokensave "$1" "$2" "$repo_dir" lsp-unresolved
+      if [[ "$why_code" == lsp-off ]]; then impls_via_tokensave "$1" "$2" "$repo_dir" lsp-off
+      else impls_via_tokensave "$1" "$2" "$repo_dir" build-copies; fi
       return $?
     fi
     [[ -n "$why_not" ]] && die "$why_not

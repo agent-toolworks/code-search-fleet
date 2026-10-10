@@ -349,6 +349,12 @@ if emits out '^ctags +ok' "$here/cs" engines; then
   mkdir -p "$pj_repo/web"; for i in 1 2 3; do printf 'export const w%s = %s;\n' "$i" "$i" > "$pj_repo/web/w$i.js"; done
   (cd "$pj_repo" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i)
   cp "$pj_repo/src/main/kotlin/x/CheckoutService.kt" "$pj_repo/bin/main/x/"   # untracked, as JDTLS leaves it
+  # A repo with a small minority language, which cs doctor must not flag.
+  mkdir -p "$pj_fleet/big/src" "$pj_fleet/big/.serena"
+  for i in $(seq 1 60); do printf 'class B%s {}\n' "$i" > "$pj_fleet/big/src/B$i.java"; done
+  for i in 1 2 3; do printf 'x = %s\n' "$i" > "$pj_fleet/big/src/t$i.py"; done
+  printf 'project_name: "big"\nlanguage_servers:\n- java\n' > "$pj_fleet/big/.serena/project.yml"
+  (cd "$pj_fleet/big" && git init -q && git add src && git -c user.email=t@t -c user.name=t commit -qm i)
   cat > "$pj_bin/uvx" <<'PY'
 #!/usr/bin/env python3
 import json, os, sys
@@ -394,6 +400,13 @@ PY
   pj_out=$(pj_cs copies impls CheckoutResult mix 2>&1); pj_rc=$?
   [[ $pj_rc -eq 1 ]] && matches "$pj_out" 'only in build output \(bin/main/x/CheckoutService\.kt\)' \
     && ! matches "$pj_out" 'answer: resolved' || pj_bad+=("copies-only:exit-$pj_rc")
+  # ctags takes the text search's exclusion list: the bin/ copy, which no
+  # .gitignore covers here, is not a second definition, and CS_EXCLUDE_REMOVE
+  # brings it back for both engines.
+  pj_def=$(FLEET_ROOT="$pj_fleet" "$here/cs" def CheckoutResult mix --refresh 2>&1)
+  matches "$pj_def" '· 1 hit' && ! matches "$pj_def" 'bin/main' || pj_bad+=("def-lists-the-copy")
+  pj_def=$(CS_EXCLUDE_REMOVE=bin FLEET_ROOT="$pj_fleet" "$here/cs" def CheckoutResult mix 2>&1)
+  matches "$pj_def" 'mix/bin/main/x/CheckoutService\.kt' || pj_bad+=("def-exclude-remove-ignored")
   # Serena's own [java] file: the refusal names the missing server, for impls
   # after the lookup and for refs before any server starts.
   printf 'project_name: "mix"\nlanguage_servers:\n- java\n' > "$pj_yml"
@@ -401,6 +414,13 @@ PY
   [[ $pj_rc -eq 1 ]] && matches "$pj_out" "'CheckoutResult' is Kotlin, and mix's Serena project enables only: java" \
     && matches "$pj_out" 'add kotlin to language_servers:' && ! matches "$pj_out" 'how it is spelled' \
     || pj_bad+=("impls-cause-not-named:exit-$pj_rc")
+  # With a graph to fall back to, the answer line gives that cause too, not
+  # "did not resolve" -- the server never looked.
+  if command -v tokensave >/dev/null 2>&1 && (cd "$pj_repo" && tokensave init </dev/null >/dev/null 2>&1); then
+    pj_g=$(pj_cs none impls CheckoutResult mix 2>&1)
+    matches "$pj_g" '^answer: structural via tokensave .*no Kotlin language server is enabled in the repo' || pj_bad+=("fallback-reason")
+    rm -rf "$pj_repo/.tokensave"
+  fi
   : > "$pj/log"
   pj_out=$(pj_cs none refs CheckoutResult mix src/main/kotlin/x/CheckoutService.kt 2>&1); pj_rc=$?
   [[ $pj_rc -eq 1 ]] && matches "$pj_out" 'add kotlin to language_servers:' && [[ ! -s "$pj/log" ]] \
@@ -408,6 +428,7 @@ PY
   # cs doctor flags the file, and the copies once both servers are on.
   pj_doc=$(PATH="$pj_bin:$PATH" FLEET_ROOT="$pj_fleet" "$here/cs" doctor 2>&1)
   matches "$pj_doc" 'project.yml +Serena project files that leave out a language the repo is written in: mix \(no kotlin; typescript: needs node first\)' || pj_bad+=("doctor-missing-language")
+  matches "$pj_doc" 'big \(no' && pj_bad+=("doctor-flags-a-small-minority")
   printf 'project_name: "mix"\nlanguage_servers:\n- java\n- kotlin\n' > "$pj_yml"
   pj_doc=$(PATH="$pj_bin:$PATH" FLEET_ROOT="$pj_fleet" "$here/cs" doctor 2>&1)
   matches "$pj_doc" "JDTLS's bin/ copies of the Kotlin sources are visible to Serena in: mix" || pj_bad+=("doctor-copies")
@@ -2836,7 +2857,7 @@ rm -rf "$FLEET_ROOT/inventory-api-dotnet/.tokensave"
 info ""
 info "${C_BOLD}reason codes${C_OFF}"
 bad_reason=$(grep -nE 'impls_via_tokensave "\$[0-9]" "\$[0-9]" "\$[a-z_]+" ' "$here/cs" \
-             | grep -vE '(toolchain-missing|forced|lsp-unresolved|lsp-not-started)[[:space:]]*$' || true)
+             | grep -vE '(toolchain-missing|forced|lsp-unresolved|lsp-not-started|lsp-off|build-copies)(;[[:space:]]*fi)?[[:space:]]*$' || true)
 if [[ -z "$bad_reason" ]]; then
   ok "every impls_via_tokensave call passes a known reason code"; pass=$((pass + 1))
 else

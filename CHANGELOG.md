@@ -8,6 +8,34 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.23.0 — 2026-10-09
+
+- **A Kotlin symbol in a Java-majority repo is looked up, and a build-output
+  copy is never the answer** (#95). Serena writes `<repo>/.serena/project.yml`
+  on its first run in a repo and enables one language server, the language
+  with the most files. In a Gradle repo with more `.java` than `.kt`/`.kts`
+  the Kotlin server never started, and `cs impls` / `cs refs` on a Kotlin
+  symbol refused with *could not locate symbol* and advice on spelling it.
+  Now, when that file does not exist yet and the question is in a language
+  that is not the repo's majority, cs writes it with both servers (and
+  `**/bin/**` ignored when Java is on; see below). A question in the majority
+  language still leaves the file to Serena, and cs never edits an existing
+  file. When an existing file leaves out the symbol's language, the refusal
+  says so: *'X' is Kotlin, and repo's Serena project enables only: java*, with
+  the fix (add `kotlin` to `language_servers:`). `cs refs` gives this refusal
+  before starting a server. Separately, JDTLS imports a Gradle build into
+  `bin/` and copies every `.kt` file there. `cs impls` looked up the first match,
+  the copy, which no server owns, and reported its empty answer as
+  `resolved · 0 hit(s)` for an interface with three implementations. It now
+  skips matches that git does not track under `bin/`, `build/`, `out/`,
+  `target/` or `obj/`, and refuses when those are the only matches. `cs doctor`
+  has a `project.yml` row that flags a project file leaving out a language
+  its repo is written in (3 tracked files, `.kts` not counted), and visible
+  `bin/` copies. Where that language's toolchain is missing, the row names it
+  as the first step: Serena starts a repo's servers all or none, so adding a
+  server that cannot start would break the repo's other answers. If you were told to add `- kotlin` by hand, cs now does it
+  for repos it sets up. For repos already set up, run `cs doctor` to find them.
+
 ## 1.22.1 — 2026-10-09
 
 - **A language server that did not start is named as such** (#90). The Kotlin

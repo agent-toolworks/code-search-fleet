@@ -81,6 +81,12 @@ MCP instructions name the running version. Details are in `docs/install.md`,
   start* is about setup, not the symbol (since 1.22.1): do not rename and
   retry. An expired Kotlin build is fixed by the steps in `docs/install.md`,
   "Kotlin language server"; tell the user. Meanwhile use `cs def` / `cs uses`.
+- A refusal that says *'X' is Kotlin, and repo's Serena project enables
+  only: java* (since 1.23.0) means no server for that language runs in that
+  repo. It is setup, not spelling, so tell the user the line it names to add
+  to `.serena/project.yml`. cs now writes that file itself for a repo it sets
+  up, and `cs impls` no longer answers from a `bin/` copy of the source,
+  which gave a false `resolved · 0 hit(s)`.
 - `cs refs` takes a member as `Type.Member` (asked as `Type/Member`) since
   1.20.0. Before, it hit a Serena error that was counted as one `resolved`
   hit, exit 0. A language-server error is now a refusal, so a `resolved` hit

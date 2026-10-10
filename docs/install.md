@@ -289,6 +289,17 @@ before 1.16. Update anything that says otherwise:
   known fix (an expired Kotlin build, a refused download), the log's path, and
   no naming advice: the symbol was never looked up. See "Kotlin language
   server" above.
+- **A repo's Serena project file decides which language servers run**
+  (1.23.0, #95). Serena enables only a repo's majority language when it writes
+  `.serena/project.yml`, so a Kotlin symbol in a Java-majority repo was never
+  looked up. cs now writes that file when it does not exist yet and the
+  question is in a minority language (both servers on, `**/bin/**` ignored
+  with Java). When an existing file leaves the language out, the refusal says
+  *'X' is Kotlin, and repo's Serena project enables only: java* and names the
+  line to add. That is setup, not spelling: do not rename and retry. Tell the
+  user, or add the language yourself if they agree. `cs impls` no longer
+  looks up a build-output copy (JDTLS's `bin/`), which answered
+  `resolved · 0 hit(s)`. `cs doctor` lists the repos affected.
 - **`cs changes` / `cs_changes`** (1.19.0) lists what changed since a version,
   small fixes included, and the MCP instructions name the running version.
   This section is the summary; that command is the complete list.

@@ -334,6 +334,96 @@ else
 fi
 rm -rf "$lsp_fake"
 
+# ---- which language servers a repo's Serena project runs (#95) ---------------
+# Serena's own project file enables only the majority language, so a Kotlin
+# symbol in a Java-majority repo was "could not locate", with spelling advice.
+# And JDTLS's bin/ copies of the .kt sources were the lookup's first match: the
+# copy's empty answer was `resolved · 0 hit(s)`. On a fake Serena (as uvx) that
+# answers for src/ and returns [] for a copy, as the real servers do.
+if "$here/cs" engines 2>/dev/null | grep -qE '^ctags +ok'; then
+  pj=$(mktemp -d); pj_fleet="$pj/fleet"; pj_repo="$pj_fleet/mix"; pj_bin="$pj/shim"
+  mkdir -p "$pj_repo/src/main/java/x" "$pj_repo/src/main/kotlin/x" "$pj_repo/bin/main/x" "$pj_bin"
+  for i in 1 2 3 4 5; do printf 'package x;\npublic final class A%s {}\n' "$i" > "$pj_repo/src/main/java/x/A$i.java"; done
+  printf 'package x\n\nsealed interface CheckoutResult\ndata class Accepted(val id: String) : CheckoutResult\n' > "$pj_repo/src/main/kotlin/x/CheckoutService.kt"
+  printf 'package x\nclass B\n' > "$pj_repo/src/main/kotlin/x/B.kt"; printf 'package x\nclass C\n' > "$pj_repo/src/main/kotlin/x/C.kt"
+  mkdir -p "$pj_repo/web"; for i in 1 2 3; do printf 'export const w%s = %s;\n' "$i" "$i" > "$pj_repo/web/w$i.js"; done
+  (cd "$pj_repo" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i)
+  cp "$pj_repo/src/main/kotlin/x/CheckoutService.kt" "$pj_repo/bin/main/x/"   # untracked, as JDTLS leaves it
+  cat > "$pj_bin/uvx" <<'PY'
+#!/usr/bin/env python3
+import json, os, sys
+mode, log = os.environ["PJ_MODE"], os.environ["PJ_LOG"]
+src, copy = "src/main/kotlin/x/CheckoutService.kt", "bin/main/x/CheckoutService.kt"
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("id") == 1:
+        print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}}), flush=True)
+    elif msg.get("method") == "tools/call":
+        p = msg["params"]
+        with open(log, "a") as f:
+            f.write("%s %s\n" % (p["name"], p["arguments"].get("relative_path", "")))
+        if p["name"] == "find_symbol":
+            rows = {"both": [copy, src], "copies": [copy], "none": []}[mode]
+            out = [{"name_path": "CheckoutResult", "kind": "Interface", "relative_path": r} for r in rows]
+        elif p["arguments"].get("relative_path") == src:
+            out = [{"name_path": "Accepted", "kind": "Class", "relative_path": src,
+                    "body_location": {"start_line": 3, "end_line": 3}}]
+        else:
+            out = []
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"content": [
+            {"type": "text", "text": json.dumps(out)}]}}), flush=True)
+PY
+  printf '#!/bin/sh\nexit 1\n' > "$pj_bin/node"   # on PATH, does not run
+  chmod +x "$pj_bin/uvx" "$pj_bin/node"
+  pj_cs() { PJ_MODE="$1" PJ_LOG="$pj/log" PATH="$pj_bin:$PATH" FLEET_ROOT="$pj_fleet" "$here/cs" "${@:2}"; }
+  pj_yml="$pj_repo/.serena/project.yml"
+  pj_bad=()
+  # A question in the majority language leaves the file to Serena.
+  pj_cs none impls A1 mix >/dev/null 2>&1
+  [[ -e "$pj_yml" ]] && pj_bad+=("wrote-a-file-for-the-majority-language")
+  # A Kotlin question writes it, with both servers and bin/ ignored, and the
+  # lookup skips the copy.
+  : > "$pj/log"
+  pj_out=$(pj_cs both impls CheckoutResult mix 2>&1); pj_rc=$?
+  [[ $pj_rc -eq 0 ]] && matches "$pj_out" 'Accepted' || pj_bad+=("copy-not-skipped:exit-$pj_rc")
+  grep -q "^find_implementations src/main/kotlin/x/CheckoutService.kt$" "$pj/log" || pj_bad+=("asked-the-copy")
+  matches "$pj_out" 'skipped 1 build-output copy' || pj_bad+=("skip-not-said")
+  python3 "$here/lib/serena_project.py" languages "$pj_repo" | paste -sd, - | grep -qx 'java,kotlin' || pj_bad+=("file-lacks-a-server")
+  python3 "$here/lib/serena_project.py" ignored "$pj_repo" | grep -qx '\*\*/bin/\*\*' || pj_bad+=("bin-not-ignored")
+  # Only copies found: refused, never `resolved · 0`.
+  pj_out=$(pj_cs copies impls CheckoutResult mix 2>&1); pj_rc=$?
+  [[ $pj_rc -eq 1 ]] && matches "$pj_out" 'only in build output \(bin/main/x/CheckoutService\.kt\)' \
+    && ! matches "$pj_out" 'answer: resolved' || pj_bad+=("copies-only:exit-$pj_rc")
+  # Serena's own [java] file: the refusal names the missing server, for impls
+  # after the lookup and for refs before any server starts.
+  printf 'project_name: "mix"\nlanguage_servers:\n- java\n' > "$pj_yml"
+  pj_out=$(pj_cs none impls CheckoutResult mix 2>&1); pj_rc=$?
+  [[ $pj_rc -eq 1 ]] && matches "$pj_out" "'CheckoutResult' is Kotlin, and mix's Serena project enables only: java" \
+    && matches "$pj_out" 'add kotlin to language_servers:' && ! matches "$pj_out" 'how it is spelled' \
+    || pj_bad+=("impls-cause-not-named:exit-$pj_rc")
+  : > "$pj/log"
+  pj_out=$(pj_cs none refs CheckoutResult mix src/main/kotlin/x/CheckoutService.kt 2>&1); pj_rc=$?
+  [[ $pj_rc -eq 1 ]] && matches "$pj_out" 'add kotlin to language_servers:' && [[ ! -s "$pj/log" ]] \
+    || pj_bad+=("refs-cause-not-named:exit-$pj_rc")
+  # cs doctor flags the file, and the copies once both servers are on.
+  pj_doc=$(PATH="$pj_bin:$PATH" FLEET_ROOT="$pj_fleet" "$here/cs" doctor 2>&1)
+  matches "$pj_doc" 'project.yml +Serena project files that leave out a language the repo is written in: mix \(no kotlin; typescript: needs node first\)' || pj_bad+=("doctor-missing-language")
+  printf 'project_name: "mix"\nlanguage_servers:\n- java\n- kotlin\n' > "$pj_yml"
+  pj_doc=$(PATH="$pj_bin:$PATH" FLEET_ROOT="$pj_fleet" "$here/cs" doctor 2>&1)
+  matches "$pj_doc" "JDTLS's bin/ copies of the Kotlin sources are visible to Serena in: mix" || pj_bad+=("doctor-copies")
+  if [[ ${#pj_bad[@]} -eq 0 ]]; then
+    ok "a minority language gets its server, a build-output copy is never the lookup, and a missing server is named (cs impls, cs refs, cs doctor)"
+    pass=$((pass + 1))
+  else
+    err "the Serena project file / build-output copies: ${pj_bad[*]}"
+    printf '%s\n' "$pj_out" | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("serena-project-languages")
+  fi
+  rm -rf "$pj"
+else
+  skip "the Serena project file's languages" "no universal-ctags, so cs cannot tell a symbol's language"
+fi
+
 # ---- engine parity ---------------------------------------------------------
 # The answer must not depend on which text engine happens to be installed. This
 # is not hypothetical: ripgrep defaults to skipping dotted paths and honouring

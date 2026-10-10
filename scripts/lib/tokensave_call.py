@@ -265,6 +265,42 @@ def _guess(code):
     return f"{name}, resolved_by={code}"
 
 
+# A name-match guess the call itself settles (#112 review): tokensave also
+# keeps the call as written in unresolved_refs, at the edge's caller and line.
+# When its qualifier is the target's own type -- `Catalog.PriceList` bound to
+# Catalog::PriceList -- the name picked the only node that call can reach.
+# `Broker.Execute` bound to Processor::Execute stays a guess. Only for the
+# name-match codes; a build-variant copy (11) is a different question.
+NAME_MATCH_RESOLVED_BY = {2, 4, 5, 13}
+
+
+def _settled(con, code, source, target, line):
+    if code not in NAME_MATCH_RESOLVED_BY or line is None:
+        return False
+    row = con.execute("SELECT t.name, p.name FROM nodes t JOIN nodes p ON p.id = t.parent_id"
+                      " WHERE t.id = ?", (target,)).fetchone()
+    if not row:
+        return False
+    name, owner = row
+    for (ref,) in con.execute("SELECT reference_name FROM unresolved_refs WHERE from_node_id = ?"
+                              " AND line = ? AND reference_kind = 'calls'", (source, line)):
+        ref = " ".join(ref.split())
+        for sep in ("::", "."):
+            if ref.endswith(sep + name):
+                qualifier = ref[:-len(sep + name)]
+                if re.split(r"::|\.", qualifier)[-1] == owner:
+                    return True
+    return False
+
+
+def _edge_guess(con, code, source, target, line):
+    """_guess(code), unless the call as written names the target's own type."""
+    g = _guess(code)
+    if g is not None and _settled(con, code, source, target, line):
+        return None
+    return g
+
+
 def _sql(what, fn, project, arg):
     """fn(connection, arg), or None -- said on stderr -- if the graph could not be read."""
     import sqlite3
@@ -297,15 +333,15 @@ def _sql_callers(con, node):
     nid = node["id"]
     kinds = ("calls", "instantiates") if node.get("kind") in HIERARCHY_KINDS else ("calls",)
     rows = []
-    for cid, name, kind, file, line, edge, how in con.execute(
+    for cid, name, kind, file, line, edge, how, at in con.execute(
             "SELECT s.id, s.name, s.kind, s.file_path, COALESCE(e.line, s.start_line), e.kind,"
-            "       e.resolved_by"
+            "       e.resolved_by, e.line"
             "  FROM edges e JOIN nodes s ON s.id = e.source"
             " WHERE e.target = ? AND e.source != ? AND e.kind IN (%s)"
             " ORDER BY s.file_path, 5" % ",".join("?" * len(kinds)), (nid, nid) + kinds):
         rows.append({"id": cid, "name": name, "kind": kind, "file": file,
                      "line": _shown(line), "edge_kind": edge, "dispatch_via_trait": False,
-                     "guess": _guess(how)})
+                     "guess": _edge_guess(con, how, cid, nid, at)})
     direct = {r["id"] for r in rows}
     for cid, name, kind, file, line in con.execute(
             "SELECT s.id, s.name, s.kind, s.file_path,"
@@ -331,15 +367,16 @@ def _sql_callees(con, node):
     rows, seen = [], {nid}
     callees = con.execute(
         "SELECT t.id, t.name, t.kind, t.file_path, t.start_line, e.kind, t.parent_id,"
-        "       e.resolved_by"
+        "       e.resolved_by, e.line"
         "  FROM edges e JOIN nodes t ON t.id = e.target"
         " WHERE e.source = ? AND e.kind IN (%s) ORDER BY e.rowid"
         % ",".join("?" * len(kinds)), (nid,) + kinds).fetchall()
     # One row per callee, as the tool gives: a guess only if no call to it was exact.
     by_id = {}
-    for tid, name, kind, file, line, edge, _, how in callees:
+    for tid, name, kind, file, line, edge, _, how, at in callees:
+        guess = _edge_guess(con, how, nid, tid, at)
         if tid in by_id:
-            if _guess(how) is None:
+            if guess is None:
                 by_id[tid]["guess"] = None
             continue
         if tid in seen:
@@ -347,9 +384,9 @@ def _sql_callees(con, node):
         seen.add(tid)
         by_id[tid] = {"id": tid, "name": name, "kind": kind, "file": file,
                       "line": _shown(line), "edge_kind": edge, "dispatch_via_trait": False,
-                      "guess": _guess(how)}
+                      "guess": guess}
         rows.append(by_id[tid])
-    for tid, name, kind, file, line, edge, parent, _ in callees:
+    for tid, name, kind, file, line, edge, parent, _, _ in callees:
         if kind not in ("method", "function") or not parent:
             continue
         if con.execute("SELECT 1 FROM nodes WHERE id = ? AND kind = 'trait'",
@@ -392,10 +429,10 @@ def _impact_walk(con, node, exact_only):
             continue
         # The order get_incoming_edges reads them (the target/kind index), with
         # `calls` moved first, as traverse_bfs sorts them.
-        edges = [(src,) for src, how in con.execute(
-            "SELECT source, resolved_by FROM edges WHERE target = ?"
+        edges = [(src,) for src, how, at in con.execute(
+            "SELECT source, resolved_by, line FROM edges WHERE target = ?"
             " ORDER BY kind != 'calls', kind, rowid", (cur,))
-            if not (exact_only and _guess(how) is not None)]
+            if not (exact_only and _edge_guess(con, how, src, cur, at) is not None)]
         fresh = [s for (s,) in edges if s not in visited]
         if not fresh:
             continue

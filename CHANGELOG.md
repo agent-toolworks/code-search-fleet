@@ -23,11 +23,19 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
     the hits`).
   - **`cs impact`:** a node reached only through a guessed edge is marked
     `only through a guessed edge`.
-  - **What stays plain:** edges with no code (written by the extractor) and
-    the codes tokensave's own `is_exact()` accepts.
-  - **Hit counts can drop:** a C# call inside a property getter is bound by
-    name (code 4) in tokensave 7.15.0. So such callers now appear marked
-    instead of counted.
+  - **What stays plain:** edges with no code (written by the extractor), the
+    codes tokensave's own `is_exact()` accepts, and a name match the call
+    settles. When the call as written names the target's own type
+    (`Catalog.PriceList` bound to `Catalog::PriceList`), the name picked the
+    only method that call can reach.
+  - **A zero is not clean:** when every row is guessed or unbound, the hit
+    count is 0 and the answer is `degraded` (*a callers zero with N unbound
+    or guessed row(s) listed is not 'nothing calls it'*), not a clean zero.
+    This also covers 1.25.0's unbound-only case.
+  - **Hit counts can drop:** in tokensave 7.15.0, most calls from inside a C#
+    property getter are bound by name (codes 4 and 5), unlike most calls
+    inside methods. Unless the call names the target's own class, those
+    callers are now marked instead of counted.
 
 ## 1.26.0 — 2026-10-10
 

@@ -1239,8 +1239,21 @@ if have_tokensave; then
   printf 'namespace Acme.Shop { public class Migrator { internal void Execute(int n) { } } }\n' > "$gs_fleet/shop/src/Migrator.cs"
   printf 'using Vendor.Data;\nnamespace Acme.Shop { public class Runner {\n  public void ViaLibrary() { Broker.Execute("select 1"); }\n  public void ViaRepo(Processor p) { p.Execute("x"); }\n} }\n' \
     > "$gs_fleet/shop/src/Runner.cs"
-  (cd "$gs_fleet/shop" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i \
-     && tokensave init </dev/null >/dev/null 2>&1)
+  # cat: a name-only edge the call settles -- `Catalog.PriceList` names the
+  # target's own class -- is a plain hit (#112 review). lib: the only caller is
+  # a library call bound by name, so the count is 0 and must not read as a
+  # clean zero.
+  mkdir -p "$gs_fleet/cat/src" "$gs_fleet/lib/src"
+  printf 'namespace Acme.Shop { public static class Catalog { public static int[] PriceList(int id) { return new int[0]; } } }\n' > "$gs_fleet/cat/src/Catalog.cs"
+  printf 'namespace Acme.Shop { public class Item {\n  public int Id { get; set; }\n  public int[] Prices { get { return Catalog.PriceList(Id); } }\n} }\n' > "$gs_fleet/cat/src/Item.cs"
+  cp "$gs_fleet/shop/src/Processor.cs" "$gs_fleet/shop/src/Migrator.cs" "$gs_fleet/lib/src/"
+  printf 'using Vendor.Data;\nnamespace Acme.Shop { public class Runner {\n  public void ViaLibrary() { Broker.Execute("select 1"); }\n} }\n' > "$gs_fleet/lib/src/Runner.cs"
+  for r in shop cat lib; do
+    (cd "$gs_fleet/$r" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i \
+       && tokensave init </dev/null >/dev/null 2>&1)
+  done
+  gs_cat=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers PriceList cat --porcelain 2>/dev/null)
+  gs_lib=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute lib --porcelain 2>/dev/null)
   gs_out=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute shop 2>&1); gs_rc=$?
   gs_env=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute shop --porcelain 2>/dev/null)
   gs_imp=$(FLEET_ROOT="$gs_fleet" "$here/cs" impact Execute shop 2>&1)
@@ -1250,12 +1263,15 @@ if have_tokensave; then
      && matches "$gs_out" 'answer:.*1 guessed by name, listed apart from the hits\) · 1 hit\(s\)' \
      && matches "$gs_env" '"hits":1,' \
      && matches "$gs_imp" 'Runner\.cs:3: .*ViaLibrary \(depends on Execute, only through a guessed edge\)' \
-     && matches "$gs_imp" 'Runner\.cs:4: .*ViaRepo \(depends on Execute\)$'; then
-    ok "an edge tokensave bound by name only is marked as guessed and counted apart; a typed call stays a plain hit"
+     && matches "$gs_imp" 'Runner\.cs:4: .*ViaRepo \(depends on Execute\)$' \
+     && matches "$gs_cat" '"hits":1,.*"degraded":null' && matches "$gs_cat" 'Prices \(calls\)"' \
+     && matches "$gs_lib" '"hits":0,.*"degraded":"a callers zero with 1 unbound or guessed row' \
+     && matches "$gs_lib" 'ViaLibrary \(calls, guessed: '; then
+    ok "an edge tokensave bound by name only is marked as guessed and counted apart, and a zero of guessed rows is degraded; a typed call, or one naming the target's own class, is a plain hit"
     pass=$((pass + 1))
   else
     err "a guessed edge was listed as a plain caller, or a typed one was marked (callers exit $gs_rc):"
-    printf '%s\n' "$gs_out" "$gs_imp" | grep -E 'Runner|answer' | sed 's/^/    /' >&2
+    printf '%s\n' "$gs_out" "$gs_imp" "$gs_cat" "$gs_lib" | grep -E 'Runner|answer|"hits"' | cut -c1-300 | sed 's/^/    /' >&2
     fail=$((fail + 1)); failed_ids+=("graph-guessed-edges")
   fi
   rm -rf "$(dirname "$gs_fleet")"

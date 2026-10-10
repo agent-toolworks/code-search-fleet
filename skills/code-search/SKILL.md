@@ -104,7 +104,8 @@ MCP instructions name the running version. Details are in `docs/install.md`,
   tokensave bound by name only. It may reach a same-named method elsewhere,
   often a library's, so read the call before you count it. It is listed but
   kept out of the hit count. `cs impact` marks a node it reached only
-  through such an edge.
+  through such an edge. `0 hit(s)` with such rows listed is `degraded`: it
+  is not "unused".
 - A `cs refs` / `cs impls` refusal that says *Serena runs through uv, which
   is not installed* (since 1.25.1) is setup: tell the user `brew install uv`,
   and meanwhile run its *answer now* line. `cs impls` answers from the graph

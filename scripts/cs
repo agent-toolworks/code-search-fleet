@@ -5201,8 +5201,16 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
     CS_NOTE="$CS_NOTE; $n_guessed guessed by name, listed apart from the hits"
     CS_LISTED_APART="$((${CS_LISTED_APART:-0} + n_guessed))"
   fi
+  # Kept out of the count, so a method whose every caller is unbound or guessed
+  # counts 0 -- and hits 0 with degraded null is the envelope that means
+  # "nothing calls this", the false zero #79 removed (#112 review). The rows
+  # are there to read; the zero is not a negative.
+  local n_hits=$(( $(n_hits_in "$out") - n_unbound - n_guessed ))
+  if [[ "$n_hits" -eq 0 ]]; then
+    CS_DEGRADED="${CS_DEGRADED:+$CS_DEGRADED; }a $mode zero with $((n_unbound + n_guessed)) unbound or guessed row(s) listed is not 'nothing $([[ $mode == callees ]] && printf 'is called' || printf 'calls it')' — read the rows"
+  fi
   emit_capped "$out"
-  report_answer "$(( $(n_hits_in "$out") - n_unbound - n_guessed ))" "$(n_repos_in "$out")"
+  report_answer "$n_hits" "$(n_repos_in "$out")"
 }
 
 cmd_callers() {

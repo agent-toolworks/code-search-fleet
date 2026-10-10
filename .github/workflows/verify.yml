@@ -23,6 +23,9 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # tokensave checks for a newer release on init/sync/status; CI tests a pinned one.
+      TOKENSAVE_UPDATE_CHECK: "off"
 
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +74,34 @@ jobs:
             || pip install --quiet semgrep \
             || echo "::warning::semgrep unavailable (engine will be reported absent)"
 
+      # tokensave, at exactly the version this release was tested with (#105).
+      # Without it a green run covered none of the graph paths: cs callers /
+      # callees / impact / fields, the minimum-version refusal, the C# graph
+      # caveats, and the tokensave probes. The version is read from the
+      # baseline, so moving the baseline moves CI with it, and the binary is
+      # checked against the release's SHA256SUMS before it runs. Best-effort
+      # like the rest: a failed download leaves tokensave absent, which the
+      # suites report as skipped -- and the step below says so.
+      - name: Install tokensave (the tested version)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver=$(awk -F'\t' '$1 == "tokensave" { print $2; exit }' fixtures/verified-versions.tsv)
+          asset="tokensave-v${ver}-x86_64-linux.tar.gz"
+          dir=$(mktemp -d)
+          if [ -n "$ver" ] && [ "$ver" != "-" ] \
+             && gh release download "v$ver" -R aovestdipaperino/tokensave -D "$dir" -p "$asset" -p SHA256SUMS \
+             && (cd "$dir" && grep "  $asset\$" SHA256SUMS | sha256sum -c -) \
+             && tar -xzf "$dir/$asset" -C "$dir" tokensave; then
+            mkdir -p "$HOME/.local/bin" && install -m 755 "$dir/tokensave" "$HOME/.local/bin/tokensave"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            # The runner's own config: no counter uploads from CI.
+            "$HOME/.local/bin/tokensave" disable-upload-counter >/dev/null 2>&1 || true
+            "$HOME/.local/bin/tokensave" --version
+          else
+            echo "::warning::tokensave ${ver:-?} could not be installed (the graph checks will be reported as skipped)"
+          fi
+
       # A run where everything failed to install would still PASS both suites,
       # because both correctly skip what is absent -- and a green run that
       # exercised nothing is precisely the hazard this project is organised
@@ -91,6 +122,10 @@ jobs:
             exit 1
           fi
           echo "$missing of 4 optional engines absent; the suites will skip what they cannot exercise."
+          # Not counted above (it is not a search engine), but named: without it
+          # every graph check is a skip, and a skip is not a pass.
+          if command -v tokensave >/dev/null 2>&1; then echo "ok       tokensave $(tokensave --version | awk '{print $2}')"
+          else echo "::warning::tokensave absent — the graph checks will be skipped"; fi
 
       - name: Record engine versions
         run: ./scripts/bootstrap --check || true

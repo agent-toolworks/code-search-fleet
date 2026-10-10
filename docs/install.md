@@ -314,6 +314,11 @@ before 1.16. Update anything that says otherwise:
   user, or add the language yourself if they agree. `cs impls` no longer
   looks up a build-output copy (JDTLS's `bin/`), which answered
   `resolved · 0 hit(s)`. `cs doctor` lists the repos affected.
+- **Without uv, `cs refs` and `cs impls` say what to do** (1.25.1). Before,
+  they refused with *serena needs uv installed* and nothing else. `cs refs`
+  now gives the fix and an *answer now* graph command, and `cs impls`
+  answers from the graph if the repo has one. That refusal is setup: tell
+  the user to install uv. Do not retry with another spelling.
 - **`cs callers` lists unbound calls** (1.25.0, #107). A call tokensave saw
   but could not bind to one node is now listed after the edges, marked
   `(unbound call: …)`, and counted apart from the hits on the answer line.

@@ -1119,6 +1119,32 @@ if have_tokensave; then
     printf '%s\n%s\n%s\n%s\n' "$acc_cs" "$acc_out" "$acc_ref" "$acc_lsp" | grep -E 'answer|and:|degraded|cs refs|PatientRelative|✗' | sed 's/^/    /' >&2
     fail=$((fail + 1)); failed_ids+=("graph-accessor-gap")
   fi
+  # A graph last fully indexed before 7.15.0 keeps the C# gap under 7.15.0:
+  # the edges are in the graph, and 7.15.0 does not re-index one built by
+  # 7.14.x (measured with the release binaries, #100). CI has no old binary,
+  # so the graph is made into one: the version tokensave reads from metadata,
+  # and the getter's edge a 7.14.1 graph does not have.
+  if command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 "$acc_fleet/lims/.tokensave/tokensave.db" \
+      "UPDATE metadata SET value = '7.14.1' WHERE key = 'last_full_index_version';
+       DELETE FROM edges WHERE kind = 'calls';"
+    acc_old=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims 2>&1)
+    acc_old_env=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims --porcelain 2>/dev/null)
+    acc_doc=$(FLEET_ROOT="$acc_fleet" "$here/cs" doctor 2>&1)
+    if matches "$acc_old" 'last fully indexed by tokensave 7\.14\.1, before 7\.15\.0.*tokensave sync --force' \
+       && matches "$acc_old" 'answer:.*C# property accessors are not in the graph' \
+       && matches "$acc_old_env" '"degraded":"[^"]*property accessors' \
+       && matches "$acc_doc" 'graphs +1 last fully indexed before tokensave 7\.15\.0: lims'; then
+      ok "a C# graph last fully indexed before tokensave 7.15.0 keeps the accessor caveat, and cs doctor names it with sync --force"
+      pass=$((pass + 1))
+    else
+      err "a pre-7.15.0 C# graph was answered without its caveat:"
+      printf '%s\n' "$acc_old" "$(printf '%s\n' "$acc_doc" | grep graphs)" | grep -E 'answer|indexed|graphs' | sed 's/^/    /' >&2
+      fail=$((fail + 1)); failed_ids+=("graph-predates-csharp-edges")
+    fi
+  else
+    skip "a pre-7.15.0 C# graph keeps its caveat" "no sqlite3 to mark the graph"
+  fi
   rm -rf "$acc_shim" "$(dirname "$acc_fleet")"
 elif command -v tokensave >/dev/null 2>&1; then
   skip "the property-accessor answers" "tokensave $(tokensave_version) is older than the $(engine_minimum tokensave) cs supports"

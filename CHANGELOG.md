@@ -30,18 +30,23 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
     `implements`, calls resolved through the receiver's type. Below it,
     `cs callers` / `callees` / `impact` / `fields` refuse and name both
     versions (*tokensave is 7.13.0, older than 7.15.0*), and `cs impls` has
-    no graph fallback. Fix: `brew upgrade aovestdipaperino/tap/tokensave`.
-    Nothing else is needed: 7.15.0 re-indexes a graph built by an older
-    release the first time it opens it (measured), so the first query on a
-    large repo after upgrading is slower.
+    no graph fallback. Fix: `brew upgrade aovestdipaperino/tap/tokensave`,
+    **then `tokensave sync --force` in each repo with a graph.** The new
+    edges are in the graph, not the binary, and 7.15.0 does not re-index
+    every older graph by itself: one built by 7.13.0 is re-indexed when it is
+    first opened, one built by 7.14.x is not (measured with the release
+    binaries). `cs doctor` lists the graphs last fully indexed before 7.15.0.
   - **Serena is pinned to a commit** (1de556f). It used to run whatever
     Serena's `main` branch held that day, and every build reports 2.0.0.dev0,
     so no one could say which code had answered. A newer Serena now reaches
     you only in a cs release, after it has been verified.
   - **C# graph answers no longer say "calls inside C# property accessors are
-    not in the graph"** (tokensave 7.15.0 records them), and a C# zero from
-    `cs callers` is no longer `degraded` for that reason. Kotlin answers keep
-    the caveat: Kotlin accessors still have no edges.
+    not in the graph"** when the graph was last fully indexed by 7.15.0 or
+    later (tokensave records those calls since then), and a C# zero from
+    `cs callers` there is no longer `degraded` for that reason. On an older
+    graph the caveat stays, and the answer also says to run
+    `tokensave sync --force`. Kotlin answers keep the caveat: Kotlin accessors
+    still have no edges.
 
 ## 1.23.0 — 2026-10-09
 

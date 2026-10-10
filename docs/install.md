@@ -65,7 +65,9 @@ engine versions that release was verified on, and the oldest each one
 supports (`scripts/lib/engine-minimums.tsv`). `cs doctor`'s `versions` section
 compares yours against it. A version newer or older than tested is a note,
 not a fault. Below the minimum is a fault, and for tokensave (minimum 7.15.0)
-the graph verbs refuse until you upgrade. Serena needs nothing from you: cs
+the graph verbs refuse until you upgrade. After upgrading tokensave, run
+`tokensave sync --force` in each repo with a graph: the new release does not
+re-index every older graph by itself. Serena needs nothing from you: cs
 pins the commit it runs.
 
 ## 4. Set up the fleet
@@ -172,7 +174,8 @@ Optionally, to prove the tool itself on this machine:
 | `! C# … no runnable dotnet` | `brew install --cask dotnet-sdk`. It loads legacy .NET Framework projects too, on macOS and Linux, without their reference assemblies: framework and package types do not resolve, the repo's own do. Meanwhile `cs impls --engine=tokensave` answers where a graph exists |
 | `! TypeScript` / `JavaScript … no runnable node` | `brew install node` |
 | `? Python` / `Go` / `Rust` | not checked by `cs`. An empty `cs impls` / `cs refs` there is not proof of absence |
-| `✗ tokensave  7.x — older than 7.15.0, the oldest cs supports` | `brew upgrade aovestdipaperino/tap/tokensave`. Each graph is re-indexed by the new tokensave the first time it is opened, so nothing else is needed |
+| `✗ tokensave  7.x — older than 7.15.0, the oldest cs supports` | `brew upgrade aovestdipaperino/tap/tokensave`, then `tokensave sync --force` in each repo with a graph. An upgrade alone does not re-index every graph |
+| `! graphs  N last fully indexed before tokensave 7.15.0: …` | `cd <repo> && tokensave sync --force` in each. Until then their C# answers lack the edges 7.15.0 added, and say so |
 | `! <engine>  … newer than tested` / `older than tested` (under `versions`) | nothing has to change: it is a note, and the exit status ignores it. Nothing has verified cs's answers on that version yet, so mention it when you report a wrong answer |
 | `✗ <engine>  … older than X, the oldest cs supports` (under `versions`) | the printed `brew upgrade` |
 | `! tokensave  MISSING` / `graphs in N of M repo(s)` | `brew install aovestdipaperino/tap/tokensave`, then `cd <repo> && tokensave init` in each repo. fleet-workspace's refresh keeps graphs synced. A repo left unindexed **on purpose** goes in `CS_NO_GRAPH="…"` in `fleet.env`, and stops being flagged |
@@ -316,10 +319,12 @@ before 1.16. Update anything that says otherwise:
   section comparing yours against it: `!` newer or older than tested is a
   note, `✗` below the minimum is a fault. **tokensave below 7.15.0 is a
   refusal** for `cs callers` / `callees` / `impact` / `fields`, which names both
-  versions: run the printed `brew upgrade`. Serena is pinned to a commit.
-  **C# graph answers no longer carry the property-accessor caveat** (tokensave
-  7.15.0 records those calls), so a C# `cs callers` zero is no longer
-  `degraded` for it. Kotlin answers keep it.
+  versions: run the printed `brew upgrade`, then `tokensave sync --force` in
+  each repo with a graph. Serena is pinned to a commit. **C# graph answers no
+  longer carry the property-accessor caveat** once the graph was last fully
+  indexed by tokensave 7.15.0 or later, which records those calls, so a C#
+  `cs callers` zero there is no longer `degraded` for it. An older graph keeps
+  the caveat, and the answer says to re-index. Kotlin answers keep it.
 - **`cs changes` / `cs_changes`** (1.19.0) lists what changed since a version,
   small fixes included, and the MCP instructions name the running version.
   This section is the summary; that command is the complete list.

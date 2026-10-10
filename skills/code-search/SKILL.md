@@ -77,10 +77,12 @@ MCP instructions name the running version. Details are in `docs/install.md`,
 - A Kotlin `cs callers` / `cs callees` / `cs impact` answer says the graph
   has no edges through property accessors (since 1.19.1), and a zero there is
   `degraded`, not "unused". C# answers said so too until 1.24.0. tokensave
-  7.15.0 records those calls, so a C# graph answer now includes them.
+  7.15.0 records those calls, so a C# answer from a graph indexed by 7.15.0
+  includes them. An older C# graph keeps the caveat, and the answer says
+  `tokensave sync --force`: tell the user.
 - A refusal that says *tokensave is 7.x, older than 7.15.0 (the oldest cs
   supports)* (since 1.24.0) is setup: tell the user the printed
-  `brew upgrade`. `cs doctor`'s `versions` section lists each engine against
+  `brew upgrade`, then `tokensave sync --force` in each repo. `cs doctor`'s `versions` section lists each engine against
   the version the release was tested with. A `!` there is a note, not a fault.
 - A `cs refs` / `cs impls` refusal that says *the language server did not
   start* is about setup, not the symbol (since 1.22.1): do not rename and

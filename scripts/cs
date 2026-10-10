@@ -2142,6 +2142,28 @@ tokensave_graph_epoch() {
   tokensave status "$1" --json 2>/dev/null \
     | sed -n 's/.*"last_sync_at"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1
 }
+# The tokensave release that last indexed the whole graph. The edges live in
+# the graph, not in the binary: 7.15.0 re-extracts a file only when it changes,
+# and re-indexes a graph only when a schema migration forces it -- one built by
+# 7.13.0 is (7.14.0 changed the schema), one built by 7.14.1 is not, and keeps
+# its C# accessor gap under 7.15.0 until `tokensave sync --force` (#100,
+# measured with the release binaries).
+tokensave_graph_index_version() {  # <dir>
+  have_tokensave || return 1
+  tokensave status "$1" --json 2>/dev/null \
+    | sed -n 's/.*"last_full_index_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+}
+# The release whose C# edges cs relies on (tokensave #637, #642, #643).
+TS_CSHARP_EDGES=7.15.0
+# Success when the graph was last fully indexed before those edges existed, or
+# does not say. A graph whose files were re-extracted one at a time keeps its
+# old full-index version, so it stays caveated: the conservative reading.
+graph_predates_csharp_edges() {  # <dir>
+  local v
+  v=$(tokensave_graph_index_version "$1") || return 1
+  [[ -z "$v" ]] || version_lt "$v" "$TS_CSHARP_EDGES"
+}
+
 tokensave_graph_age_secs() {
   local e now
   e=$(tokensave_graph_epoch "$1") || return 1
@@ -2244,6 +2266,9 @@ graph_caveats() {  # <repo> <graph-dir> <substituted:0|1>
     CS_DEGRADED="answered from $repo's FLEET index (main) although the scope is $CS_SCOPE — graph indexes are per-project and there is no union of the two, so your branch's edits to $repo are invisible in this answer"
     warn "the $CS_SCOPE workspace copy of $repo has no graph, so its FLEET copy answered — this describes main, not your branch (build one with: cd ${ticket_root:-<workspace>}/$repo && tokensave init)"
   fi
+  if graph_predates_csharp_edges "$dir"; then
+    warn "this graph was last fully indexed by tokensave $(tokensave_graph_index_version "$dir" || true), before $TS_CSHARP_EDGES: C# files not changed since lack the edges that release added (calls inside property accessors, interface implementations, calls through a receiver's type) — re-index with: cd $(real_dir_of "$dir") && tokensave sync --force"
+  fi
   warn "a graph index is per-repo: this answers about $repo alone. A caller in another repo of the fleet is a string, not an edge — cs uses '<symbol>' is the cross-repo half of the question."
 }
 
@@ -2252,12 +2277,14 @@ graph_caveats() {  # <repo> <graph-dir> <substituted:0|1>
 # has no callers in the graph, and `cs callers` answered a clean structural zero
 # for it (#79). Measured on tokensave 7.9.0 through 7.15.0; TypeScript getters
 # ARE edges. C# had the same gap until 7.15.0 (tokensave #637), the oldest
-# tokensave cs supports (#100) -- and 7.15.0 re-indexes a graph an older release
-# built the first time it opens it, so no C# graph cs reads still has it. cs
-# cannot add the edges, so it says where they are missing -- verify-engines
+# tokensave cs supports (#100) -- but the edges are in the GRAPH, and a graph
+# last fully indexed before 7.15.0 can still lack them (see
+# tokensave_graph_index_version), so for C# the gap is named on such a graph.
+# cs cannot add the edges, so it says where they are missing -- verify-engines
 # probes both languages, and reports IMPROVED the day Kotlin's arrive.
-graph_accessor_gap() {  # <language> -> the language's name, if its graph has the gap
+graph_accessor_gap() {  # <language> <graph-dir> -> the language's name, if its graph has the gap
   case "$1" in
+    csharp) graph_predates_csharp_edges "$2" || return 1; printf 'C#' ;;
     kotlin) printf 'Kotlin' ;;
     *) return 1 ;;
   esac
@@ -2278,7 +2305,7 @@ graph_alternative() {  # <subcommand> <symbol> <repo> <repo-dir>
       if [[ $rc -eq 3 ]]; then
         local gl gap=""
         gl=$(symbol_language "$2" "$4" || repo_language "$4" || true)
-        gl=$(graph_accessor_gap "$gl") && gap=", nor any call made inside a $gl property accessor"
+        gl=$(graph_accessor_gap "$gl" "$4") && gap=", nor any call made inside a $gl property accessor"
         printf 'cs callers %s %s   (its call sites, from the tokensave graph: structural, and narrower than references — no DI registrations, no non-call uses%s)\n         and:  cs uses '"'"'%s'"'"' --word   (the text half: every mention of the name, calls the graph does not hold included; only the two together approximate references)' "$2" "$3" "$gap" "$2"
       else
         printf 'cs impls %s %s --engine=tokensave   (its implementations, from the tokensave graph: structural, and narrower than references — no DI registrations, no other uses)' "$2" "$3"
@@ -3481,7 +3508,7 @@ doc_engines() {
   # Coverage, not presence: a graph answers only in the repo it was built in, and
   # a repo without one is a place cs callers/callees/impact cannot see into.
   if have_tokensave; then
-    local d total=0 without="" n_with=0 age oldest="" aged="" excluded=""
+    local d total=0 without="" n_with=0 age oldest="" aged="" excluded="" stale=""
     for d in $(real_dirs); do
       # Kept graph-less on purpose (CS_NO_GRAPH): named, not counted, not a fix.
       if graph_excluded "${d##*/}" && ! tokensave_graph_at "$d"; then excluded="$excluded${d##*/}
@@ -3489,6 +3516,8 @@ doc_engines() {
       total=$((total + 1))
       if tokensave_graph_at "$d"; then
         n_with=$((n_with + 1))
+        graph_predates_csharp_edges "$d" && stale="$stale${d##*/}
+"
         age=$(tokensave_graph_age_secs "$d") || age=""
         [[ -n "$age" && ( -z "$oldest" || "$age" -gt "$oldest" ) ]] && oldest="$age"
       else without="$without${d##*/}
@@ -3508,10 +3537,16 @@ doc_engines() {
         "cd <repo> && tokensave init   (in each; fleet-workspace's refresh keeps them synced)
 or, for a repo left unindexed on purpose: add it to CS_NO_GRAPH=\"…\" in ~/.config/repo-fleet/fleet.env"
     fi
+    if [[ -n "$stale" ]]; then
+      doc_row warn graphs "$(printf '%s' "$stale" | grep -c .) last fully indexed before tokensave $TS_CSHARP_EDGES: $(printf '%s' "$stale" | doc_list)" \
+        "their C# answers miss the edges $TS_CSHARP_EDGES added (calls inside property accessors, interface implementations, calls through a receiver's type), and say so on each answer" \
+        "cd <repo> && tokensave sync --force   (in each)"
+    fi
   elif command -v tokensave >/dev/null 2>&1; then
     doc_row bad tokensave "$(tokensave_version) — older than $(engine_minimum tokensave), the oldest cs supports" \
       "cs callers / callees / impact / fields refuse, and cs impls loses its graph fallback: below $(engine_minimum tokensave) the C# graph lacks edges cs relies on" \
-      "$(tokensave_get_it)   (it re-indexes each graph itself, the first time it opens it)"
+      "$(tokensave_get_it)
+then, in each repo with a graph: tokensave sync --force   (an upgrade alone does not re-index every graph)"
   else
     doc_row warn tokensave "MISSING" \
       "cs callers / callees / impact refuse (nothing else answers a call graph), and cs impls loses its fallback where a toolchain is missing" \
@@ -3573,7 +3608,8 @@ doc_versions() {
         "$(doc_upgrade "$e")"
     elif [[ -z "$t" || "$t" == "-" ]]; then
       doc_row note "$e" "$v — this release was not tested with any $e"
-    elif [[ "$v" == "$t" ]]; then
+    elif ! version_lt "$v" "$t" && ! version_lt "$t" "$v"; then
+      # Numerically: a build that decorates its number, 6.2.1(p6.2…), is 6.2.1.
       doc_row ok "$e" "$v, as tested"
     elif version_lt "$t" "$v"; then
       doc_row note "$e" "$v — newer than tested ($t): untested, not known broken"
@@ -5008,7 +5044,7 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
   have_tokensave || die "cs $mode needs tokensave, and it $(tokensave_absent_why)
   these three answer from a symbol graph and have no second engine: a language
   server answers about references (cs refs), not about a call graph
-  $(tokensave_get_it), then: cd $(real_dir_of "$dir") && tokensave init
+  $(tokensave_get_it), then: cd $(real_dir_of "$dir") && tokensave $([[ -n "$_ts_old" ]] && printf 'sync --force' || printf init)
   weaker but available now: cs uses '$sym', cs def $sym $repo"
   # Same rule as cs impls: an --engine cs cannot honour is refused rather than
   # dropped, because a dropped request looks exactly like that engine answering
@@ -5047,7 +5083,7 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
   esac
   # In the provenance line, not only on stderr: it is the line an MCP caller
   # reads, and a zero here is otherwise indistinguishable from "unused".
-  gap_lang=$(graph_accessor_gap "$(symbol_language "$sym" "$graph_dir" || repo_language "$graph_dir" || true)") \
+  gap_lang=$(graph_accessor_gap "$(symbol_language "$sym" "$graph_dir" || repo_language "$graph_dir" || true)" "$graph_dir") \
     && extra="$extra; calls inside $gap_lang property accessors are not in the graph"
   answer structural "tokensave (graph)" "$(graph_note "$repo" "$graph_dir" "$extra")"
 

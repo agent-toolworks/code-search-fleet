@@ -5185,8 +5185,24 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
     # Not a zero to bound by the corpus: there are call sites to read.
     CS_LISTED_APART="$n_unbound"
   fi
+  # Edges tokensave bound by name only (#111): its resolved_by says it picked
+  # the target by a trailing name or a score, so the call may reach another
+  # method of that name -- a library's, in the case measured. Marked by
+  # tokensave_call.py, counted apart like the unbound rows.
+  local n_guessed
+  n_guessed=$(printf '%s\n' "$out" | grep -cE ', guessed: |, only through a guessed edge\)$' || true)
+  if [[ "$n_guessed" -gt 0 ]]; then
+    local which="$n_guessed of the rows below are GUESSED"
+    [[ "$n_guessed" -eq 1 ]] && which="1 row below is GUESSED"
+    case "$mode" in
+      impact) warn "$which — reached only through an edge tokensave bound by name, not by type (its resolved_by); that call may reach another method of the same name, so read it before relying on the row" ;;
+      *)      warn "$which: tokensave bound the call by name, not by type (its resolved_by), so it may reach another method of that name — a library's, say. Read the call before relying on it." ;;
+    esac
+    CS_NOTE="$CS_NOTE; $n_guessed guessed by name, listed apart from the hits"
+    CS_LISTED_APART="$((${CS_LISTED_APART:-0} + n_guessed))"
+  fi
   emit_capped "$out"
-  report_answer "$(( $(n_hits_in "$out") - n_unbound ))" "$(n_repos_in "$out")"
+  report_answer "$(( $(n_hits_in "$out") - n_unbound - n_guessed ))" "$(n_repos_in "$out")"
 }
 
 cmd_callers() {

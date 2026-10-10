@@ -322,6 +322,12 @@ before 1.16. Update anything that says otherwise:
   are higher than before. A refusal that says the CLI *cut the reply … at
   15,000 characters* (`cs impls`' graph fallback) means the
   answer is too large, not empty.
+- **Guessed graph edges are marked** (1.27.0, #111). A `cs callers` /
+  `callees` / `impact` row marked `guessed: <how>, resolved_by=N` is an
+  edge tokensave bound by name, not by type, so it may reach another method
+  of that name (a library's, often). These rows are counted apart from the
+  hits, so counts can be lower than in 1.26.0. C# getter callers are among
+  them. Read the call before relying on a guessed row.
 - **Without uv, `cs refs` and `cs impls` say what to do** (1.25.1). Before,
   they refused with *serena needs uv installed* and nothing else. `cs refs`
   now gives the fix and an *answer now* graph command, and `cs impls`

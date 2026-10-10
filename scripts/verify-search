@@ -1218,7 +1218,7 @@ if have_tokensave; then
      && matches "$ub_out" 'answer:.*1 unbound call site\(s\) listed apart from the hits\) · 1 hit\(s\)' \
      && matches "$ub_env" '"hits":1,' \
      && matches "$ub_imp" "answer:.*not walked from 1 unbound call site\\(s\\) to 'ForDisplay'" \
-     && matches "$ub_ctl" 'Item\.cs:4: \[csharp_property\] Shown \(calls\)$' \
+     && matches "$ub_ctl" 'Item\.cs:4: \[csharp_property\] Shown \(calls(, guessed: [^)]*)?\)$' \
      && ! matches "$ub_ctl" 'unbound'; then
     ok "a call tokensave left unbound (a getter calling a name two classes share) is listed and marked, apart from the edges; a bound call is not listed twice"
     pass=$((pass + 1))
@@ -1228,6 +1228,37 @@ if have_tokensave; then
     fail=$((fail + 1)); failed_ids+=("graph-unbound-callers")
   fi
   rm -rf "$(dirname "$ub_fleet")"
+
+  # An edge tokensave bound by name only is a guess (#111): its resolved_by
+  # says so. Measured: a library's `Broker.Execute` (no node for Broker) bound
+  # to the repo's one public Execute, scored above an internal one (code 5).
+  # It is listed, marked and counted apart; the typed call (no code) is not.
+  gs_fleet=$(mktemp -d)/fleet
+  mkdir -p "$gs_fleet/shop/src"
+  printf 'namespace Acme.Shop { public class Processor { public void Execute(string s) { } } }\n' > "$gs_fleet/shop/src/Processor.cs"
+  printf 'namespace Acme.Shop { public class Migrator { internal void Execute(int n) { } } }\n' > "$gs_fleet/shop/src/Migrator.cs"
+  printf 'using Vendor.Data;\nnamespace Acme.Shop { public class Runner {\n  public void ViaLibrary() { Broker.Execute("select 1"); }\n  public void ViaRepo(Processor p) { p.Execute("x"); }\n} }\n' \
+    > "$gs_fleet/shop/src/Runner.cs"
+  (cd "$gs_fleet/shop" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i \
+     && tokensave init </dev/null >/dev/null 2>&1)
+  gs_out=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute shop 2>&1); gs_rc=$?
+  gs_env=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute shop --porcelain 2>/dev/null)
+  gs_imp=$(FLEET_ROOT="$gs_fleet" "$here/cs" impact Execute shop 2>&1)
+  if [[ $gs_rc -eq 0 ]] \
+     && matches "$gs_out" 'Runner\.cs:3: \[method\] ViaLibrary \(calls, guessed: simple-name-match-scored, resolved_by=5' \
+     && matches "$gs_out" 'Runner\.cs:4: \[method\] ViaRepo \(calls\)$' \
+     && matches "$gs_out" 'answer:.*1 guessed by name, listed apart from the hits\) · 1 hit\(s\)' \
+     && matches "$gs_env" '"hits":1,' \
+     && matches "$gs_imp" 'Runner\.cs:3: .*ViaLibrary \(depends on Execute, only through a guessed edge\)' \
+     && matches "$gs_imp" 'Runner\.cs:4: .*ViaRepo \(depends on Execute\)$'; then
+    ok "an edge tokensave bound by name only is marked as guessed and counted apart; a typed call stays a plain hit"
+    pass=$((pass + 1))
+  else
+    err "a guessed edge was listed as a plain caller, or a typed one was marked (callers exit $gs_rc):"
+    printf '%s\n' "$gs_out" "$gs_imp" | grep -E 'Runner|answer' | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("graph-guessed-edges")
+  fi
+  rm -rf "$(dirname "$gs_fleet")"
 
   # tokensave's CLI cuts every reply at 15000 characters (#108), so a method
   # with ~50 callers, or a name with ~70 nodes, was refused as "no parseable

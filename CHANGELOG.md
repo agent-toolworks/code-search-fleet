@@ -8,6 +8,27 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.27.0 — 2026-10-10
+
+- **`cs callers` / `callees` / `impact` mark an edge tokensave guessed**
+  (#111). tokensave records how it bound each call (`edges.resolved_by`).
+  Some codes are guesses by name, not by type: a trailing name as the only
+  candidate (4), or the best of several by score (2, 5, 13), and a few more.
+  A library's `Broker.Execute` bound to the repo's only public `Execute` was
+  listed as a plain caller. On a real C# repo, 669 of one method's 675
+  callers were such edges.
+  - **What you see now:** these rows are listed but marked `(calls,
+    guessed: simple-name-match-scored, resolved_by=5 — …)`, with one warning,
+    and counted apart from the hits (`N guessed by name, listed apart from
+    the hits`).
+  - **`cs impact`:** a node reached only through a guessed edge is marked
+    `only through a guessed edge`.
+  - **What stays plain:** edges with no code (written by the extractor) and
+    the codes tokensave's own `is_exact()` accepts.
+  - **Hit counts can drop:** a C# call inside a property getter is bound by
+    name (code 4) in tokensave 7.15.0. So such callers now appear marked
+    instead of counted.
+
 ## 1.26.0 — 2026-10-10
 
 - **`cs callers`, `callees` and `impact` answer for a method with many callers**

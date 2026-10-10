@@ -172,6 +172,46 @@ Optionally, to prove the tool itself on this machine:
 
 Java needs nothing: Serena's Java server ships its own runtime.
 
+## Kotlin language server
+
+JetBrains publishes kotlin-server as pre-release builds that stop starting on a
+date. When the build Serena runs has expired, every `cs impls` / `cs refs` on a
+Kotlin repo refuses with *"the Kotlin language server Serena runs
+(kotlin-server N) is a pre-release build that has expired"*. Serena cannot
+replace it by itself: JetBrains' CDN answers 404 to the download URL Serena
+builds (since October 2026; that refusal says *"Serena could not download the
+Kotlin language server"*). Install a current build yourself and point Serena at
+it:
+
+```sh
+v=263.6379.0                            # the newest at https://github.com/Kotlin/kotlin-lsp/releases
+a=kotlin-server-$v-aarch64.sit          # Apple silicon; Intel Mac: kotlin-server-$v.sit; Linux: kotlin-server-$v[-aarch64].tar.gz
+mkdir -p ~/.local/share/kotlin-server && cd ~/.local/share/kotlin-server
+curl -fLO "https://download.jetbrains.com/language-server/kotlin-server/$v/$a"
+curl -fsL "https://download.jetbrains.com/language-server/kotlin-server/$v/$a.sha256" | shasum -a 256 -c -   # prints "<file>: OK"; Linux: sha256sum -c -
+ditto -x -k "$a" .                      # a .sit is a zip; on Linux: tar xzf "$a"
+ls "$PWD/kotlin-server-$v/bin/intellij-server"
+```
+
+Then, in `~/.serena/serena_config.yml`, replace `ls_specific_settings: {}` with
+that path:
+
+```yaml
+ls_specific_settings:
+  kotlin:
+    ls_path: /Users/you/.local/share/kotlin-server/kotlin-server-263.6379.0/bin/intellij-server
+```
+
+Keep the space after `ls_path:`. Without it YAML reads the whole line as a key
+with no value, Serena ignores it without a word, and the expired build keeps
+running (the refusal still names 263.4702.0).
+Nothing needs restarting: each `cs impls` / `cs refs` starts a fresh Serena.
+The build carries its own Java runtime, so it needs no `JAVA_HOME` beyond what
+the doctor table above asks for. `ls_path` overrides the version Serena
+manages, so repeat this when the new build expires too, and `verify-engines`
+(its `serena-kt` line) says whether it starts. Checked on macOS arm64 with
+263.6379.0; the Linux archive is named from the release page and not tried.
+
 ## Updating later
 
 ```sh
@@ -242,6 +282,13 @@ before 1.16. Update anything that says otherwise:
   was Serena failing, counted as `resolved · 1 hit(s)`, exit 0. It now
   refuses, exit 1. `cs refs Type.Member` is asked as `Type/Member` and finds
   the references; it used to hit that error.
+- **A language server that did not start is named as such** (1.22.1, #90).
+  `cs refs` / `cs impls` refused with Serena's generic *"language server
+  manager is not initialized"* and advice on naming the symbol. They now say
+  the server did not start, give the reason from Serena's log when it has a
+  known fix (an expired Kotlin build, a refused download), the log's path, and
+  no naming advice: the symbol was never looked up. See "Kotlin language
+  server" above.
 - **`cs changes` / `cs_changes`** (1.19.0) lists what changed since a version,
   small fixes included, and the MCP instructions name the running version.
   This section is the summary; that command is the complete list.

@@ -8,6 +8,24 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.22.1 — 2026-10-09
+
+- **A language server that did not start is named as such** (#90). The Kotlin
+  server Serena downloaded (kotlin-server 263.4702.0) is a JetBrains
+  pre-release build that has expired: it exits at start-up, so every
+  `cs refs` / `cs impls` on a Kotlin repo fails. Serena cannot fetch a newer
+  one either, because JetBrains' CDN answers 404 to the URL it builds. cs
+  refused with Serena's *"language server manager is not initialized"* and
+  advice on how to name the symbol, which pointed at the wrong problem. It now
+  refuses with *the language server did not start*, the reason read from
+  Serena's log (an expired Kotlin build, a refused download) with the fix, and
+  the log's path. `cs impls` used to warn *could not locate* the symbol in this
+  case; when it falls back to a tokensave graph, its answer line now gives
+  *the language server did not start* as the reason. The expired build's
+  version is named whether Serena installed it or `ls_path` points at it. If you see this on Kotlin, install a current kotlin-server and set
+  `ls_path` as in docs/install.md, "Kotlin language server". `verify-engines`
+  now names the cause on its `serena-kt` line.
+
 ## 1.22.0 — 2026-10-09
 
 - **An agent that loses the MCP server is told to tell the user** (#92). When

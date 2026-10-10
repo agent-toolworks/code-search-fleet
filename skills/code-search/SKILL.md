@@ -77,6 +77,10 @@ MCP instructions name the running version. Details are in `docs/install.md`,
 - A C# or Kotlin `cs callers` / `cs callees` / `cs impact` answer says the graph
   has no edges through property accessors (since 1.19.1), and a zero there is
   `degraded`, not "unused".
+- A `cs refs` / `cs impls` refusal that says *the language server did not
+  start* is about setup, not the symbol (since 1.22.1): do not rename and
+  retry. An expired Kotlin build is fixed by the steps in `docs/install.md`,
+  "Kotlin language server"; tell the user. Meanwhile use `cs def` / `cs uses`.
 - `cs refs` takes a member as `Type.Member` (asked as `Type/Member`) since
   1.20.0. Before, it hit a Serena error that was counted as one `resolved`
   hit, exit 0. A language-server error is now a refusal, so a `resolved` hit

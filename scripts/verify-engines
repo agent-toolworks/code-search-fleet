@@ -12,7 +12,7 @@
 #   known-limitation-- currently fails; if it starts passing that is an
 #                      IMPROVEMENT and the routing should be reconsidered
 #                      (tokensave's C# interface edges became a capability, #65;
-#                      its property-accessor edges are one, #79)
+#                      its C# property-accessor edges did too, #100)
 #
 # Versions are recorded in fixtures/verified-versions.tsv. A changed version is
 # not itself a failure -- it is a prompt to look at the probe results.
@@ -114,7 +114,8 @@ version_of() {
     ast-grep)  ast-grep --version 2>/dev/null | awk '{print $2}' ;;
     semgrep)   semgrep --version 2>/dev/null | head -1 ;;
     tokensave) tokensave --version 2>/dev/null | awk '{print $2}' ;;
-    serena)    uvx --from git+https://github.com/oraios/serena serena -V 2>/dev/null | tail -1 | awk '{print $NF}' ;;
+    # The pinned commit is part of the version: every build reports 2.0.0.dev0.
+    serena)    python3 "$here/lib/serena_call.py" --version 2>/dev/null ;;
   esac
 }
 
@@ -200,6 +201,13 @@ toolchain_runs() {
     java) java -version >/dev/null 2>&1 ;;
     *)    "$1" --version </dev/null >/dev/null 2>&1 ;;
   esac
+}
+
+# uv is not an analyser, but every Serena answer goes through it, so its
+# version is part of what a release was tested with (#100).
+probe_uv() {
+  have uvx || { record uv "-" capability MISSING "Serena cannot run — cs impls/refs refuse"; return; }
+  record uv "$(uv --version 2>/dev/null | awk '{print $2}')" capability PASS "runs the pinned Serena (uvx)"
 }
 
 probe_serena() {
@@ -404,14 +412,21 @@ probe_tokensave() {
   fi
 }
 
-# A known limitation cs now names on every C# and Kotlin graph answer (#79):
-# tokensave emits no edges out of property accessors, so a method called only
-# from a getter has no callers in the graph. Each repo has two calls -- one from
-# a getter (the gap) and one from a method (the control, which must be found,
-# or the probe proves nothing). CONFIRMED while the gap holds; IMPROVED the day
-# a release emits the edge, which is when graph_accessor_gap in cs should go.
+# Calls made inside a property accessor (#79). tokensave emitted no edges out of
+# C# or Kotlin accessors, so a method called only from a getter had no callers in
+# the graph. C# gained them in 7.15.0 (tokensave #637), the oldest tokensave cs
+# supports (#100), so for C# it is a capability: cs no longer names the gap on
+# C# answers, and losing the edges is a REGRESSION. Kotlin still lacks them: a
+# known limitation, CONFIRMED while the gap holds and IMPROVED the day a release
+# emits the edge, which is when graph_accessor_gap in cs should drop Kotlin.
+# Each language has two calls -- one from a getter (the one tested) and one
+# from a method (the control, which must be found, or the probe proves nothing).
 probe_tokensave_accessors() {
-  have tokensave || { record ts-getters "-" known-limitation SKIP "not installed"; return; }
+  have tokensave || {
+    record ts-getters-cs "-" capability MISSING "not installed"
+    record ts-getters-kt "-" known-limitation SKIP "not installed"
+    return
+  }
   local ver tmp lang gap ctl found=() control_missing=()
   ver=$(tokensave --version 2>/dev/null | awk '{print $2}')
   tmp=$(mktemp -d)
@@ -426,12 +441,20 @@ probe_tokensave_accessors() {
     [[ -n "$(python3 "$here/lib/tokensave_call.py" callers "$tmp/$lang" "$lang" "$gap" 2>/dev/null)" ]] && found+=("$lang")
   done
   rm -rf "$tmp"
-  if [[ ${#control_missing[@]} -gt 0 ]]; then
-    record ts-getters "$ver" known-limitation FAIL "the control call (from a method) was not found in: ${control_missing[*]} — the probe cannot tell anything"
-  elif [[ ${#found[@]} -gt 0 ]]; then
-    record ts-getters "$ver" known-limitation IMPROVED "a call inside a property accessor IS an edge now (${found[*]}) — drop the caveat in cs (graph_accessor_gap)"
+  local nocontrol=" ${control_missing[*]:-} " has=" ${found[*]:-} "
+  if [[ "$nocontrol" == *" cs "* ]]; then
+    record ts-getters-cs "$ver" capability FAIL "the control call (from a C# method) was not found — the probe cannot tell anything"
+  elif [[ "$has" == *" cs "* ]]; then
+    record ts-getters-cs "$ver" capability PASS "calls inside C# property accessors are graph edges"
   else
-    record ts-getters "$ver" known-limitation CONFIRMED "no edges out of C# / Kotlin property accessors — cs names it on those graph answers"
+    record ts-getters-cs "$ver" capability FAIL "no edge out of a C# property accessor — cs no longer names that gap, so C# answers miss those callers"
+  fi
+  if [[ "$nocontrol" == *" kt "* ]]; then
+    record ts-getters-kt "$ver" known-limitation FAIL "the control call (from a Kotlin method) was not found — the probe cannot tell anything"
+  elif [[ "$has" == *" kt "* ]]; then
+    record ts-getters-kt "$ver" known-limitation IMPROVED "a call inside a Kotlin property accessor IS an edge now — drop Kotlin from graph_accessor_gap in cs"
+  else
+    record ts-getters-kt "$ver" known-limitation CONFIRMED "no edges out of Kotlin property accessors — cs names it on Kotlin graph answers"
   fi
 }
 
@@ -443,6 +466,7 @@ probe_ast_grep
 probe_semgrep
 probe_tokensave
 probe_tokensave_accessors
+probe_uv
 probe_serena
 probe_serena_java
 probe_serena_kotlin_floor

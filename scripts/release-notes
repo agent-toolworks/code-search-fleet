@@ -13,6 +13,18 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ver="${1:-$(tr -d '[:space:]' < "$root/VERSION")}"
 body=$(python3 "$root/scripts/lib/changelog.py" "$root/CHANGELOG.md" body "$ver") || exit 1
 [[ -n "$body" ]] || { echo "release-notes: the $ver section of CHANGELOG.md is empty" >&2; exit 1; }
+
+# What this release was tested with, and the oldest version cs supports (#100):
+# the expected setup, stated where people read about a release.
+tested=$(awk -F'\t' '
+  FNR == NR { if ($0 !~ /^#/ && NF >= 2) min[$1] = $2; next }
+  /^# verified / { when = substr($0, 12); next }
+  /^#/ { next }
+  $1 ~ /^(ripgrep|ctags|ast-grep|semgrep|tokensave|uv|serena|dotnet|java|node)$/ && $2 != "-" && $2 != "?" {
+    printf "| %s | %s | %s |\n", $1, $2, ($1 in min ? min[$1] : "—")
+  }
+  END { if (when != "") printf "\nVerified %s with `scripts/verify-engines` and `scripts/verify-search`.\n", when }
+' "$root/scripts/lib/engine-minimums.tsv" "$root/fixtures/verified-versions.tsv")
 cat <<NOTES
 ## Update, then check
 \`\`\`sh
@@ -23,6 +35,13 @@ Restart Claude Code, then ask it to *"run cs_doctor"* and fix what it flags. New
 
 ## What changed in $ver
 $body
+
+## Tested with
+The setup this release expects. \`cs doctor\` compares yours against it: a different version is a note, one below the minimum is a fault (tokensave below its minimum refuses).
+
+| Engine | Tested | Minimum |
+|---|---|---|
+$tested
 
 Full history: [CHANGELOG.md](https://github.com/agent-toolworks/code-search-fleet/blob/main/CHANGELOG.md).
 NOTES

@@ -2247,16 +2247,17 @@ graph_caveats() {  # <repo> <graph-dir> <substituted:0|1>
   warn "a graph index is per-repo: this answers about $repo alone. A caller in another repo of the fleet is a string, not an edge — cs uses '<symbol>' is the cross-repo half of the question."
 }
 
-# tokensave's C# and Kotlin extractors emit no edges out of property accessors
-# (get/set/init, a Kotlin `get() =`) and none into properties: a method called
-# only from a getter has no callers in the graph, and `cs callers` answered a
-# clean structural zero for it (#79). Measured on tokensave 7.9.0, 7.13.0 and
-# 7.14.1; TypeScript getters ARE edges. cs cannot add the edges, so it says
-# where they are missing -- verify-engines probes it, and reports IMPROVED the
-# day a release emits them.
+# tokensave's Kotlin extractor emits no edges out of property accessors (a
+# Kotlin `get() =`) and none into properties: a method called only from a getter
+# has no callers in the graph, and `cs callers` answered a clean structural zero
+# for it (#79). Measured on tokensave 7.9.0 through 7.15.0; TypeScript getters
+# ARE edges. C# had the same gap until 7.15.0 (tokensave #637), the oldest
+# tokensave cs supports (#100) -- and 7.15.0 re-indexes a graph an older release
+# built the first time it opens it, so no C# graph cs reads still has it. cs
+# cannot add the edges, so it says where they are missing -- verify-engines
+# probes both languages, and reports IMPROVED the day Kotlin's arrive.
 graph_accessor_gap() {  # <language> -> the language's name, if its graph has the gap
   case "$1" in
-    csharp) printf 'C#' ;;
     kotlin) printf 'Kotlin' ;;
     *) return 1 ;;
   esac
@@ -2785,7 +2786,7 @@ kind_status() {
       if have_tokensave; then
         _sym="tokensave graph for cs callers/callees/impact and for cs impls without a toolchain"
       else
-        _sym="no tokensave → cs callers / cs callees / cs impact refuse (no second engine answers a call graph)"
+        _sym="tokensave $(tokensave_absent_why) → cs callers / cs callees / cs impact refuse (no second engine answers a call graph)"
       fi
       if [[ $have_calls -eq 1 && $have_def -eq 1 ]]; then
         echo "ok|ast-grep/semgrep for cs calls, ctags for cs def, $_sym"
@@ -3323,15 +3324,17 @@ cmd_engines() {
 # on it. Not 1: the diagnosis RAN, and 1 means "did not run". Not 2 either --
 # that is a query's honest zero.
 CS_EXIT_DOCTOR_FLAGGED=3
-doc_n_ok=0; doc_n_flagged=0; doc_n_unchecked=0
+doc_n_ok=0; doc_n_flagged=0; doc_n_unchecked=0; doc_n_noted=0
 
-doc_row() {  # <ok|warn|bad|unchecked> <item> <status> [costs] [fix, may be multi-line]
+doc_row() {  # <ok|warn|bad|unchecked|note> <item> <status> [costs] [fix, may be multi-line]
   local mark line
   case "$1" in
     ok)        mark="${D_G}✓${D_O}"; doc_n_ok=$((doc_n_ok + 1)) ;;
     warn)      mark="${D_Y}!${D_O}"; doc_n_flagged=$((doc_n_flagged + 1)) ;;
     bad)       mark="${D_R}✗${D_O}"; doc_n_flagged=$((doc_n_flagged + 1)) ;;
     unchecked) mark="?";             doc_n_unchecked=$((doc_n_unchecked + 1)) ;;
+    # Worth knowing, nothing to fix: not counted as flagged, so it leaves the exit status alone.
+    note)      mark="${D_Y}!${D_O}"; doc_n_noted=$((doc_n_noted + 1)) ;;
   esac
   printf '  %s %-12s %s\n' "$mark" "$2" "$3"
   [[ -n "${4:-}" ]] && printf '    %-12s costs: %s\n' "" "$4"
@@ -3505,6 +3508,10 @@ doc_engines() {
         "cd <repo> && tokensave init   (in each; fleet-workspace's refresh keeps them synced)
 or, for a repo left unindexed on purpose: add it to CS_NO_GRAPH=\"…\" in ~/.config/repo-fleet/fleet.env"
     fi
+  elif command -v tokensave >/dev/null 2>&1; then
+    doc_row bad tokensave "$(tokensave_version) — older than $(engine_minimum tokensave), the oldest cs supports" \
+      "cs callers / callees / impact / fields refuse, and cs impls loses its graph fallback: below $(engine_minimum tokensave) the C# graph lacks edges cs relies on" \
+      "$(tokensave_get_it)   (it re-indexes each graph itself, the first time it opens it)"
   else
     doc_row warn tokensave "MISSING" \
       "cs callers / callees / impact refuse (nothing else answers a call graph), and cs impls loses its fallback where a toolchain is missing" \
@@ -3518,6 +3525,71 @@ or, for a repo left unindexed on purpose: add it to CS_NO_GRAPH=\"…\" in ~/.co
   else doc_row warn forge "no gh" "cs gaps refuses: a fleet-scoped negative cannot be checked org-wide" "$(doc_install gh 'the GitHub CLI'), then gh auth login"; fi
   if timeout_bin >/dev/null; then doc_row ok timeout "$(command -v "$(timeout_bin)")"
   else doc_row warn timeout "no timeout(1)" "a hung language server hangs cs with no upper bound" "$(doc_install coreutils coreutils)"; fi
+}
+
+# ---- versions (#100) -----------------------------------------------------------
+# Each engine as installed, against the version this release was tested with
+# (fixtures/verified-versions.tsv, also on the release page) and the oldest cs
+# supports (lib/engine-minimums.tsv). A version that differs from the tested
+# one is not a fault -- Homebrew upgrades on its own schedule -- so it is a note,
+# not a row to fix: it says which answers nothing has vouched for yet. Below
+# the minimum is a fault.
+doc_installed_version() {  # <engine> -> its version, or failure when it is absent
+  local c v=""
+  case "$1" in
+    ripgrep)   have_rg_binary && v=$(rg --version 2>/dev/null | head -1 | awk '{print $2}') ;;
+    ctags)     c=$(ctags_bin) && v=$("$c" --version 2>&1 | head -1 | awk '{print $3}' | tr -d ,) ;;
+    ast-grep)  have ast-grep && v=$(ast-grep --version 2>/dev/null | awk '{print $2}') ;;
+    # Without the variable, semgrep asks the network whether it is current.
+    semgrep)   have semgrep && v=$(SEMGREP_ENABLE_VERSION_CHECK=0 semgrep --version 2>/dev/null | grep -m1 -E '^[0-9]') ;;
+    tokensave) have tokensave && v=$(tokensave_version) ;;
+    uv)        have uv && v=$(uv --version 2>/dev/null | awk '{print $2}') ;;
+    dotnet)    have dotnet && v=$(dotnet --version </dev/null 2>/dev/null | head -1) ;;
+    node)      have node && v=$(node --version 2>/dev/null) ;;
+  esac
+  [[ -n "$v" ]] && printf '%s\n' "$v"
+}
+
+doc_upgrade() {  # <engine> -> the command that upgrades it
+  local f
+  case "$1" in
+    ctags) f=universal-ctags ;;
+    tokensave) f=aovestdipaperino/tap/tokensave ;;
+    *) f="$1" ;;
+  esac
+  if have brew; then printf 'brew upgrade %s' "$f"; else printf 'upgrade %s to a newer release' "$1"; fi
+}
+
+doc_versions() {
+  local e v t m commit
+  for e in ripgrep ctags ast-grep semgrep tokensave uv dotnet node; do
+    v=$(doc_installed_version "$e") || continue   # absent: the engines rows say so
+    t=$(engine_tested "$e"); m=$(engine_minimum "$e")
+    if [[ -n "$m" ]] && version_lt "$v" "$m"; then
+      # tokensave's row under engines already says this, with what it costs.
+      [[ "$e" == tokensave ]] && continue
+      doc_row bad "$e" "$v — older than $m, the oldest cs supports${t:+ (tested with $t)}" \
+        "nothing has checked cs's answers on this version; the routing assumes what $m does" \
+        "$(doc_upgrade "$e")"
+    elif [[ -z "$t" || "$t" == "-" ]]; then
+      doc_row note "$e" "$v — this release was not tested with any $e"
+    elif [[ "$v" == "$t" ]]; then
+      doc_row ok "$e" "$v, as tested"
+    elif version_lt "$t" "$v"; then
+      doc_row note "$e" "$v — newer than tested ($t): untested, not known broken"
+    else
+      doc_row note "$e" "$v — older than tested ($t)${m:+, above the minimum ($m)}"
+    fi
+  done
+  # Serena is pinned, so there is no installed version to drift: the commit cs
+  # runs is the one in serena_call.py, and the tested one is the baseline's.
+  commit=$(sed -n 's/^SERENA_COMMIT = "\([0-9a-f]*\)".*/\1/p' "$lib_dir/serena_call.py")
+  t=$(engine_tested serena)
+  if [[ "${t##*@}" == "${commit:0:7}" ]]; then
+    doc_row ok serena "commit ${commit:0:7}, pinned — as tested"
+  else
+    doc_row note serena "commit ${commit:0:7}, pinned — the baseline tested ${t:-nothing}"
+  fi
 }
 
 # Languages a repo is written in: each with at least 3 tracked files, so one
@@ -3719,17 +3791,22 @@ cmd_doctor() {
   doc_workspaces
   printf '\n%sengines%s\n' "$D_B" "$D_O"
   doc_engines
+  printf '\n%sversions%s — installed, against what cs %s was tested with\n' "$D_B" "$D_O" \
+    "$(tr -d '[:space:]' < "$lib_dir/../../VERSION" 2>/dev/null || printf '?')"
+  doc_versions
   if [[ -d "$root" && "$(count_fleet_repos)" -gt 0 ]]; then
     printf '\n%slanguages in this fleet%s — what cs impls / cs refs need for each\n' "$D_B" "$D_O"
     doc_languages
     doc_serena_projects
   fi
-  printf '\n%s%s ok, %s to fix, %s not checked%s\n' "$D_B" "$doc_n_ok" "$doc_n_flagged" "$doc_n_unchecked" "$D_O"
+  printf '\n%s%s ok, %s to fix, %s not checked%s%s\n' "$D_B" "$doc_n_ok" "$doc_n_flagged" "$doc_n_unchecked" \
+    "$([[ $doc_n_noted -gt 0 ]] && printf ', %s untested version(s)' "$doc_n_noted")" "$D_O"
   # The MCP server is started by Claude Code and keeps the environment it was
   # started with, so a fix made in a shell is invisible to it until a restart --
   # and this report describes only the environment it ran in.
   printf 'this describes the environment it ran in: from a terminal, that shell; as cs_doctor, the MCP server Claude Code started\n'
 
+  [[ $doc_n_noted -gt 0 ]] && printf 'an untested version is not a fault: nothing has vouched for answers on it yet — report what looks wrong with this doctor output\n'
   if [[ $doc_n_flagged -gt 0 ]]; then
     printf 'each "!" or "✗" line above says what it costs and how to fix it; exit %s\n' "$CS_EXIT_DOCTOR_FLAGGED"
     return "$CS_EXIT_DOCTOR_FLAGGED"
@@ -4146,7 +4223,8 @@ cmd_def() {
   # fallback for a machine with no universal-ctags, where cs def had no answer
   # at all rather than a weaker one.
   if [[ "${force_engine:-}" == tokensave ]]; then
-    have_tokensave || die "--engine=tokensave requested but tokensave is not installed"
+    have_tokensave || die "--engine=tokensave requested but tokensave $(tokensave_absent_why)
+  $(tokensave_get_it)"
     def_via_tokensave "$1" "$only"
     return $?
   fi
@@ -4722,7 +4800,8 @@ cmd_impls() {
   # been asked and had nothing. That is worse than not offering the flag.
   case "${force_engine:-}" in
     tokensave)
-      have_tokensave || die "--engine=tokensave requested but tokensave is not installed"
+      have_tokensave || die "--engine=tokensave requested but tokensave $(tokensave_absent_why)
+  $(tokensave_get_it)"
       tokensave_graph_at "$repo_dir" || die "--engine=tokensave requested but $2 has no graph
   $(graph_hint "$2" "$repo_dir")"
       impls_via_tokensave "$1" "$2" "$repo_dir" forced
@@ -4926,10 +5005,10 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
   local dir="$view/$repo" fleet_dir="$root/$repo"
   require_python3 "$mode" "resolving the symbol to a graph node and formatting the answer"
   [[ -d "$dir" ]] || die "no such repo: $repo"
-  have_tokensave || die "cs $mode needs tokensave, and it is not installed
+  have_tokensave || die "cs $mode needs tokensave, and it $(tokensave_absent_why)
   these three answer from a symbol graph and have no second engine: a language
   server answers about references (cs refs), not about a call graph
-  install it, then: cd $(real_dir_of "$dir") && tokensave init
+  $(tokensave_get_it), then: cd $(real_dir_of "$dir") && tokensave init
   weaker but available now: cs uses '$sym', cs def $sym $repo"
   # Same rule as cs impls: an --engine cs cannot honour is refused rather than
   # dropped, because a dropped request looks exactly like that engine answering
@@ -5305,9 +5384,9 @@ cmd_fields() {
   every read and write site of a field, across every repo with a graph"
   local only="${2:-}"
   require_python3 fields "querying the graph and splitting reads from writes"
-  have_tokensave || die "cs fields needs tokensave, and it is not installed
+  have_tokensave || die "cs fields needs tokensave, and it $(tokensave_absent_why)
   no second engine answers this: a text search cannot tell a read from a write
-  install it, then: cd <repo> && tokensave init
+  $(tokensave_get_it), then: cd <repo> && tokensave init
   weaker but available now: cs uses '$1'"
   case "${force_engine:-}" in
     ""|tokensave) ;;

@@ -5,6 +5,8 @@ Serena has no query CLI -- it is an MCP server -- so the facade speaks the
 protocol directly rather than shelling out to an agent.
 
 Usage: serena_call.py <project-dir> <tool-name> [json-args]
+       serena_call.py --version     the pinned commit and the version it reports
+       serena_call.py --commit      the pinned commit alone (no download)
 
 Exit 3 when the language server never finished importing the project in the
 time allowed: whatever it said is not an answer (see wait_until_imported).
@@ -22,7 +24,13 @@ import sys
 import threading
 import time
 
-SERENA = ["uvx", "--from", "git+https://github.com/oraios/serena", "serena",
+# Pinned to the commit the release was verified with (#100). Unpinned, every
+# run took whatever Serena's main branch held that day, and since every build
+# reports 2.0.0.dev0, the baseline could not say which code had passed. A newer
+# Serena now reaches users in a cs release, after verify-engines has run on it.
+SERENA_COMMIT = "1de556f71569f3acfc0743e526dd60aca40a545e"
+SERENA_FROM = "git+https://github.com/oraios/serena@" + SERENA_COMMIT
+SERENA = ["uvx", "--from", SERENA_FROM, "serena",
           "start-mcp-server", "--transport", "stdio", "--enable-web-dashboard", "false"]
 
 
@@ -212,6 +220,14 @@ def narrow_containers(text, ask):
 
 
 def main():
+    if sys.argv[1:] == ["--commit"]:
+        print(SERENA_COMMIT)
+        return 0
+    if sys.argv[1:] == ["--version"]:
+        out = subprocess.run(["uvx", "--from", SERENA_FROM, "serena", "-V"],
+                             capture_output=True, text=True).stdout.split()
+        print("%s@%s" % (out[-1] if out else "?", SERENA_COMMIT[:7]))
+        return 0
     if len(sys.argv) < 3:
         print(__doc__, file=sys.stderr)
         return 2

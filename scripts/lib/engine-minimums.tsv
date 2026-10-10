@@ -1,0 +1,12 @@
+# The oldest version of each engine cs supports (#100). Below it, cs doctor
+# fails the row and, for tokensave, the graph verbs refuse. Each minimum is a
+# version something has actually passed on, never a guess: the versions each
+# release was TESTED with are in fixtures/verified-versions.tsv.
+#
+# engine	minimum	evidence
+ripgrep	14.1.0	CI passes verify-engines and verify-search on it (Ubuntu's apt package)
+ctags	5.9.0	CI passes verify-engines and verify-search on it (Ubuntu's apt package)
+ast-grep	0.45.1	verified on macOS, 2026-10-03
+semgrep	1.173.0	verified on macOS, 2026-10-03
+tokensave	7.15.0	older releases lack C# edges cs relies on: calls inside property accessors, interfaces filed as implements, calls resolved through the receiver's type
+uv	0.10.9	verified on macOS, 2026-10-03 (it only runs the pinned Serena)

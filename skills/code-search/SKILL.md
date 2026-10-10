@@ -74,9 +74,16 @@ MCP instructions name the running version. Details are in `docs/install.md`,
   1.19.2 a hit inside a C# property is `[in Property Foo/Bar]`, not
   `[in Class Foo]`, and the `cs refs` hint after a `cs callers` zero names the
   declaring file, so run it as printed.
-- A C# or Kotlin `cs callers` / `cs callees` / `cs impact` answer says the graph
+- A Kotlin `cs callers` / `cs callees` / `cs impact` answer says the graph
   has no edges through property accessors (since 1.19.1), and a zero there is
-  `degraded`, not "unused".
+  `degraded`, not "unused". C# answers said so too until 1.24.0. tokensave
+  7.15.0 records those calls, so a C# answer from a graph indexed by 7.15.0
+  includes them. An older C# graph keeps the caveat, and the answer says
+  `tokensave sync --force`: tell the user.
+- A refusal that says *tokensave is 7.x, older than 7.15.0 (the oldest cs
+  supports)* (since 1.24.0) is setup: tell the user the printed
+  `brew upgrade`, then `tokensave sync --force` in each repo. `cs doctor`'s `versions` section lists each engine against
+  the version the release was tested with. A `!` there is a note, not a fault.
 - A `cs refs` / `cs impls` refusal that says *the language server did not
   start* is about setup, not the symbol (since 1.22.1): do not rename and
   retry. An expired Kotlin build is fixed by the steps in `docs/install.md`,
@@ -596,10 +603,10 @@ installed.
   no union*. So these cannot deliver what `cs uses` delivers — a caller in
   another repo of the fleet is a string, not an edge, and is invisible here.
   Always pair a symbol answer with `cs uses '<symbol>'` before telling anyone
-  something is unused. **In C# and Kotlin this is not optional:** tokensave's
-  graph has no edges out of property accessors, so a method called only from a
-  getter shows no callers. `cs` names that on every such answer and marks a zero
-  `degraded`; `cs uses '<symbol>' --word` finds those calls. The answer line names **which** index answered and how
+  something is unused. **In Kotlin this is not optional:** tokensave's
+  graph has no edges out of Kotlin property accessors, so a method called only
+  from a getter shows no callers. `cs` names that on every such answer and marks
+  a zero `degraded`; `cs uses '<symbol>' --word` finds those calls. The answer line names **which** index answered and how
   old it is (`scoped to <repo>; ticket layer, synced 2d ago`); when the scope was
   a ticket workspace and the fleet index answered instead, `cs` reports that as
   `degraded` — the answer then describes `main`, not the branch being edited, and

@@ -101,4 +101,74 @@ default_branch() {
   return 1
 }
 
-have_tokensave() { command -v tokensave >/dev/null 2>&1; }
+# ---- engine versions (#100) -------------------------------------------------
+# cs names a minimum for each engine (lib/engine-minimums.tsv) and the versions
+# each release was tested with (fixtures/verified-versions.tsv). Without them an
+# answer depended on whatever the machine had: tokensave 7.15.0 added C# edges
+# that 7.13.0 lacked, so the same `cs callers` gave different answers on two
+# laptops and neither said why.
+_common_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+engine_minimum() {  # <engine> -> its minimum version, if cs names one
+  awk -F'\t' -v e="$1" '!/^#/ && $1 == e { print $2; exit }' "$_common_lib_dir/engine-minimums.tsv" 2>/dev/null
+}
+
+engine_tested() {  # <engine> -> the version this release was tested with
+  awk -F'\t' -v e="$1" '!/^#/ && $1 == e { print $2; exit }' \
+    "$_common_lib_dir/../../fixtures/verified-versions.tsv" 2>/dev/null
+}
+
+# Numeric, field by field: "v22.23.1", "1.180.0" and "21.0.12.1" all compare.
+# Anything after the numbers (a -beta, a +build) is ignored.
+version_lt() {  # <a> <b> -> success when a is older than b
+  local -a a b
+  local i x y
+  IFS=. read -ra a <<< "$(printf '%s' "$1" | sed 's/^[^0-9]*//; s/[^0-9.].*//')"
+  IFS=. read -ra b <<< "$(printf '%s' "$2" | sed 's/^[^0-9]*//; s/[^0-9.].*//')"
+  for ((i = 0; i < ${#a[@]} || i < ${#b[@]}; i++)); do
+    x=${a[i]:-0}; y=${b[i]:-0}
+    ((10#$x < 10#$y)) && return 0
+    ((10#$x > 10#$y)) && return 1
+  done
+  return 1
+}
+
+tokensave_version() { tokensave --version 2>/dev/null | awk '{print $2}'; }
+
+# Sets _ts_old to "<installed> <minimum>" when tokensave is installed but older
+# than cs supports, once per process. Not a subshell: the answer is cached.
+_ts_checked=""; _ts_old=""
+tokensave_check_age() {
+  [[ -n "$_ts_checked" ]] && return 0
+  _ts_checked=1
+  command -v tokensave >/dev/null 2>&1 || return 0
+  local v m
+  v=$(tokensave_version); m=$(engine_minimum tokensave)
+  [[ -n "$v" && -n "$m" ]] && version_lt "$v" "$m" && _ts_old="$v $m"
+  return 0
+}
+
+# An old tokensave counts as absent: every route that falls back from it falls
+# back from an old one too, and a refusal says which of the two it was.
+have_tokensave() {
+  command -v tokensave >/dev/null 2>&1 || return 1
+  tokensave_check_age
+  [[ -z "$_ts_old" ]]
+}
+
+# "is not installed", or "is 7.13.0, older than 7.15.0 (the oldest cs supports)"
+tokensave_absent_why() {
+  tokensave_check_age
+  if [[ -n "$_ts_old" ]]; then
+    printf 'is %s, older than %s (the oldest cs supports)' "${_ts_old% *}" "${_ts_old#* }"
+  else
+    printf 'is not installed'
+  fi
+}
+
+tokensave_get_it() {  # the command that installs or upgrades it
+  local verb=install
+  tokensave_check_age; [[ -n "$_ts_old" ]] && verb=upgrade
+  if command -v brew >/dev/null 2>&1; then printf 'brew %s aovestdipaperino/tap/tokensave' "$verb"
+  else printf '%s tokensave (github.com/aovestdipaperino/tokensave/releases)' "$verb"; fi
+}

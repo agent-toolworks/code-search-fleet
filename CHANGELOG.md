@@ -8,6 +8,47 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.24.0 — 2026-10-10
+
+- **cs states the engine versions it was tested with, and the oldest it
+  supports** (#100). Until now cs checked no engine version (only
+  python ≥ 3.11), and nothing published what a release had been verified on,
+  so the same query could answer differently on two machines and neither
+  said why. Now:
+  - **Every GitHub release has a "Tested with" table:** the exact ripgrep,
+    ctags, ast-grep, semgrep, tokensave, uv, Serena, dotnet, java and node
+    versions `verify-engines` and `verify-search` passed on, and the minimum
+    for each engine. This release: tokensave 7.15.0, ast-grep 0.50.0,
+    semgrep 1.180.0, uv 0.13.0, ripgrep 15.2.0, ctags 6.2.1.
+  - **`cs doctor` has a `versions` section.** It shows each installed engine
+    beside the tested version: `✓ … as tested`, `! … newer than tested` (or
+    older) as a note, which leaves the exit status alone (Homebrew upgrades
+    whenever it likes; an untested version is not known broken), and `✗`
+    below the minimum. Paste the doctor output when you report a wrong answer.
+  - **The minimum tokensave is 7.15.0.** Older releases lack C# edges cs
+    relies on: calls inside property accessors, interfaces filed as
+    `implements`, calls resolved through the receiver's type. Below it,
+    `cs callers` / `callees` / `impact` / `fields` refuse and name both
+    versions (*tokensave is 7.13.0, older than 7.15.0*), and `cs impls` has
+    no graph fallback. Fix: `brew upgrade aovestdipaperino/tap/tokensave`,
+    **then `tokensave sync --force` in each repo with a graph.** The new
+    edges are in the graph, not the binary, and 7.15.0 does not re-index
+    every older graph by itself: one built by 7.13.0 is re-indexed when it is
+    first opened, one built by 7.14.x is not (measured with the release
+    binaries). `cs doctor` lists the graphs that hold C# and were last fully
+    indexed before 7.15.0.
+  - **Serena is pinned to a commit** (1de556f). It used to run whatever
+    Serena's `main` branch held that day, and every build reports 2.0.0.dev0,
+    so no one could say which code had answered. A newer Serena now reaches
+    you only in a cs release, after it has been verified.
+  - **C# graph answers no longer say "calls inside C# property accessors are
+    not in the graph"** when the graph was last fully indexed by 7.15.0 or
+    later (tokensave records those calls since then), and a C# zero from
+    `cs callers` there is no longer `degraded` for that reason. On an older
+    graph the caveat stays, and the answer also says to run
+    `tokensave sync --force`. Kotlin answers keep the caveat: Kotlin accessors
+    still have no edges.
+
 ## 1.23.0 — 2026-10-09
 
 - **A Kotlin symbol in a Java-majority repo is looked up, and a build-output

@@ -1075,44 +1075,87 @@ else
 fi
 rm -rf "$notc"
 
-# ---- a graph with a known hole: C# / Kotlin property accessors ---------------
-# tokensave emits no edges out of property accessors, so a method called only
+# ---- a graph with a known hole: Kotlin property accessors ----------------------
+# tokensave emitted no edges out of property accessors, so a method called only
 # from a getter had no callers, and `cs callers` answered a clean structural
-# zero for it (#79). The zero must say where the hole is -- in the provenance
-# line and the envelope, which is what an agent reads -- and the advice for a
-# method must pair the graph with its text complement, which does find it.
-if command -v tokensave >/dev/null 2>&1; then
+# zero for it (#79). C# gained the edges in tokensave 7.15.0, the oldest cs
+# supports (#100): a C# getter's call is now an answer, and naming a gap that is
+# gone would send a reader to a text search for nothing. Kotlin still has it,
+# and its zero must say where the hole is -- in the provenance line and the
+# envelope, which is what an agent reads. The advice for a method pairs the
+# graph with its text complement, which does find it.
+if have_tokensave; then
   acc_fleet=$(mktemp -d)/fleet
-  mkdir -p "$acc_fleet/lims/Data"
+  mkdir -p "$acc_fleet/lims/Data" "$acc_fleet/kt/src"
   printf 'namespace Lims.Data { public class Patient { public static string[] GetAccessionList(int id) { return new string[0]; } } }\n' \
     > "$acc_fleet/lims/Data/Patient.cs"
   printf 'namespace Lims.Data {\npublic class PatientRelative {\n  public int RelatedId { get; set; }\n  public string[] AccessionList { get { return Patient.GetAccessionList(RelatedId); } }\n}\n}\n' \
     > "$acc_fleet/lims/Data/PatientRelative.cs"
-  (cd "$acc_fleet/lims" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i \
-     && tokensave init </dev/null >/dev/null 2>&1)
+  printf 'object Patient {\n    fun accessionList(id: Int): Int = id\n}\n' > "$acc_fleet/kt/src/Patient.kt"
+  printf 'class PatientRelative {\n    val accessions: Int\n        get() = Patient.accessionList(1)\n}\n' > "$acc_fleet/kt/src/PatientRelative.kt"
+  for r in lims kt; do
+    (cd "$acc_fleet/$r" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i \
+       && tokensave init </dev/null >/dev/null 2>&1)
+  done
   acc_shim=$(mktemp -d)
   printf '#!/bin/sh\nexit 127\n' > "$acc_shim/dotnet"; printf '#!/bin/sh\nexit 0\n' > "$acc_shim/uvx"; chmod +x "$acc_shim"/*
-  acc_out=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims 2>&1); acc_rc=$?
+  acc_cs=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims 2>&1); acc_cs_rc=$?
+  acc_out=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers accessionList kt 2>&1); acc_rc=$?
   acc_lsp=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims --engine=serena 2>&1)
-  acc_env=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims --porcelain 2>/dev/null)
+  acc_env=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers accessionList kt --porcelain 2>/dev/null)
   acc_ref=$(PATH="$acc_shim:$PATH" FLEET_ROOT="$acc_fleet" "$here/cs" refs GetAccessionList lims Data/Patient.cs 2>&1)
   acc_txt=$(FLEET_ROOT="$acc_fleet" "$here/cs" uses 'GetAccessionList' --word 2>/dev/null)
-  if [[ $acc_rc -eq 2 ]] && matches "$acc_out" 'answer:.*C# property accessors are not in the graph' \
+  if [[ $acc_cs_rc -eq 0 ]] && matches "$acc_cs" 'PatientRelative\.cs:4: .*AccessionList' \
+     && ! matches "$acc_cs" 'property accessors' \
+     && [[ $acc_rc -eq 2 ]] && matches "$acc_out" 'answer:.*Kotlin property accessors are not in the graph' \
      && matches "$acc_env" '"degraded":"[^"]*property accessors' \
      && matches "$acc_ref" "and: +cs uses 'GetAccessionList' --word" \
      && matches "$acc_txt" 'PatientRelative\.cs:4:' \
-     && matches "$acc_out" 'cs refs GetAccessionList lims Data/Patient\.cs ' \
      && matches "$acc_lsp" 'answer is: cs refs GetAccessionList lims Data/Patient\.cs$'; then
-    ok "a C# graph zero names the property-accessor hole, and the advice pairs it with the text search that fills it and a cs refs that runs as printed"
+    ok "a C# getter's call is a graph answer; a Kotlin graph zero names the property-accessor hole, and the advice pairs the graph with the text search and a cs refs that runs as printed"
     pass=$((pass + 1))
   else
-    err "the C# property-accessor gap was not disclosed (callers exit $acc_rc):"
-    printf '%s\n%s\n%s\n' "$acc_out" "$acc_ref" "$acc_lsp" | grep -E 'answer|and:|degraded|cs refs' | sed 's/^/    /' >&2
+    err "the property-accessor answers are wrong (C# callers exit $acc_cs_rc, Kotlin callers exit $acc_rc):"
+    printf '%s\n%s\n%s\n%s\n' "$acc_cs" "$acc_out" "$acc_ref" "$acc_lsp" | grep -E 'answer|and:|degraded|cs refs|PatientRelative|✗' | sed 's/^/    /' >&2
     fail=$((fail + 1)); failed_ids+=("graph-accessor-gap")
   fi
+  # A graph last fully indexed before 7.15.0 keeps the C# gap under 7.15.0:
+  # the edges are in the graph, and 7.15.0 does not re-index one built by
+  # 7.14.x (measured with the release binaries, #100). CI has no old binary,
+  # so the graph is made into one: the version tokensave reads from metadata,
+  # and the getter's edge a 7.14.1 graph does not have.
+  if command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 "$acc_fleet/lims/.tokensave/tokensave.db" \
+      "UPDATE metadata SET value = '7.14.1' WHERE key = 'last_full_index_version';
+       DELETE FROM edges WHERE kind = 'calls';"
+    # A graph with no C# lacks none of those edges, however old: it must not
+    # be flagged, or doctor asks for a re-index of every Kotlin/Java/Python repo.
+    sqlite3 "$acc_fleet/kt/.tokensave/tokensave.db" \
+      "UPDATE metadata SET value = '7.14.1' WHERE key = 'last_full_index_version';"
+    acc_kt_old=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers accessionList kt 2>&1)
+    acc_old=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims 2>&1)
+    acc_old_env=$(FLEET_ROOT="$acc_fleet" "$here/cs" callers GetAccessionList lims --porcelain 2>/dev/null)
+    acc_doc=$(FLEET_ROOT="$acc_fleet" "$here/cs" doctor 2>&1)
+    if matches "$acc_old" 'last fully indexed by tokensave 7\.14\.1, before 7\.15\.0.*tokensave sync --force' \
+       && matches "$acc_old" 'answer:.*C# property accessors are not in the graph' \
+       && matches "$acc_old_env" '"degraded":"[^"]*property accessors' \
+       && matches "$acc_doc" 'graphs +1 with C#, last fully indexed before tokensave 7\.15\.0: lims$' \
+       && ! matches "$acc_kt_old" 'last fully indexed'; then
+      ok "a C# graph last fully indexed before tokensave 7.15.0 keeps the accessor caveat, and cs doctor names it with sync --force; an old graph without C# is not flagged"
+      pass=$((pass + 1))
+    else
+      err "a pre-7.15.0 C# graph was answered without its caveat:"
+      printf '%s\n' "$acc_old" "$(printf '%s\n' "$acc_doc" | grep graphs)" "$acc_kt_old" | grep -E 'answer|indexed|graphs' | sed 's/^/    /' >&2
+      fail=$((fail + 1)); failed_ids+=("graph-predates-csharp-edges")
+    fi
+  else
+    skip "a pre-7.15.0 C# graph keeps its caveat" "no sqlite3 to mark the graph"
+  fi
   rm -rf "$acc_shim" "$(dirname "$acc_fleet")"
+elif command -v tokensave >/dev/null 2>&1; then
+  skip "the property-accessor answers" "tokensave $(tokensave_version) is older than the $(engine_minimum tokensave) cs supports"
 else
-  skip "the C# property-accessor caveat" "tokensave not installed"
+  skip "the property-accessor answers" "tokensave not installed"
 fi
 
 # ---- what a Kotlin graph answer says cs refs needs (#97) ----------------------

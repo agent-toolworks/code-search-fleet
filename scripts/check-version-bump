@@ -43,7 +43,9 @@ market=".claude-plugin/marketplace.json"
 # server from it — so a change to the server command it names is exactly the
 # "new artifact under an unchanged version string" failure this gate exists for.
 # hooks/ ships for the same reason: installing the plugin registers its hooks.
-SHIPPED_RE='^(scripts/|skills/|hooks/|\.mcp\.json|\.claude-plugin/marketplace\.json)'
+# fixtures/verified-versions.tsv ships because cs doctor and the release notes
+# read it as the versions a release was tested with (#100).
+SHIPPED_RE='^(scripts/|skills/|hooks/|\.mcp\.json|\.claude-plugin/marketplace\.json|fixtures/verified-versions\.tsv)'
 
 version_in() {  # <json text>
   sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<< "$1" | head -1
@@ -84,6 +86,29 @@ if [[ -f "$root/VERSION" ]]; then
   grep -q "^## $pv " "$root/CHANGELOG.md" 2>/dev/null \
     || die "CHANGELOG.md has no \"## $pv\" entry
   add what changed under \"## Unreleased\", then: scripts/set-version <version>"
+fi
+
+# 1c. The declared setup agrees with itself (#100). The release notes print the
+#     tested versions beside the minimums, so a tested version below its own
+#     minimum would publish a setup cs refuses; and the Serena commit cs runs
+#     must be the one the baseline tested, or "tested with" names other code.
+baseline="$root/fixtures/verified-versions.tsv"
+minimums="$root/scripts/lib/engine-minimums.tsv"
+if [[ -f "$baseline" && -f "$minimums" ]]; then
+  source "$root/scripts/lib/common.sh"
+  while IFS=$'\t' read -r e m _; do
+    [[ -z "$e" || "$e" == \#* ]] && continue
+    t=$(engine_tested "$e")
+    [[ -n "$t" && "$t" != "-" && "$t" != "?" ]] || continue
+    version_lt "$t" "$m" && die "fixtures/verified-versions.tsv tested $e $t, below its minimum $m in scripts/lib/engine-minimums.tsv
+  re-run scripts/verify-engines --update on a $m or newer, or lower the minimum with evidence"
+  done < "$minimums"
+  pin=$(sed -n 's/^SERENA_COMMIT = "\([0-9a-f]*\)".*/\1/p' "$root/scripts/lib/serena_call.py")
+  t=$(engine_tested serena)
+  if [[ -n "$t" && "$t" != "-" && "${t##*@}" != "${pin:0:7}" ]]; then
+    die "scripts/lib/serena_call.py pins Serena ${pin:0:7}, but fixtures/verified-versions.tsv tested $t
+  re-run scripts/verify-engines --update so the release states the code it runs"
+  fi
 fi
 
 # 2. If nothing a user receives changed, there is nothing to bump for.

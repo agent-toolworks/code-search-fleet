@@ -8,6 +8,12 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+- **CI installs tokensave** (#105), at exactly the version
+  `fixtures/verified-versions.tsv` records, and checks it against the
+  release's SHA256SUMS. Before, CI had no tokensave, so a green check
+  covered none of the graph paths (`cs callers` / `callees` / `impact` /
+  `fields`, the tokensave refusals and caveats). Nothing changes for users.
+
 ## 1.25.0 — 2026-10-10
 
 - **`cs callers` lists the calls tokensave saw but did not bind** (#107). A

@@ -2322,6 +2322,29 @@ graph_alternative() {  # <subcommand> <symbol> <repo> <repo-dir>
   esac
 }
 
+# Serena runs through uvx, so without uv no language server starts for any
+# language. This was one line -- "serena needs uv installed" -- with no fix and
+# no graph to turn to, where every other reason the server cannot run gets both.
+# Found by CI's first run with tokensave (#105): its runner has no uv.
+require_uv() {  # <subcommand> <symbol> <repo> <repo-dir>
+  have uvx && return 0
+  local sub="$1" sym="$2" repo="$3" dir="$4" graph_now="" graph_later
+  if have_tokensave && tokensave_graph_at "$dir"; then
+    graph_now="
+  answer now:  $(graph_alternative "$sub" "$sym" "$repo" "$dir")"
+    graph_later="the answer-now line above"
+  else
+    graph_later=$(graph_hint "$repo" "$dir")
+  fi
+  die "cs $sub needs a language server, and Serena runs through uv, which is not installed$graph_now
+  fix:        $(doc_install uv uv)   (cs runs its pinned Serena with uvx)
+  check:      cs doctor
+  without uv, a tokensave graph answers a narrower question: $graph_later
+  weaker but available now:
+    cs def $sym $repo      (structural: ctags, matches spelling not identity)
+    cs uses '$sym'         (heuristic: text, comments filtered — cs why heuristic)"
+}
+
 require_serena_toolchain() {
   local sub="$1" sym="$2" repo="$3" dir="$4" lang tc
   lang=$(symbol_language "$sym" "$dir") || lang=""
@@ -4777,7 +4800,7 @@ serena_answered_or_die() {  # <rc> <raw-file> <stderr-file> <subcommand> <symbol
 # labelling every answer with how it was obtained is the stated reason it
 # exists. So the three routes get three sentences, and the toolchain is resolved
 # HERE from the repo rather than passed in by a caller that may not know it.
-impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|forced|lsp-unresolved|lsp-not-started|lsp-off|build-copies>
+impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|forced|lsp-unresolved|lsp-not-started|lsp-off|build-copies|uv-missing>
   local sym="$1" repo="$2" dir="$3" reason="$4" out rc age tc lang note
   lang=$(symbol_language "$sym" "$dir") || lang=$(repo_language "$dir") || lang=""
   tc=""
@@ -4792,6 +4815,7 @@ impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|fo
     # never looked (#95). The answer line is the part an agent carries forward.
     lsp-off)        note="no $(lang_label "$lang") language server is enabled in the repo's Serena project" ;;
     build-copies)   note="the language server found the symbol only in build-output copies" ;;
+    uv-missing)     note="uv is not installed, so no language server (Serena runs through uvx)" ;;
     *) if [[ -n "$kt_want" ]]; then note="no JDK $kt_want for the build's jvmToolchain request here, so no language server"
        else note="no ${tc:-language toolchain} here, so no language server"; fi ;;
   esac
@@ -4869,7 +4893,11 @@ cmd_impls() {
       return $?
     fi
   fi
-  have uvx || die "serena needs uv installed"
+  if ! have uvx && have_tokensave && tokensave_graph_at "$repo_dir"; then
+    impls_via_tokensave "$1" "$2" "$repo_dir" uv-missing
+    return $?
+  fi
+  require_uv impls "$1" "$2" "$repo_dir"
   require_serena_toolchain impls "$1" "$2" "$repo_dir"
   serena_project_prepare "$repo_dir" "$2" "$1" "$file"
 
@@ -5952,10 +5980,10 @@ cmd_values() {
 
 cmd_refs() {
   [[ $# -ge 3 ]] || die "cs refs <symbol> <repo> <file-relative-to-repo>"
-  have uvx || die "serena needs uv installed"
   require_python3 refs "driving the language server and formatting its answer"
   local repo_dir="$view/$2"
   [[ -d "$repo_dir" ]] || die "no such repo: $2"
+  require_uv refs "$1" "$2" "$repo_dir"
   # Same rule as cs impls: an --engine cs refs cannot honour is rejected rather
   # than dropped. There is no alternative engine here -- a graph records no
   # references and cannot bridge a DI registration -- so anything but serena is

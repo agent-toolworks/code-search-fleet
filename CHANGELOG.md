@@ -8,6 +8,33 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.25.0 — 2026-10-10
+
+- **`cs refs` finds a namespace-qualified member** (#102).
+  `cs refs Acme.Inventory.Domain.IInventoryStore.ReserveAsync <repo> <file>`,
+  which is how a member reads in a stack trace, was split at every dot,
+  matched nothing and was refused. `IInventoryStore.ReserveAsync` worked. A
+  dotted name of three or more parts is now asked as its last two
+  (`IInventoryStore/ReserveAsync`), and cs says so. The file you pass already
+  names the namespace, and Serena matches the shorter name in C# and Java.
+  Pass names as you see them; you no longer need to strip the namespace.
+- **A session opened inside a clone of this repo lists one `cs` server, not
+  two** (#99). The clone's `.mcp.json` was also loaded as a project config,
+  where `${CLAUDE_PLUGIN_ROOT}` is unset, so a second `cs` failed with ENOENT
+  on every start beside the working `plugin:code-search:cs`. The clone's
+  `.claude/settings.json` now turns that copy off. The client's "Missing
+  environment variables: CLAUDE_PLUGIN_ROOT" diagnostic still prints and is
+  harmless; see `docs/mcp.md`.
+- **`scripts/build-fixtures --no-toolchain`** (#103) builds the fixture fleet
+  with its two JDK 21 toolchain requests replaced by a JVM-target pin,
+  committed on `main`. Use it to reproduce a Kotlin or Java language-server
+  question on a machine without JDK 21. `verify-engines`' Kotlin probe uses it.
+- **`verify-search` checks the `[in Property …]` label against a live
+  language server** (#104). The fixture's C# repo gains `StockLevel.cs`, with
+  a block getter, an expression-bodied property and a method all calling one
+  method. A Serena pin bump that changes the server's reply shapes now fails
+  the suite instead of relabelling getter calls as their class.
+
 ## 1.24.0 — 2026-10-10
 
 - **cs states the engine versions it was tested with, and the oldest it

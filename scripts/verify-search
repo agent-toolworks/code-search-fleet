@@ -243,6 +243,39 @@ else
     printf '%s\n%s\n%s\n' "$dot_out" "$nosym_env" "$nosym_err" | sed 's/^/    /' >&2
     fail=$((fail + 1)); failed_ids+=("lsp-tool-error-refused")
   fi
+
+  # A namespace-qualified name, as a stack trace prints it, was split at every
+  # dot and matched nothing (#102); it is asked as Type/Member and says so. The
+  # slash form, which the #83 rewrite also routes, must find the same call.
+  ns_out=$("$here/cs" refs Acme.Inventory.Domain.IInventoryStore.ReserveAsync inventory-api-dotnet src/Domain/IInventoryStore.cs 2>&1); ns_rc=$?
+  sl_out=$("$here/cs" refs IInventoryStore/ReserveAsync inventory-api-dotnet src/Domain/IInventoryStore.cs 2>/dev/null)
+  if [[ $ns_rc -eq 0 ]] && matches "$ns_out" 'ReservationController\.cs:27: .*_store\.ReserveAsync' \
+     && matches "$ns_out" "asking the language server for 'IInventoryStore/ReserveAsync'.*namespace is left out" \
+     && matches "$sl_out" 'ReservationController\.cs:27: .*_store\.ReserveAsync'; then
+    ok "cs refs finds a namespace-qualified member and a Type/Member one, and says which name it asked"
+    pass=$((pass + 1))
+  else
+    err "cs refs on a namespace-qualified or slash name (namespaced exit $ns_rc):"
+    printf '%s\n%s\n' "$ns_out" "$sl_out" | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("lsp-namespaced-name")
+  fi
+
+  # #81's property label, against the live server rather than recorded replies
+  # (#104): a Serena pin bump that changes its reply shapes must fail here,
+  # not quietly relabel every getter call as its class. A block getter and an
+  # expression-bodied property, with a method call as the control.
+  prop_out=$("$here/cs" refs StockMath.Clamp inventory-api-dotnet src/Domain/StockLevel.cs 2>/dev/null)
+  if matches "$prop_out" 'StockLevel\.cs:16: \[in Property StockLevel/OnHand\] ' \
+     && matches "$prop_out" 'StockLevel\.cs:19: \[in Property StockLevel/Display\] ' \
+     && matches "$prop_out" 'StockLevel\.cs:23: \[in Method StockLevel/Normalised\] ' \
+     && matches "$dot_out" '\[in Method ReservationController/Reserve\]'; then
+    ok "a live language server's reference inside a C# property is labelled with the property, a method's with the method"
+    pass=$((pass + 1))
+  else
+    err "cs refs labels against a live server:"
+    printf '%s\n' "$prop_out" | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("lsp-property-label-live")
+  fi
 fi
 
 # The same, on every machine: a server whose tool fails answers with a result
@@ -1157,6 +1190,35 @@ elif command -v tokensave >/dev/null 2>&1; then
 else
   skip "the property-accessor answers" "tokensave not installed"
 fi
+
+# ---- a fleet without toolchain requests (#103) --------------------------------
+# build-fixtures --no-toolchain is how a Kotlin or Java server question is
+# reproduced on a machine without JDK 21, and verify-engines' Kotlin probe is
+# built on it. The edit must be COMMITTED -- cs reads a fleet repo at its
+# committed main -- and cs must then see no toolchain request at all.
+nt_fleet=$(mktemp -d)/fleet
+if "$here/build-fixtures" "$nt_fleet" --no-toolchain >/dev/null 2>&1; then
+  nt_kt=$(git -C "$nt_fleet/checkout-service-kotlin" show HEAD:build.gradle.kts 2>/dev/null)
+  nt_java=$(git -C "$nt_fleet/pricing-lib-java" show HEAD:build.gradle.kts 2>/dev/null)
+  nt_dirty=$(git -C "$nt_fleet/checkout-service-kotlin" status --porcelain; git -C "$nt_fleet/pricing-lib-java" status --porcelain)
+  nt_doc=$(FLEET_ROOT="$nt_fleet" "$here/cs" doctor 2>&1)
+  if ! matches "$nt_kt" 'jvmToolchain' && matches "$nt_kt" 'JvmTarget\.JVM_21' \
+     && ! matches "$nt_java" 'JavaLanguageVersion' && matches "$nt_java" 'sourceCompatibility = JavaVersion\.VERSION_21' \
+     && [[ -z "$nt_dirty" ]] \
+     && matches "$nt_doc" 'Kotlin .*requests no Gradle toolchain'; then
+    ok "build-fixtures --no-toolchain commits a JVM-target pin in place of both JDK 21 requests, and cs sees no toolchain request"
+    pass=$((pass + 1))
+  else
+    err "build-fixtures --no-toolchain left a toolchain request, or did not commit its edit:"
+    printf '%s\n' "$nt_kt" "$nt_java" "$nt_dirty" "$(printf '%s\n' "$nt_doc" | grep Kotlin)" \
+      | grep -E 'Toolchain|toolchain|Compatibility|JvmTarget|Kotlin|^ ?M ' | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("fixtures-no-toolchain")
+  fi
+else
+  err "build-fixtures --no-toolchain failed"
+  fail=$((fail + 1)); failed_ids+=("fixtures-no-toolchain")
+fi
+rm -rf "$(dirname "$nt_fleet")"
 
 # ---- what a Kotlin graph answer says cs refs needs (#97) ----------------------
 # The warning read language_toolchain, whose Kotlin entry still said `java`, and

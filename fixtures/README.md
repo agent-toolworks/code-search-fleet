@@ -80,6 +80,12 @@ export TICKETS_ROOT=/tmp/fixture-tickets
 Each fixture is built as a bare origin plus a working clone, so fetch, reset,
 worktree, and branch operations behave like real repos.
 
+The Kotlin service and the Java library request a JDK 21 Gradle toolchain, so
+on a machine without JDK 21 cs refuses their language-server questions. To
+reproduce one there, build with `--no-toolchain`. It replaces both requests with
+a JVM-target pin and commits that on `main`, because cs reads a fleet repo's
+committed `main`, not its working tree.
+
 `GROUND-TRUTH.md` lists every planted relation and what a correct answer looks
 like. Read it *after* running a search, not before.
 

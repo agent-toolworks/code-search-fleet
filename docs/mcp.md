@@ -38,6 +38,19 @@ your clone. A manual registration that points at a clone picks up changes with
 (see [Updating](updating.md#updating)), so a clone's `cs` and the MCP surface can end up on
 different versions. If they behave differently, compare their versions first.
 
+**Working inside a clone of this repo.** A session opened in the clone reads
+the same `.mcp.json` a second time, as a *project* config, where
+`${CLAUDE_PLUGIN_ROOT}` is not set (#99). That copy is a second server named
+`cs` that cannot start: `claude mcp list` showed
+`cs: ${CLAUDE_PLUGIN_ROOT}/scripts/cs-mcp - ✘ Failed to connect — ENOENT`
+beside a working `plugin:code-search:cs`. It is not a plugin failure. The
+clone's `.claude/settings.json` turns that copy off with
+`"disabledMcpjsonServers": ["cs"]`, so since 1.25.0 only the plugin's server is
+listed. The client still prints a diagnostic,
+`[Warning] [cs] mcpServers.cs: Missing environment variables: CLAUDE_PLUGIN_ROOT`,
+which no setting silences. Ignore it. To try the clone's own server, register
+it by path: `claude mcp add cs-dev -- "$PWD/scripts/cs-mcp"`.
+
 This closes the reachability gap `cs-mcp` was built for: the surface `cs` is
 primarily reached through no longer depends on a human remembering a second,
 undocumented `claude mcp add` after install. A client that inlines schemas and

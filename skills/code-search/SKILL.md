@@ -94,6 +94,9 @@ MCP instructions name the running version. Details are in `docs/install.md`,
   to `.serena/project.yml`. cs now writes that file itself for a repo it sets
   up, and `cs impls` no longer answers from a `bin/` copy of the source,
   which gave a false `resolved · 0 hit(s)`.
+- `cs refs` takes a namespace-qualified member (`Ns.Type.Member`, as a stack
+  trace prints it) since 1.25.0. It is asked as `Type/Member`; before, it was
+  refused.
 - `cs refs` takes a member as `Type.Member` (asked as `Type/Member`) since
   1.20.0. Before, it hit a Serena error that was counted as one `resolved`
   hit, exit 0. A language-server error is now a refusal, so a `resolved` hit

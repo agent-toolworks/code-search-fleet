@@ -5959,10 +5959,22 @@ cmd_refs() {
   # how an agent writes it; Serena separates a type and its member with `/` and
   # matches no symbol for the dotted form (#83). Asked in Serena's spelling,
   # and said so, since the name that was looked up is not the one typed.
+  #
+  # A namespace-qualified name -- how a member reads in a stack trace -- is asked
+  # as its last two segments (#102). Splitting every dot asked for
+  # Acme/Inventory/Domain/IInventoryStore/ReserveAsync, which matches nothing:
+  # Serena keeps a C# namespace as ONE dotted segment, and a Java package as
+  # none. A relative name path matches as a suffix, and the file argument
+  # already says which namespace, so Type/Member finds it in both (measured).
   local name_path="$1"
   if [[ "$name_path" == *.* && "$name_path" != */* ]]; then
     name_path=$(printf '%s' "$name_path" | tr . /)
-    info "asking the language server for '$name_path' (Type/Member), the spelling it matches, for '$1'"
+    if [[ "$name_path" == */*/* ]]; then
+      name_path=$(printf '%s' "$name_path" | awk -F/ '{ print $(NF-1) "/" $NF }')
+      info "asking the language server for '$name_path' (Type/Member), the spelling it matches, for '$1' — the namespace is left out: $3 already names it"
+    else
+      info "asking the language server for '$name_path' (Type/Member), the spelling it matches, for '$1'"
+    fi
   fi
   local out raw err_file rc
   raw=$(cs_tmp cs-serena); err_file=$(cs_tmp cs-serena-err)

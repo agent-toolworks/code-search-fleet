@@ -251,19 +251,17 @@ probe_serena_java() {
 #
 # A Kotlin build that requests NO Gradle toolchain -- pinned only by
 # sourceCompatibility / jvmTarget -- imports on the Kotlin server's own runtime,
-# so cs lets it through without a JDK. The fixture's service is copied OUTSIDE
-# the fleet, so the sibling build it includes (and that build's toolchain) is
-# absent, and its jvmToolchain is swapped for a floor; JAVA_HOME is unset.
+# so cs lets it through without a JDK. The fleet is built with
+# `build-fixtures --no-toolchain` (#103), which commits that edit in both the
+# service and the Java build it includes; JAVA_HOME is unset.
 probe_serena_kotlin_floor() {
   have uvx || { record serena-kt "-" capability MISSING "uv not installed"; return; }
   local ver tmp out why
   ver=$(version_of serena)
   tmp=$(mktemp -d)
-  cp -R "$F/checkout-service-kotlin" "$tmp/svc" && rm -rf "$tmp/svc/.serena" "$tmp/svc/build"
-  printf 'rootProject.name = "svc"\n' > "$tmp/svc/settings.gradle.kts"
-  sed -i.bak 's/jvmToolchain(21)/compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21) }/' \
-    "$tmp/svc/build.gradle.kts" && rm -f "$tmp/svc/build.gradle.kts.bak"
-  out=$(env -u JAVA_HOME python3 "$here/lib/serena_call.py" "$tmp/svc" find_implementations \
+  "$here/build-fixtures" "$tmp/fleet" --no-toolchain >/dev/null 2>&1 || {
+    rm -rf "$tmp"; record serena-kt "${ver:-unknown}" capability FAIL "build-fixtures --no-toolchain failed — the probe cannot run"; return; }
+  out=$(env -u JAVA_HOME python3 "$here/lib/serena_call.py" "$tmp/fleet/checkout-service-kotlin" find_implementations \
         '{"name_path":"CheckoutResult","relative_path":"src/main/kotlin/com/acme/checkout/CheckoutService.kt"}' 2>"$tmp/err")
   why=$(sed -n 's/^serena: the language server did not start: //p' "$tmp/err" | head -1)
   rm -rf "$tmp"

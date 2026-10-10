@@ -1228,6 +1228,40 @@ if have_tokensave; then
     fail=$((fail + 1)); failed_ids+=("graph-unbound-callers")
   fi
   rm -rf "$(dirname "$ub_fleet")"
+
+  # tokensave's CLI cuts every reply at 15000 characters (#108), so a method
+  # with ~50 callers, or a name with ~70 nodes, was refused as "no parseable
+  # JSON". The lookup, callers, callees and impact read the graph instead; a
+  # reply cs still takes from the CLI (type_hierarchy here) fails naming the
+  # cut rather than parsing a short list. 250 classes, each implementing IStep
+  # and calling Sink.Save from a method named RunTheStep.
+  big_fleet=$(mktemp -d)/fleet
+  mkdir -p "$big_fleet/big/src"
+  printf 'namespace Acme.Big { public interface IStep { void RunTheStep(); } public static class Sink { public static void Save(int x) { } } }\n' \
+    > "$big_fleet/big/src/Sink.cs"
+  for i in $(seq -w 0 249); do
+    printf 'namespace Acme.Big { public class OrderWorkflowStepNumber%s : IStep { public void RunTheStep() { Sink.Save(%s); } } }\n' \
+      "$i" "$((10#$i))" > "$big_fleet/big/src/Step$i.cs"
+  done
+  (cd "$big_fleet/big" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i \
+     && tokensave init </dev/null >/dev/null 2>&1)
+  big_callers=$(FLEET_ROOT="$big_fleet" "$here/cs" callers Save big 2>&1); big_rc=$?
+  big_impact=$(FLEET_ROOT="$big_fleet" "$here/cs" impact Save big 2>&1)
+  big_names=$(FLEET_ROOT="$big_fleet" "$here/cs" callees RunTheStep big 2>&1)
+  big_impls=$(python3 "$here/lib/tokensave_call.py" impls "$big_fleet/big" big IStep 2>&1); big_impls_rc=$?
+  if [[ $big_rc -eq 0 ]] && matches "$big_callers" 'answer:.*a row per call site\) · 250 hit\(s\)' \
+     && matches "$big_impact" 'answer:.* · 250 hit\(s\)' \
+     && matches "$big_names" "'RunTheStep' is 251 nodes in this graph and ALL were asked \\(.*, and 241 more\\)" \
+     && matches "$big_names" 'answer:.* · 1 hit\(s\)' \
+     && [[ $big_impls_rc -eq 4 ]] && matches "$big_impls" 'cut the reply of .tokensave tool type_hierarchy. at 15,000 characters'; then
+    ok "a method with 250 callers and a name with 251 nodes are answered from the graph; a reply the CLI cut is refused, naming the cut"
+    pass=$((pass + 1))
+  else
+    err "a large graph answer was refused or cut (callers exit $big_rc, impls exit $big_impls_rc):"
+    printf '%s\n' "$big_callers" "$big_impact" "$big_names" "$big_impls" | grep -E 'answer|✗|tokensave|cut' | head -12 | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("graph-cli-cut")
+  fi
+  rm -rf "$(dirname "$big_fleet")"
 elif command -v tokensave >/dev/null 2>&1; then
   skip "the property-accessor answers" "tokensave $(tokensave_version) is older than the $(engine_minimum tokensave) cs supports"
 else

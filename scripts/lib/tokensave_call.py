@@ -81,13 +81,27 @@ CONTAINER_KINDS = ("class", "interface", "trait", "struct", "enum", "record",
 IMPACT_DEPTH = "3"
 
 
-def _run(args):
+# `tokensave tool <name>` cuts every reply at 15000 characters, mid-token, and
+# appends this marker (truncate_response, src/mcp/tools/handlers/mod.rs in
+# 7.15.0). Parsed as JSON the reply fails; parsed as text it is silently short.
+# So a cut reply is a failure that names its cause (#108). The questions that
+# hit it most -- the lookup, callers, callees, impact -- read the graph instead.
+CLI_CUT = "\n\n[... truncated at "
+
+
+def _run(args, allow_cut=False):
+    """(stdout, None) or (None, why). allow_cut: the caller handles a cut reply
+    itself -- cs fields retries smaller (_field_json)."""
     try:
         p = subprocess.run(args, capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.SubprocessError) as e:
         return None, f"tokensave could not be run: {e}"
     if p.returncode != 0:
         return None, (p.stderr or p.stdout or "").strip()[:300]
+    if CLI_CUT in p.stdout and not allow_cut:
+        return None, (f"its CLI cut the reply of `tokensave tool {args[2]}` at "
+                      f"15,000 characters, so the rest was never seen — the "
+                      f"answer is too large for the CLI, not empty")
     return p.stdout, None
 
 
@@ -116,12 +130,19 @@ def _search(project, symbol, limit):
 def _exact_nodes(project, symbol):
     """Every node whose name is EXACTLY the symbol, or None if nothing ran.
 
+    Read from the graph (#108): `find_exact_symbol` returns the same rows, but
+    a name with ~70 nodes (overrides, generated classes) overflows the CLI's
+    15000-character reply. The tools below are the fallback if that read fails.
+
     `find_exact_symbol` is an index probe with no ranking and a 200-row cap;
     `search` is BM25 with a default limit of TEN, so on a real repo the node you
     asked about can rank below ten near-misses and simply not be in the list --
     which would arrive here as "this symbol is not in the graph". The ranked
     search is kept only as the fallback for a tokensave without the exact tool.
     """
+    nodes = _sql("the symbol lookup", _sql_nodes, project, symbol)
+    if nodes is not None:
+        return nodes
     out, _ = _run(["tokensave", "tool", "find_exact_symbol", "--name", symbol,
                    "--project", project, "--limit", "200"])
     if out is not None:
@@ -163,8 +184,11 @@ def _seeds(project, symbol, mode):
             return None, 3
 
     if len(nodes) > 1:
+        # Named, but not all of them: a name can be hundreds of nodes (#108).
         where = ", ".join(f"{n.get('file', '?')}:{n.get('line', '?')}"
-                          for n in nodes)
+                          for n in nodes[:10])
+        if len(nodes) > 10:
+            where += f", and {len(nodes) - 10} more"
         print(f"tokensave: '{symbol}' is {len(nodes)} nodes in this graph and "
               f"ALL were asked ({where}) — the rows below are their union",
               file=sys.stderr)
@@ -173,6 +197,9 @@ def _seeds(project, symbol, mode):
 
 def _rows(project, node, mode):
     """The answer rows for one seed node, or None if the tool itself failed."""
+    rows = _sql(f"the {mode} query", _SQL_MODES[mode], project, node)
+    if rows is not None:
+        return rows
     args = ["tokensave", "tool", mode, "--node-id", node["id"],
             "--project", project]
     if mode == "impact":
@@ -194,6 +221,161 @@ def _rows(project, node, mode):
     if mode == "impact":
         return doc.get("nodes", []) if isinstance(doc, dict) else []
     return doc if isinstance(doc, list) else []
+
+
+# ---- reading the graph (#108) --------------------------------------------------
+# The lookup, callers, callees and impact read the graph's SQLite rather than
+# `tokensave tool`, whose replies are cut at 15000 characters: a caller row is
+# about 280, so any method with ~50 callers was refused. Each is a port of what
+# tokensave 7.15.0 does (src/graph/traversal.rs, src/tokensave/query.rs),
+# checked against the CLI on every node of the fixture fleet whose reply fits:
+# the same lookups, callees and impact, and the same callers but one thing.
+# The callers tool gives one row per caller, at its first call; here every call
+# site is a row, as with the unbound calls below. Line numbers are stored from
+# 0 and shown from 1, as the tools show them. If the read fails (a schema this
+# does not know), the CLI answers instead.
+
+# Start nodes whose callers include `instantiates` edges (edge_kinds_for).
+HIERARCHY_KINDS = ("module", "interface", "interface_type")
+# Reached by impact, these are walked through to their members (is_container_kind).
+WALK_INTO_KINDS = ("class", "struct", "trait", "interface", "module", "impl", "enum")
+
+
+def _sql(what, fn, project, arg):
+    """fn(connection, arg), or None -- said on stderr -- if the graph could not be read."""
+    import sqlite3
+    try:
+        con = _graph_db(project)
+        try:
+            return fn(con, arg)
+        finally:
+            con.close()
+    except sqlite3.Error as e:
+        print(f"tokensave: {what} could not read the graph ({e}); asking its CLI",
+              file=sys.stderr)
+        return None
+
+
+def _shown(stored):
+    return None if stored is None or stored < 0 else stored + 1
+
+
+def _sql_nodes(con, symbol):
+    return [{"id": i, "kind": k, "name": n, "file": f, "line": _shown(l)}
+            for i, k, n, f, l in con.execute(
+                "SELECT id, kind, name, file_path, start_line FROM nodes"
+                " WHERE name = ? ORDER BY file_path, start_line", (symbol,))]
+
+
+def _sql_callers(con, node):
+    """Direct callers of one node: every call site, plus callers through an
+    interface (trait_dispatch_callers), as the callers tool's rows."""
+    nid = node["id"]
+    kinds = ("calls", "instantiates") if node.get("kind") in HIERARCHY_KINDS else ("calls",)
+    rows = []
+    for cid, name, kind, file, line, edge in con.execute(
+            "SELECT s.id, s.name, s.kind, s.file_path, COALESCE(e.line, s.start_line), e.kind"
+            "  FROM edges e JOIN nodes s ON s.id = e.source"
+            " WHERE e.target = ? AND e.source != ? AND e.kind IN (%s)"
+            " ORDER BY s.file_path, 5" % ",".join("?" * len(kinds)), (nid, nid) + kinds):
+        rows.append({"id": cid, "name": name, "kind": kind, "file": file,
+                     "line": _shown(line), "edge_kind": edge, "dispatch_via_trait": False})
+    direct = {r["id"] for r in rows}
+    for cid, name, kind, file, line in con.execute(
+            "SELECT s.id, s.name, s.kind, s.file_path,"
+            "       CASE WHEN d.line >= 0 THEN d.line ELSE s.start_line END"
+            "  FROM trait_dispatch_callers d JOIN nodes s ON s.id = d.caller_id"
+            " WHERE d.concrete_method_id = ? AND d.caller_id != ? ORDER BY s.file_path, 5",
+            (nid, nid)):
+        if cid in direct:   # the tool marks a direct caller's row instead
+            for r in rows:
+                if r["id"] == cid:
+                    r["dispatch_via_trait"] = True
+            continue
+        rows.append({"id": cid, "name": name, "kind": kind, "file": file,
+                     "line": _shown(line), "edge_kind": "calls", "dispatch_via_trait": True})
+    return rows
+
+
+def _sql_callees(con, node):
+    """Direct callees of one node, at their definitions, plus the impl methods
+    behind a callee declared on a trait (get_trait_dispatch_targets)."""
+    nid = node["id"]
+    kinds = ("calls", "instantiates") if node.get("kind") in HIERARCHY_KINDS else ("calls",)
+    rows, seen = [], {nid}
+    callees = con.execute(
+        "SELECT t.id, t.name, t.kind, t.file_path, t.start_line, e.kind, t.parent_id"
+        "  FROM edges e JOIN nodes t ON t.id = e.target"
+        " WHERE e.source = ? AND e.kind IN (%s) ORDER BY e.rowid"
+        % ",".join("?" * len(kinds)), (nid,) + kinds).fetchall()
+    for tid, name, kind, file, line, edge, _ in callees:
+        if tid in seen:
+            continue
+        seen.add(tid)
+        rows.append({"id": tid, "name": name, "kind": kind, "file": file,
+                     "line": _shown(line), "edge_kind": edge, "dispatch_via_trait": False})
+    for tid, name, kind, file, line, edge, parent in callees:
+        if kind not in ("method", "function") or not parent:
+            continue
+        if con.execute("SELECT 1 FROM nodes WHERE id = ? AND kind = 'trait'",
+                       (parent,)).fetchone() is None:
+            continue
+        for iid, iname, ikind, ifile, iline in con.execute(
+                "SELECT c.id, c.name, c.kind, c.file_path, c.start_line"
+                "  FROM edges i JOIN nodes c ON c.parent_id = i.source"
+                " WHERE i.target = ? AND i.kind = 'implements'"
+                "   AND c.kind IN ('method', 'function') AND c.name = ?", (parent, name)):
+            if iid in seen:
+                continue
+            seen.add(iid)
+            rows.append({"id": iid, "name": iname, "kind": ikind, "file": ifile,
+                         "line": _shown(iline), "edge_kind": "calls", "dispatch_via_trait": True})
+    return rows
+
+
+def _sql_impact(con, node):
+    """What depends on one node, to IMPACT_DEPTH: tokensave's traverse_bfs over
+    incoming edges of every kind. A class or interface it reaches is walked
+    through to its members, which are queued but not themselves listed."""
+    from collections import deque
+    start = node["id"]
+    visited, out = {start}, []
+    queue = deque([(start, 0)])
+    while queue:
+        cur, depth = queue.popleft()
+        if depth >= int(IMPACT_DEPTH):
+            continue
+        # The order get_incoming_edges reads them (the target/kind index), with
+        # `calls` moved first, as traverse_bfs sorts them.
+        edges = con.execute("SELECT source FROM edges WHERE target = ?"
+                            " ORDER BY kind != 'calls', kind, rowid", (cur,)).fetchall()
+        fresh = [s for (s,) in edges if s not in visited]
+        if not fresh:
+            continue
+        found = {}
+        for i in range(0, len(fresh), 500):
+            chunk = fresh[i:i + 500]
+            for nid, name, kind, file, line in con.execute(
+                    "SELECT id, name, kind, file_path, start_line FROM nodes WHERE id IN (%s)"
+                    % ",".join("?" * len(chunk)), chunk):
+                found[nid] = {"id": nid, "name": name, "kind": kind, "file": file,
+                              "line": _shown(line)}
+        for (src,) in edges:
+            if src in visited or src not in found:
+                continue
+            visited.add(src)
+            if found[src]["kind"] in WALK_INTO_KINDS:
+                for (child,) in con.execute("SELECT id FROM nodes WHERE parent_id = ?"
+                                            " ORDER BY start_line", (src,)):
+                    if child not in visited:
+                        visited.add(child)
+                        queue.append((child, depth + 1))
+            out.append(found[src])
+            queue.append((src, depth + 1))
+    return out
+
+
+_SQL_MODES = {"callers": _sql_callers, "callees": _sql_callees, "impact": _sql_impact}
 
 
 # A call tokensave saw but could not bind to ONE node -- a method name two
@@ -312,7 +494,7 @@ def graph_edges(project, repo, symbol, mode):
 
 def defs(project, repo, symbol):
     """Where a symbol is DEFINED, as a cross-repo alternative to the ctags index."""
-    rows = _search(project, symbol, 100)
+    rows = _exact_nodes(project, symbol)
     if rows is None:
         return 4
     found = 0
@@ -369,7 +551,7 @@ def _writes_complete(doc):
 
 def _field_json(args):
     """(doc, None) | (None, "truncated") | (None, reason)."""
-    out, err = _run(args)
+    out, err = _run(args, allow_cut=True)
     if out is None:
         return None, err
     try:
@@ -394,7 +576,7 @@ def _field_doc(project, field):
     """
     base = ["tokensave", "tool", "field_sites", "--field", field,
             "--project", project]
-    out, err = _run(base)
+    out, err = _run(base, allow_cut=True)   # the head survives a cut; read below
     if out is None:
         return None, err, {}
     head = {}
@@ -620,7 +802,7 @@ def field_counts(project, repo, field):
     sites it could not type (a lower bound).
     """
     out, err = _run(["tokensave", "tool", "field_sites", "--field", field,
-                     "--project", project])
+                     "--project", project], allow_cut=True)   # counts are in the head
     if out is None:
         print(f"tokensave field_sites failed: {err}", file=sys.stderr)
         return 4

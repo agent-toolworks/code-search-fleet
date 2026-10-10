@@ -5085,7 +5085,7 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
 
   local extra gap_lang=""
   case "$mode" in
-    callers) extra="direct callers" ;;
+    callers) extra="direct callers, a row per call site" ;;
     callees) extra="direct callees" ;;
     impact)  extra="dependents, transitively, depth ≤ 3" ;;
   esac

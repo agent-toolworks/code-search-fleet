@@ -94,6 +94,12 @@ MCP instructions name the running version. Details are in `docs/install.md`,
   to `.serena/project.yml`. cs now writes that file itself for a repo it sets
   up, and `cs impls` no longer answers from a `bin/` copy of the source,
   which gave a false `resolved · 0 hit(s)`.
+- `cs callers` lists a row per call site (since 1.26.0), so a caller that
+  calls on three lines is three rows; before, it was one. A method with more
+  than about 50 callers was refused as *no parseable JSON* before 1.26.0, and
+  is now answered. A refusal saying tokensave's CLI *cut the reply … at
+  15,000 characters* means the answer is too large, not empty: narrow it,
+  or use `cs uses`.
 - A `cs callers` row marked `(unbound call: …)` (since 1.25.0) is a call
   tokensave saw but did not bind to one node, often a method name several
   types share. It is counted apart from the hits and may call another method

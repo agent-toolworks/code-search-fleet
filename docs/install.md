@@ -314,6 +314,14 @@ before 1.16. Update anything that says otherwise:
   user, or add the language yourself if they agree. `cs impls` no longer
   looks up a build-output copy (JDTLS's `bin/`), which answered
   `resolved · 0 hit(s)`. `cs doctor` lists the repos affected.
+- **`cs callers` / `callees` / `impact` answer for a method with many callers**
+  (1.26.0, #108). Before 1.26.0 a method with more than about 50 callers was
+  refused as *no parseable JSON*, because tokensave's CLI cuts every reply at
+  15,000 characters. cs now reads the graph directly. Callers are one row per
+  call site, so a caller that calls on three lines is three rows and counts
+  are higher than before. A refusal that says the CLI *cut the reply … at
+  15,000 characters* (`cs impls`' graph fallback) means the
+  answer is too large, not empty.
 - **`cs callers` lists unbound calls** (1.25.0, #107). A call tokensave saw
   but could not bind to one node is now listed after the edges, marked
   `(unbound call: …)`, and counted apart from the hits on the answer line.

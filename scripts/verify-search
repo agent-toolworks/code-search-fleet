@@ -1248,12 +1248,25 @@ if have_tokensave; then
   printf 'namespace Acme.Shop { public class Item {\n  public int Id { get; set; }\n  public int[] Prices { get { return Catalog.PriceList(Id); } }\n} }\n' > "$gs_fleet/cat/src/Item.cs"
   cp "$gs_fleet/shop/src/Processor.cs" "$gs_fleet/shop/src/Migrator.cs" "$gs_fleet/lib/src/"
   printf 'using Vendor.Data;\nnamespace Acme.Shop { public class Runner {\n  public void ViaLibrary() { Broker.Execute("select 1"); }\n} }\n' > "$gs_fleet/lib/src/Runner.cs"
-  for r in shop cat lib; do
+  # own: a call from inside the target's class. Bare in C# it can only mean the
+  # class's member, so it is plain; bare in Python it is the module function
+  # imported from helpers, which tokensave bound to the class's method anyway
+  # (code 2, same-file bonus), so it stays guessed.
+  mkdir -p "$gs_fleet/own/src"
+  printf 'namespace Acme.Shop {\npublic class Migrator {\n  public int Execute(string s) { return 1; }\n  public void Bare() { Execute("a"); }\n}\n}\n' > "$gs_fleet/own/src/Migrator.cs"
+  printf 'namespace Acme.Shop { public class Other { public int Execute(string s) { return 2; } } }\n' > "$gs_fleet/own/src/Other.cs"
+  printf 'namespace Acme.Shop { public class Third { public int Execute(string s) { return 3; } } }\n' > "$gs_fleet/own/src/Third.cs"
+  printf 'from helpers import execute\n\nclass Job:\n    def execute(self, x):\n        return x\n    def bare(self):\n        return execute(1)\n' > "$gs_fleet/own/src/job.py"
+  printf 'def execute(x):\n    return x\n' > "$gs_fleet/own/src/helpers.py"
+  printf 'class Other:\n    def execute(self, x):\n        return x\n' > "$gs_fleet/own/src/other.py"
+  for r in shop cat lib own; do
     (cd "$gs_fleet/$r" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i \
        && tokensave init </dev/null >/dev/null 2>&1)
   done
   gs_cat=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers PriceList cat --porcelain 2>/dev/null)
   gs_lib=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute lib --porcelain 2>/dev/null)
+  gs_own_cs=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute own --porcelain 2>/dev/null)
+  gs_own_py=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers execute own --porcelain 2>/dev/null)
   gs_out=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute shop 2>&1); gs_rc=$?
   gs_env=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute shop --porcelain 2>/dev/null)
   gs_imp=$(FLEET_ROOT="$gs_fleet" "$here/cs" impact Execute shop 2>&1)
@@ -1266,12 +1279,14 @@ if have_tokensave; then
      && matches "$gs_imp" 'Runner\.cs:4: .*ViaRepo \(depends on Execute\)$' \
      && matches "$gs_cat" '"hits":1,.*"degraded":null' && matches "$gs_cat" 'Prices \(calls\)"' \
      && matches "$gs_lib" '"hits":0,.*"degraded":"a callers zero with 1 unbound or guessed row' \
-     && matches "$gs_lib" 'ViaLibrary \(calls, guessed: '; then
-    ok "an edge tokensave bound by name only is marked as guessed and counted apart, and a zero of guessed rows is degraded; a typed call, or one naming the target's own class, is a plain hit"
+     && matches "$gs_lib" 'ViaLibrary \(calls, guessed: ' \
+     && matches "$gs_own_cs" '"hits":1,.*"degraded":null' && matches "$gs_own_cs" 'Bare \(calls\)"' \
+     && matches "$gs_own_py" '"hits":0,' && matches "$gs_own_py" 'bare \(calls, guessed: '; then
+    ok "an edge tokensave bound by name only is marked as guessed and counted apart, and a zero of guessed rows is degraded; a typed call, one naming the target's own class, or a bare C# call inside it is a plain hit; a bare Python call is not"
     pass=$((pass + 1))
   else
     err "a guessed edge was listed as a plain caller, or a typed one was marked (callers exit $gs_rc):"
-    printf '%s\n' "$gs_out" "$gs_imp" "$gs_cat" "$gs_lib" | grep -E 'Runner|answer|"hits"' | cut -c1-300 | sed 's/^/    /' >&2
+    printf '%s\n' "$gs_out" "$gs_imp" "$gs_cat" "$gs_lib" "$gs_own_cs" "$gs_own_py" | grep -E 'Runner|answer|"hits"' | cut -c1-300 | sed 's/^/    /' >&2
     fail=$((fail + 1)); failed_ids+=("graph-guessed-edges")
   fi
   rm -rf "$(dirname "$gs_fleet")"

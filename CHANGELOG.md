@@ -27,7 +27,11 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
     codes tokensave's own `is_exact()` accepts, and a name match the call
     settles. When the call as written names the target's own type
     (`Catalog.PriceList` bound to `Catalog::PriceList`), the name picked the
-    only method that call can reach.
+    only method that call can reach. The same holds for a call from inside
+    the target's own class, written `this.X` or `self.X`, or bare in C#, Java
+    or Kotlin. A bare call in Python or TypeScript stays guessed: there it
+    can be a module function. tokensave bound an imported `execute()` to the
+    class's own `execute`. A `base.X` / `super.X` call stays guessed.
   - **A zero is not clean:** when every row is guessed or unbound, the hit
     count is 0 and the answer is `degraded` (*a callers zero with N unbound
     or guessed row(s) listed is not 'nothing calls it'*), not a clean zero.

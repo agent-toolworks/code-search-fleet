@@ -274,17 +274,36 @@ def _guess(code):
 NAME_MATCH_RESOLVED_BY = {2, 4, 5, 13}
 
 
+#
+# Also settled: a call from inside the class that owns the target, as
+# `this.X` / `self.X`, or bare where a bare name means the enclosing class's
+# member first (C#, Java, Kotlin). Not in Python or TypeScript: there a bare
+# `execute()` is a module function, and tokensave 7.15.0 bound one imported
+# from another file to the class's own `execute` by its same-file bonus
+# (measured). Never `base.X` / `super.X`, which skip the class's own member.
+IMPLICIT_THIS_EXTENSIONS = (".cs", ".java", ".kt", ".kts")
+
+
 def _settled(con, code, source, target, line):
     if code not in NAME_MATCH_RESOLVED_BY or line is None:
         return False
-    row = con.execute("SELECT t.name, p.name FROM nodes t JOIN nodes p ON p.id = t.parent_id"
-                      " WHERE t.id = ?", (target,)).fetchone()
+    row = con.execute("SELECT t.name, t.parent_id, p.name FROM nodes t"
+                      " LEFT JOIN nodes p ON p.id = t.parent_id WHERE t.id = ?",
+                      (target,)).fetchone()
     if not row:
         return False
-    name, owner = row
+    name, owner_id, owner = row
+    caller = con.execute("SELECT parent_id, file_path FROM nodes WHERE id = ?",
+                         (source,)).fetchone()
+    same_owner = bool(owner_id) and caller is not None and caller[0] == owner_id
     for (ref,) in con.execute("SELECT reference_name FROM unresolved_refs WHERE from_node_id = ?"
                               " AND line = ? AND reference_kind = 'calls'", (source, line)):
         ref = " ".join(ref.split())
+        if same_owner and (ref in (f"this.{name}", f"self.{name}") or
+                           (ref == name and (caller[1] or "").endswith(IMPLICIT_THIS_EXTENSIONS))):
+            return True
+        if owner is None:
+            continue
         for sep in ("::", "."):
             if ref.endswith(sep + name):
                 qualifier = ref[:-len(sep + name)]

@@ -8,6 +8,39 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.27.0 — 2026-10-10
+
+- **`cs callers` / `callees` / `impact` mark an edge tokensave guessed**
+  (#111). tokensave records how it bound each call (`edges.resolved_by`).
+  Some codes are guesses by name, not by type: a trailing name as the only
+  candidate (4), or the best of several by score (2, 5, 13), and a few more.
+  A library's `Broker.Execute` bound to the repo's only public `Execute` was
+  listed as a plain caller. On a real C# repo, 669 of one method's 675
+  callers were such edges.
+  - **What you see now:** these rows are listed but marked `(calls,
+    guessed: simple-name-match-scored, resolved_by=5 — …)`, with one warning,
+    and counted apart from the hits (`N guessed by name, listed apart from
+    the hits`).
+  - **`cs impact`:** a node reached only through a guessed edge is marked
+    `only through a guessed edge`.
+  - **What stays plain:** edges with no code (written by the extractor), the
+    codes tokensave's own `is_exact()` accepts, and a name match the call
+    settles. When the call as written names the target's own type
+    (`Catalog.PriceList` bound to `Catalog::PriceList`), the name picked the
+    only method that call can reach. The same holds for a call from inside
+    the target's own class, written `this.X` or `self.X`, or bare in C#, Java
+    or Kotlin. A bare call in Python or TypeScript stays guessed: there it
+    can be a module function. tokensave bound an imported `execute()` to the
+    class's own `execute`. A `base.X` / `super.X` call stays guessed.
+  - **A zero is not clean:** when every row is guessed or unbound, the hit
+    count is 0 and the answer is `degraded` (*a callers zero with N unbound
+    or guessed row(s) listed is not 'nothing calls it'*), not a clean zero.
+    This also covers 1.25.0's unbound-only case.
+  - **Hit counts can drop:** in tokensave 7.15.0, most calls from inside a C#
+    property getter are bound by name (codes 4 and 5), unlike most calls
+    inside methods. Unless the call names the target's own class, those
+    callers are now marked instead of counted.
+
 ## 1.26.0 — 2026-10-10
 
 - **`cs callers`, `callees` and `impact` answer for a method with many callers**

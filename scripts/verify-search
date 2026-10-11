@@ -1218,7 +1218,7 @@ if have_tokensave; then
      && matches "$ub_out" 'answer:.*1 unbound call site\(s\) listed apart from the hits\) · 1 hit\(s\)' \
      && matches "$ub_env" '"hits":1,' \
      && matches "$ub_imp" "answer:.*not walked from 1 unbound call site\\(s\\) to 'ForDisplay'" \
-     && matches "$ub_ctl" 'Item\.cs:4: \[csharp_property\] Shown \(calls\)$' \
+     && matches "$ub_ctl" 'Item\.cs:4: \[csharp_property\] Shown \(calls(, guessed: [^)]*)?\)$' \
      && ! matches "$ub_ctl" 'unbound'; then
     ok "a call tokensave left unbound (a getter calling a name two classes share) is listed and marked, apart from the edges; a bound call is not listed twice"
     pass=$((pass + 1))
@@ -1228,6 +1228,68 @@ if have_tokensave; then
     fail=$((fail + 1)); failed_ids+=("graph-unbound-callers")
   fi
   rm -rf "$(dirname "$ub_fleet")"
+
+  # An edge tokensave bound by name only is a guess (#111): its resolved_by
+  # says so. Measured: a library's `Broker.Execute` (no node for Broker) bound
+  # to the repo's one public Execute, scored above an internal one (code 5).
+  # It is listed, marked and counted apart; the typed call (no code) is not.
+  gs_fleet=$(mktemp -d)/fleet
+  mkdir -p "$gs_fleet/shop/src"
+  printf 'namespace Acme.Shop { public class Processor { public void Execute(string s) { } } }\n' > "$gs_fleet/shop/src/Processor.cs"
+  printf 'namespace Acme.Shop { public class Migrator { internal void Execute(int n) { } } }\n' > "$gs_fleet/shop/src/Migrator.cs"
+  printf 'using Vendor.Data;\nnamespace Acme.Shop { public class Runner {\n  public void ViaLibrary() { Broker.Execute("select 1"); }\n  public void ViaRepo(Processor p) { p.Execute("x"); }\n} }\n' \
+    > "$gs_fleet/shop/src/Runner.cs"
+  # cat: a name-only edge the call settles -- `Catalog.PriceList` names the
+  # target's own class -- is a plain hit (#112 review). lib: the only caller is
+  # a library call bound by name, so the count is 0 and must not read as a
+  # clean zero.
+  mkdir -p "$gs_fleet/cat/src" "$gs_fleet/lib/src"
+  printf 'namespace Acme.Shop { public static class Catalog { public static int[] PriceList(int id) { return new int[0]; } } }\n' > "$gs_fleet/cat/src/Catalog.cs"
+  printf 'namespace Acme.Shop { public class Item {\n  public int Id { get; set; }\n  public int[] Prices { get { return Catalog.PriceList(Id); } }\n} }\n' > "$gs_fleet/cat/src/Item.cs"
+  cp "$gs_fleet/shop/src/Processor.cs" "$gs_fleet/shop/src/Migrator.cs" "$gs_fleet/lib/src/"
+  printf 'using Vendor.Data;\nnamespace Acme.Shop { public class Runner {\n  public void ViaLibrary() { Broker.Execute("select 1"); }\n} }\n' > "$gs_fleet/lib/src/Runner.cs"
+  # own: a call from inside the target's class. Bare in C# it can only mean the
+  # class's member, so it is plain; bare in Python it is the module function
+  # imported from helpers, which tokensave bound to the class's method anyway
+  # (code 2, same-file bonus), so it stays guessed.
+  mkdir -p "$gs_fleet/own/src"
+  printf 'namespace Acme.Shop {\npublic class Migrator {\n  public int Execute(string s) { return 1; }\n  public void Bare() { Execute("a"); }\n}\n}\n' > "$gs_fleet/own/src/Migrator.cs"
+  printf 'namespace Acme.Shop { public class Other { public int Execute(string s) { return 2; } } }\n' > "$gs_fleet/own/src/Other.cs"
+  printf 'namespace Acme.Shop { public class Third { public int Execute(string s) { return 3; } } }\n' > "$gs_fleet/own/src/Third.cs"
+  printf 'from helpers import execute\n\nclass Job:\n    def execute(self, x):\n        return x\n    def bare(self):\n        return execute(1)\n' > "$gs_fleet/own/src/job.py"
+  printf 'def execute(x):\n    return x\n' > "$gs_fleet/own/src/helpers.py"
+  printf 'class Other:\n    def execute(self, x):\n        return x\n' > "$gs_fleet/own/src/other.py"
+  for r in shop cat lib own; do
+    (cd "$gs_fleet/$r" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i \
+       && tokensave init </dev/null >/dev/null 2>&1)
+  done
+  gs_cat=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers PriceList cat --porcelain 2>/dev/null)
+  gs_lib=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute lib --porcelain 2>/dev/null)
+  gs_own_cs=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute own --porcelain 2>/dev/null)
+  gs_own_py=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers execute own --porcelain 2>/dev/null)
+  gs_out=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute shop 2>&1); gs_rc=$?
+  gs_env=$(FLEET_ROOT="$gs_fleet" "$here/cs" callers Execute shop --porcelain 2>/dev/null)
+  gs_imp=$(FLEET_ROOT="$gs_fleet" "$here/cs" impact Execute shop 2>&1)
+  if [[ $gs_rc -eq 0 ]] \
+     && matches "$gs_out" 'Runner\.cs:3: \[method\] ViaLibrary \(calls, guessed: simple-name-match-scored, resolved_by=5' \
+     && matches "$gs_out" 'Runner\.cs:4: \[method\] ViaRepo \(calls\)$' \
+     && matches "$gs_out" 'answer:.*1 guessed by name, listed apart from the hits\) · 1 hit\(s\)' \
+     && matches "$gs_env" '"hits":1,' \
+     && matches "$gs_imp" 'Runner\.cs:3: .*ViaLibrary \(depends on Execute, only through a guessed edge\)' \
+     && matches "$gs_imp" 'Runner\.cs:4: .*ViaRepo \(depends on Execute\)$' \
+     && matches "$gs_cat" '"hits":1,.*"degraded":null' && matches "$gs_cat" 'Prices \(calls\)"' \
+     && matches "$gs_lib" '"hits":0,.*"degraded":"a callers zero with 1 unbound or guessed row' \
+     && matches "$gs_lib" 'ViaLibrary \(calls, guessed: ' \
+     && matches "$gs_own_cs" '"hits":1,.*"degraded":null' && matches "$gs_own_cs" 'Bare \(calls\)"' \
+     && matches "$gs_own_py" '"hits":0,' && matches "$gs_own_py" 'bare \(calls, guessed: '; then
+    ok "an edge tokensave bound by name only is marked as guessed and counted apart, and a zero of guessed rows is degraded; a typed call, one naming the target's own class, or a bare C# call inside it is a plain hit; a bare Python call is not"
+    pass=$((pass + 1))
+  else
+    err "a guessed edge was listed as a plain caller, or a typed one was marked (callers exit $gs_rc):"
+    printf '%s\n' "$gs_out" "$gs_imp" "$gs_cat" "$gs_lib" "$gs_own_cs" "$gs_own_py" | grep -E 'Runner|answer|"hits"' | cut -c1-300 | sed 's/^/    /' >&2
+    fail=$((fail + 1)); failed_ids+=("graph-guessed-edges")
+  fi
+  rm -rf "$(dirname "$gs_fleet")"
 
   # tokensave's CLI cuts every reply at 15000 characters (#108), so a method
   # with ~50 callers, or a name with ~70 nodes, was refused as "no parseable

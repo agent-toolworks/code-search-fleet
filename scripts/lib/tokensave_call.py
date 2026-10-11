@@ -241,6 +241,85 @@ HIERARCHY_KINDS = ("module", "interface", "interface_type")
 WALK_INTO_KINDS = ("class", "struct", "trait", "interface", "module", "impl", "enum")
 
 
+# How tokensave bound an edge, from `edges.resolved_by` (#111): the ResolvedBy
+# codes in 7.15.0's src/types.rs. Exact per its own is_exact(): 1 exact-match,
+# 3 qualified-match, 6 go-selector-import, 8/9 ruby receivers, 10 gdscript typed
+# receiver, 12 path-tail-match, 14 relative-import. The rest pick a target by
+# name when a same-named node elsewhere could be the real one -- a library's
+# `Broker.Execute` bound to the repo's only public `Execute`, say. NULL is an
+# edge the extractor emitted itself, not a resolver guess. A code this list does
+# not know is not assumed exact.
+EXACT_RESOLVED_BY = {1, 3, 6, 8, 9, 10, 12, 14}
+GUESSED_RESOLVED_BY = {2: "exact-match-scored", 4: "simple-name-match",
+                       5: "simple-name-match-scored", 7: "same-file-blocklist",
+                       11: "build-variant", 13: "path-tail-match-scored"}
+GUESS_MARK = ", guessed: "
+GUESS_ONLY_MARK = ", only through a guessed edge"
+
+
+def _guess(code):
+    """None for an exact or extractor-emitted edge, else the resolver's name for the guess."""
+    if code is None or code in EXACT_RESOLVED_BY:
+        return None
+    name = GUESSED_RESOLVED_BY.get(code, f"code {code}, unknown to cs")
+    return f"{name}, resolved_by={code}"
+
+
+# A name-match guess the call itself settles (#112 review): tokensave also
+# keeps the call as written in unresolved_refs, at the edge's caller and line.
+# When its qualifier is the target's own type -- `Catalog.PriceList` bound to
+# Catalog::PriceList -- the name picked the only node that call can reach.
+# `Broker.Execute` bound to Processor::Execute stays a guess. Only for the
+# name-match codes; a build-variant copy (11) is a different question.
+NAME_MATCH_RESOLVED_BY = {2, 4, 5, 13}
+
+
+#
+# Also settled: a call from inside the class that owns the target, as
+# `this.X` / `self.X`, or bare where a bare name means the enclosing class's
+# member first (C#, Java, Kotlin). Not in Python or TypeScript: there a bare
+# `execute()` is a module function, and tokensave 7.15.0 bound one imported
+# from another file to the class's own `execute` by its same-file bonus
+# (measured). Never `base.X` / `super.X`, which skip the class's own member.
+IMPLICIT_THIS_EXTENSIONS = (".cs", ".java", ".kt", ".kts")
+
+
+def _settled(con, code, source, target, line):
+    if code not in NAME_MATCH_RESOLVED_BY or line is None:
+        return False
+    row = con.execute("SELECT t.name, t.parent_id, p.name FROM nodes t"
+                      " LEFT JOIN nodes p ON p.id = t.parent_id WHERE t.id = ?",
+                      (target,)).fetchone()
+    if not row:
+        return False
+    name, owner_id, owner = row
+    caller = con.execute("SELECT parent_id, file_path FROM nodes WHERE id = ?",
+                         (source,)).fetchone()
+    same_owner = bool(owner_id) and caller is not None and caller[0] == owner_id
+    for (ref,) in con.execute("SELECT reference_name FROM unresolved_refs WHERE from_node_id = ?"
+                              " AND line = ? AND reference_kind = 'calls'", (source, line)):
+        ref = " ".join(ref.split())
+        if same_owner and (ref in (f"this.{name}", f"self.{name}") or
+                           (ref == name and (caller[1] or "").endswith(IMPLICIT_THIS_EXTENSIONS))):
+            return True
+        if owner is None:
+            continue
+        for sep in ("::", "."):
+            if ref.endswith(sep + name):
+                qualifier = ref[:-len(sep + name)]
+                if re.split(r"::|\.", qualifier)[-1] == owner:
+                    return True
+    return False
+
+
+def _edge_guess(con, code, source, target, line):
+    """_guess(code), unless the call as written names the target's own type."""
+    g = _guess(code)
+    if g is not None and _settled(con, code, source, target, line):
+        return None
+    return g
+
+
 def _sql(what, fn, project, arg):
     """fn(connection, arg), or None -- said on stderr -- if the graph could not be read."""
     import sqlite3
@@ -273,13 +352,15 @@ def _sql_callers(con, node):
     nid = node["id"]
     kinds = ("calls", "instantiates") if node.get("kind") in HIERARCHY_KINDS else ("calls",)
     rows = []
-    for cid, name, kind, file, line, edge in con.execute(
-            "SELECT s.id, s.name, s.kind, s.file_path, COALESCE(e.line, s.start_line), e.kind"
+    for cid, name, kind, file, line, edge, how, at in con.execute(
+            "SELECT s.id, s.name, s.kind, s.file_path, COALESCE(e.line, s.start_line), e.kind,"
+            "       e.resolved_by, e.line"
             "  FROM edges e JOIN nodes s ON s.id = e.source"
             " WHERE e.target = ? AND e.source != ? AND e.kind IN (%s)"
             " ORDER BY s.file_path, 5" % ",".join("?" * len(kinds)), (nid, nid) + kinds):
         rows.append({"id": cid, "name": name, "kind": kind, "file": file,
-                     "line": _shown(line), "edge_kind": edge, "dispatch_via_trait": False})
+                     "line": _shown(line), "edge_kind": edge, "dispatch_via_trait": False,
+                     "guess": _edge_guess(con, how, cid, nid, at)})
     direct = {r["id"] for r in rows}
     for cid, name, kind, file, line in con.execute(
             "SELECT s.id, s.name, s.kind, s.file_path,"
@@ -304,17 +385,27 @@ def _sql_callees(con, node):
     kinds = ("calls", "instantiates") if node.get("kind") in HIERARCHY_KINDS else ("calls",)
     rows, seen = [], {nid}
     callees = con.execute(
-        "SELECT t.id, t.name, t.kind, t.file_path, t.start_line, e.kind, t.parent_id"
+        "SELECT t.id, t.name, t.kind, t.file_path, t.start_line, e.kind, t.parent_id,"
+        "       e.resolved_by, e.line"
         "  FROM edges e JOIN nodes t ON t.id = e.target"
         " WHERE e.source = ? AND e.kind IN (%s) ORDER BY e.rowid"
         % ",".join("?" * len(kinds)), (nid,) + kinds).fetchall()
-    for tid, name, kind, file, line, edge, _ in callees:
+    # One row per callee, as the tool gives: a guess only if no call to it was exact.
+    by_id = {}
+    for tid, name, kind, file, line, edge, _, how, at in callees:
+        guess = _edge_guess(con, how, nid, tid, at)
+        if tid in by_id:
+            if guess is None:
+                by_id[tid]["guess"] = None
+            continue
         if tid in seen:
             continue
         seen.add(tid)
-        rows.append({"id": tid, "name": name, "kind": kind, "file": file,
-                     "line": _shown(line), "edge_kind": edge, "dispatch_via_trait": False})
-    for tid, name, kind, file, line, edge, parent in callees:
+        by_id[tid] = {"id": tid, "name": name, "kind": kind, "file": file,
+                      "line": _shown(line), "edge_kind": edge, "dispatch_via_trait": False,
+                      "guess": guess}
+        rows.append(by_id[tid])
+    for tid, name, kind, file, line, edge, parent, _, _ in callees:
         if kind not in ("method", "function") or not parent:
             continue
         if con.execute("SELECT 1 FROM nodes WHERE id = ? AND kind = 'trait'",
@@ -334,9 +425,19 @@ def _sql_callees(con, node):
 
 
 def _sql_impact(con, node):
-    """What depends on one node, to IMPACT_DEPTH: tokensave's traverse_bfs over
-    incoming edges of every kind. A class or interface it reaches is walked
-    through to its members, which are queued but not themselves listed."""
+    """What depends on one node, to IMPACT_DEPTH, each marked `guess` when only
+    a walk through a guessed edge reaches it within that depth (#111)."""
+    rows = _impact_walk(con, node, exact_only=False)
+    sure = {r["id"] for r in _impact_walk(con, node, exact_only=True)}
+    for r in rows:
+        r["guess"] = None if r["id"] in sure else "via a guessed edge"
+    return rows
+
+
+def _impact_walk(con, node, exact_only):
+    """tokensave's traverse_bfs over incoming edges of every kind. A class or
+    interface it reaches is walked through to its members, which are queued but
+    not themselves listed. exact_only: skip edges the resolver guessed."""
     from collections import deque
     start = node["id"]
     visited, out = {start}, []
@@ -347,8 +448,10 @@ def _sql_impact(con, node):
             continue
         # The order get_incoming_edges reads them (the target/kind index), with
         # `calls` moved first, as traverse_bfs sorts them.
-        edges = con.execute("SELECT source FROM edges WHERE target = ?"
-                            " ORDER BY kind != 'calls', kind, rowid", (cur,)).fetchall()
+        edges = [(src,) for src, how, at in con.execute(
+            "SELECT source, resolved_by, line FROM edges WHERE target = ?"
+            " ORDER BY kind != 'calls', kind, rowid", (cur,))
+            if not (exact_only and _edge_guess(con, how, src, cur, at) is not None)]
         fresh = [s for (s,) in edges if s not in visited]
         if not fresh:
             continue
@@ -443,7 +546,7 @@ def graph_edges(project, repo, symbol, mode):
     if nodes is None:
         return rc
 
-    seen, no_location = set(), 0
+    seen, no_location = {}, 0   # row text -> its guess mark, in order
     seed_ids = {n["id"] for n in nodes}
     for node in nodes:
         rows = _rows(project, node, mode)
@@ -459,8 +562,11 @@ def graph_edges(project, repo, symbol, mode):
             if not r.get("file"):
                 no_location += 1
                 continue
+            mark = None
             if mode == "impact":
                 edge = f"depends on {symbol}"
+                if r.get("guess"):
+                    mark = GUESS_ONLY_MARK
             else:
                 edge = r.get("edge_kind") or "calls"
                 # The graph resolved this through an interface rather than
@@ -468,11 +574,18 @@ def graph_edges(project, repo, symbol, mode):
                 # it is the one place a graph edge is an inference.
                 if r.get("dispatch_via_trait"):
                     edge += ", via the interface"
-            line = (f"{repo}/{r['file']}:{r.get('line', '?')}: "
-                    f"[{r.get('kind', '?')}] {r.get('name', '?')} ({edge})")
-            if line not in seen:
-                seen.add(line)
-                print(line)
+                # Bound by name, not by type: it may reach another of that name.
+                if r.get("guess"):
+                    mark = f"{GUESS_MARK}{r['guess']} — tokensave bound it by name only"
+            row = (f"{repo}/{r['file']}:{r.get('line', '?')}: "
+                   f"[{r.get('kind', '?')}] {r.get('name', '?')} ({edge}")
+            # Several seeds can reach one row: marked only if every route was a guess.
+            if row not in seen:
+                seen[row] = mark
+            elif mark is None:
+                seen[row] = None
+    for row, mark in seen.items():
+        print(f"{row}{mark or ''})")
 
     if no_location:
         # Named rather than dropped: a row cs cannot place is a row cs cannot

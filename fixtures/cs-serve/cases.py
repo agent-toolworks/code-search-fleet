@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -90,6 +91,20 @@ try:
     # NOT realpath'd: on macOS a temp dir is /var/..., which is /private/var/...
     # -- the page must still open on this workspace when its root is a symlink.
     rws = os.path.realpath(ws)
+    tk_repo = os.path.join(ws, "pricing-lib-java")
+    # The Fleet tab's commit link is built from the remote, and its symbol count
+    # from the repo's tokensave graph: a GitHub-shaped remote, and a minimal
+    # graph whose nodes are 2 definitions and 2 non-definitions (file, import).
+    subprocess.run(["git", "-C", tk_repo, "remote", "set-url", "origin",
+                    "git@github.com:acme/pricing-lib-java.git"], check=True)
+    os.makedirs(os.path.join(tk_repo, ".tokensave"))
+    con = sqlite3.connect(os.path.join(tk_repo, ".tokensave", "tokensave.db"))
+    con.execute("CREATE TABLE nodes (id INTEGER PRIMARY KEY, kind TEXT, name TEXT)")
+    con.executemany("INSERT INTO nodes (kind, name) VALUES (?, ?)",
+                    [("class", "DiscountEngine"), ("method", "apply"),
+                     ("file", "DiscountEngine.java"), ("use", "java.util.List")])
+    con.commit()
+    con.close()
     same = lambda p: bool(p) and os.path.realpath(p) == rws
     inside = os.path.join(ws, "pricing-lib-java", "src")
 
@@ -167,6 +182,38 @@ try:
     s, _, r = req(port, "GET", "/api/repos?scope=" + ws, token)
     case("repo-names-for-scope", isinstance(r, dict) and "pricing-lib-java" in (r.get("repos") or {}),
          "got %r" % r)
+
+    for path in ("/api/fleet?scope=fleet", "/api/repos?scope=fleet"):
+        s, _, _ = req(port, "GET", path)
+        case("needs-token " + path.split("?")[0], s == 403, "answered %d without the token" % s)
+
+    # ---- the Search tab: one box, literal, narrowed to a repo ----------------
+    r = call(port, token, "cs_text", {"pattern": "DiscountEngine(", "literal": True,
+                                      "in_repo": "pricing-lib-java", "scope": ws})
+    env = r.get("envelope") or {}
+    hits = env.get("results") or []
+    case("search-box-literal-in-repo", hits and all(h["repo"] == "pricing-lib-java" for h in hits)
+         and "narrowed by --repo=" in (env.get("view") or "") and env.get("note") == "literal",
+         "got %r" % {k: env.get(k) for k in ("view", "note", "hits", "refused", "reason")})
+
+    # ---- the Fleet tab -----------------------------------------------------
+    s, _, fl = req(port, "GET", "/api/fleet?scope=" + ws, token)
+    rows = {r["name"]: r for r in (fl.get("repos") or [])} if isinstance(fl, dict) else {}
+    want = set(req(port, "GET", "/api/repos?scope=" + ws, token)[2].get("repos") or {})
+    case("fleet-lists-every-repo", set(rows) == want and want, "fleet %r vs repos %r" % (sorted(rows), sorted(want)))
+    pl = rows.get("pricing-lib-java", {})
+    git_sha = subprocess.run(["git", "-C", tk_repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    git_files = len(subprocess.run(["git", "-C", tk_repo, "ls-files"], capture_output=True, text=True).stdout.split())
+    case("fleet-row-facts", pl.get("layer") == "ticket" and pl.get("commit") == git_sha
+         and pl.get("files") == git_files and pl.get("branch") and pl.get("synced"),
+         "got %r (sha %s, %d files)" % (pl, git_sha, git_files))
+    case("fleet-commit-link", pl.get("commit_url") == "https://github.com/acme/pricing-lib-java/commit/" + git_sha,
+         "got %r" % pl.get("commit_url"))
+    case("fleet-symbols-are-definitions", pl.get("symbols") == 2 and pl.get("graph_built"),
+         "symbols %r (want 2: file and import nodes are not symbols)" % pl.get("symbols"))
+    others = [r for n, r in rows.items() if n != "pricing-lib-java"]
+    case("fleet-no-graph-is-none", others and all(r.get("symbols") is None or r.get("graph_built") for r in others),
+         "a repo without a graph reported symbols: %r" % [r for r in others if r.get("symbols") is not None and not r.get("graph_built")])
 
     # Started outside every workspace, it opens on the fleet -- and says so.
     proc2, port2, token2 = start(FLEET, tickets)

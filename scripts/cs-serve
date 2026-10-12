@@ -33,6 +33,7 @@ Usage: cs serve [--port N] [--no-open]
 Stdlib only, like cs-mcp: nothing to install beyond the python3 cs needs.
 """
 
+import concurrent.futures
 import hmac
 import importlib.machinery
 import importlib.util
@@ -40,6 +41,7 @@ import json
 import os
 import re
 import secrets
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -141,6 +143,98 @@ def repo_paths(scope):
     return repos
 
 
+# ---- the Fleet tab ---------------------------------------------------------
+# Facts ABOUT each repo, read from git and from the repo's tokensave graph --
+# not answers about the code, so nothing here competes with a cs verb.
+
+# Node kinds that are not definitions: the file itself, its package line, its
+# imports, and an annotation's use site. Counted out so that "symbols" means
+# what a reader assumes it means -- classes, methods, fields and the like.
+NOT_SYMBOLS = ("file", "package", "use", "import", "annotation_usage", "module")
+
+
+def web_url(origin):
+    """https://host/owner/repo for a git remote, or None when it is not one."""
+    u = (origin or "").strip()
+    if not u:
+        return None
+    u = re.sub(r"\.git/?$", "", u.rstrip("/"))
+    m = re.match(r"^[\w.+-]+://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+)$", u)  # https://, ssh://
+    if not m:
+        m = re.match(r"^(?:[^@/]+@)?([^/:]+):(?!\d)(.+)$", u)  # git@host:owner/repo
+    if not m:
+        return None
+    return "https://%s/%s" % (m.group(1), m.group(2))
+
+
+def last_synced(path, git):
+    """(unix time, how) of the last fetch, or of the clone when never fetched."""
+    rel = git("rev-parse", "--git-path", "FETCH_HEAD")
+    if rel:
+        fh = rel if os.path.isabs(rel) else os.path.join(path, rel)
+        if os.path.exists(fh):
+            return int(os.path.getmtime(fh)), "fetched"
+    rel = git("rev-parse", "--git-path", "logs/HEAD")
+    if rel:
+        try:
+            with open(rel if os.path.isabs(rel) else os.path.join(path, rel)) as f:
+                first = f.readline()
+            m = re.search(r"> (\d+) [+-]\d{4}\t(clone|branch)", first)
+            if m:
+                return int(m.group(1)), "cloned"
+        except OSError:
+            pass
+    return None, None
+
+
+def repo_facts(name, info):
+    path = info["path"]
+
+    def git(*args):
+        try:
+            p = subprocess.run(["git", "-C", path] + list(args), capture_output=True,
+                               text=True, timeout=60, stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            return ""
+        return p.stdout.strip() if p.returncode == 0 else ""
+
+    out = {"name": name, "layer": info["layer"], "path": path}
+    head = git("log", "-1", "--format=%H%x1f%s%x1f%ct%x1f%an")
+    if head:
+        sha, subject, ct, author = (head.split("\x1f") + ["", "", "", ""])[:4]
+        out.update(commit=sha, subject=subject, committed=int(ct or 0), author=author)
+    out["branch"] = git("rev-parse", "--abbrev-ref", "HEAD")
+    web = web_url(git("config", "--get", "remote.origin.url"))
+    if web:
+        out["web"] = web
+        if out.get("commit"):
+            out["commit_url"] = web + "/commit/" + out["commit"]
+    out["synced"], out["synced_how"] = last_synced(path, git)
+    files = git("ls-files", "-z")
+    out["files"] = files.count("\0") if files else 0
+    db = os.path.join(path, ".tokensave", "tokensave.db")
+    if os.path.isfile(db):
+        try:
+            # Plain connect + query_only: mode=ro fails on a cleanly closed WAL
+            # graph, which has no -shm file.
+            con = sqlite3.connect(db, timeout=5)
+            con.execute("PRAGMA query_only = 1")
+            q = "SELECT count(*) FROM nodes WHERE kind NOT IN (%s)" % ",".join("?" * len(NOT_SYMBOLS))
+            out["symbols"] = con.execute(q, NOT_SYMBOLS).fetchone()[0]
+            con.close()
+        except sqlite3.Error as e:
+            out["graph_error"] = str(e)
+        out["graph_built"] = int(os.path.getmtime(db))
+    return out
+
+
+def fleet(scope):
+    repos = repo_paths(scope)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        rows = list(pool.map(lambda kv: repo_facts(*kv), sorted(repos.items())))
+    return {"repos": rows, "now": int(time.time())}
+
+
 def meta(start_cwd):
     scopes, scopes_note = list_scopes()
     tools = [mcp.tool_schema(t) for t in mcp.TOOLS]
@@ -229,6 +323,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 self.send(200, {"repos": repo_paths((q.get("scope") or ["fleet"])[0])})
+            except mcp.ToolError as e:
+                self.send(200, {"error": str(e)})
+            return
+        if url.path == "/api/fleet":
+            if not self.allowed(self.headers.get("X-CS-Token", "")):
+                return
+            try:
+                self.send(200, fleet((q.get("scope") or ["fleet"])[0]))
             except mcp.ToolError as e:
                 self.send(200, {"error": str(e)})
             return

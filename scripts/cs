@@ -111,6 +111,12 @@
 #   --full-lines     print each hit line whole. By default a line's text is cut
 #                    to CS_MAX_LINE bytes (400) around the match, and the cut is
 #                    named: one generated SVG line can be 62 KB.
+#   --literal        cs text only: match the pattern as a literal string, not a
+#                    regex (seam and uses are literal already)
+#   --repo=<name>    cs text / cs uses only: search this one repo of the view.
+#                    Narrowed BEFORE the result cap, so the hits are that
+#                    repo's, not the fleet's first 200 filtered down. The
+#                    `searching:` line names the narrowing.
 #   --word, -w       match whole identifiers only, not substrings of longer
 #                    ones. Off by default: it would drop `reserve` inside
 #                    `reserveItem`, a real use. cs reports the distinction
@@ -1055,6 +1061,25 @@ build_view() {
   # folder can hold a workspace, and only the path says which one this was.
   layer_note="$ticket_root ($n_ticket repo(s), your branch) + fleet ($n_fleet repo(s), main)"
   CS_VIEW="$layer_note"; CS_SCOPE="$ticket_root"
+}
+
+# --repo=: replace the view with one holding only that repo, resolved through
+# the view as built -- so in a layered view it is the workspace's copy when the
+# workspace has one, exactly as an unnarrowed search would have read it.
+narrow_view() {
+  local name="$1" target n_tmp
+  case "$name" in */*|.|..) die "--repo= takes a repo name, not a path: $name" ;; esac
+  [[ -e "$view/$name" ]] && is_repo "$view/$name" || die "no such repo in this view: $name
+  cs repos   lists the repos being searched"
+  if [[ -L "$view/$name" ]]; then target=$(readlink "$view/$name"); else target="$view/$name"; fi
+  n_tmp=$(mktemp -d)
+  ln -s "$target" "$n_tmp/$name"
+  [[ -n "$view_tmp" && -d "$view_tmp" ]] && rm -rf "$view_tmp"
+  view_tmp="$n_tmp"; view="$n_tmp"
+  local which="fleet, main"
+  [[ -n "$ticket_root" && "$target" == "$ticket_root"/* ]] && which="your branch"
+  layer_note="$name only ($which) — narrowed by --repo= from: ${layer_note:-$CS_VIEW}"
+  CS_VIEW="$layer_note"
 }
 
 announce_view() {
@@ -3922,8 +3947,10 @@ $1"; else CS_HINTS="$1"; fi
 
 cmd_text() {
   [[ $# -ge 1 ]] || die "cs text <pattern>"
-  answer textual "$(text_engine)" "regex"
-  local out; out=$(grep_fleet regex "$1" | normalize)
+  local mode=regex
+  [[ $literal_text -eq 1 ]] && mode=literal
+  answer textual "$(text_engine)" "$mode"
+  local out; out=$(grep_fleet "$mode" "$1" | normalize)
   # Before --source-only, deliberately: the map is what keeps a dashboard .json
   # from being dropped by it.
   build_obs_map "$out"
@@ -6329,6 +6356,14 @@ construct_field=""
 # refresh and every graph sync for everyone, and is never revisited.
 suggest_clone=0
 suggest_clone_all=0
+# cs text only: match literally. The verb is a regex search, which is right for
+# a caller who writes regex and a refusal ("the regex does not compile") for one
+# who pastes `foo(` -- the local web page's search box is the second kind.
+literal_text=0
+# cs text / cs uses only: one repo of the view. On every other verb a repo is a
+# positional argument already, or the question is fleet-shaped (seam asks which
+# repos share a string), so it is refused there rather than ignored.
+only_repo=""
 # Env as well as a flag: a caller wrapping cs in a script it does not control
 # can set CS_JSON=1 once rather than threading a flag through every call site.
 case "${CS_JSON:-0}" in 1|true|yes) porcelain=1 ;; esac
@@ -6354,6 +6389,9 @@ for a in "$@"; do
     --full-lines) CS_MAX_LINE=0 ;;
     --count) count_mode=1 ;;
     --field=*) construct_field="${a#--field=}" ;;
+    --literal) literal_text=1 ;;
+    --repo=*) only_repo="${a#--repo=}"
+              [[ -n "$only_repo" ]] || die "--repo= needs a repo name: cs repos lists them" ;;
     --suggest-clone) suggest_clone=1 ;;
     --suggest-clone=code) suggest_clone=1 ;;
     --suggest-clone=all) suggest_clone=1; suggest_clone_all=1 ;;
@@ -6377,6 +6415,18 @@ case "${args[0]:-}" in
   fields|text|seam|uses) ;;
   *) [[ $count_mode -eq 1 ]] && { printf 'cs: --count is not meaningful for cs %s\n  it answers on: fields (write/read site tallies), text, seam, uses (per-repo hit tallies)\n  every other subcommand returns a structured answer, not a per-repo count\n' "${args[0]:-<no subcommand>}" >&2; exit 1; } ;;
 esac
+case "${args[0]:-}" in
+  text) ;;
+  *) [[ $literal_text -eq 1 ]] && die "--literal is not meaningful for cs ${args[0]:-<no subcommand>}
+  it answers on: text (which is otherwise a regex search); seam and uses are literal already" ;;
+esac
+case "${args[0]:-}" in
+  text|uses) ;;
+  *) [[ -n "$only_repo" ]] && die "--repo= is not meaningful for cs ${args[0]:-<no subcommand>}
+  it answers on: text, uses
+  def, calls, constructs, values and the graph verbs take the repo as an argument;
+  seam asks which repos share a string, so it searches them all" ;;
+esac
 [[ $source_only -eq 1 ]] && CS_EXCLUSION_NOTE="${CS_EXCLUSION_NOTE:+$CS_EXCLUSION_NOTE, }--source-only (data/doc extensions)"
 
 # --engine names a text backend as well as a structural one; the text side is
@@ -6399,6 +6449,7 @@ case "$sub" in
   *) require_fleet ;;
 esac
 build_view
+[[ -n "$only_repo" ]] && narrow_view "$only_repo"
 case "$sub" in engines|doctor|changes|which|why|repos|scopes|-h|--help|help) ;; *) announce_view ;; esac
 case "$sub" in
   text)    cmd_text "$@" ;;

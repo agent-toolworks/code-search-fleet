@@ -7,7 +7,7 @@
 <style>
   :root {
     --bg: #fbfbfa; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e4e3df;
-    --accent: #2b59c3; --accent-ink: #ffffff; --code-bg: #f4f4f1;
+    --accent: #2b59c3; --accent-ink: #ffffff; --code-bg: #f4f4f1; --mark: #fff0a8;
     --bad: #b42318; --bad-bg: #fdecea; --warn: #8a5a00; --warn-bg: #fff4dc;
     --good: #18794e; --good-bg: #e6f4ec; --neutral-bg: #eef0f4;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -15,7 +15,7 @@
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #161615; --panel: #1f1f1d; --ink: #ecebe6; --muted: #9d9c95; --line: #33332f;
-      --accent: #7aa2f7; --accent-ink: #10131a; --code-bg: #262624;
+      --accent: #7aa2f7; --accent-ink: #10131a; --code-bg: #262624; --mark: #5a4a10;
       --bad: #ff8a80; --bad-bg: #3a1d1b; --warn: #f5c26b; --warn-bg: #362b14;
       --good: #6fd3a0; --good-bg: #16301f; --neutral-bg: #2a2c31;
     }
@@ -23,21 +23,39 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
          font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
-           padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  [hidden] { display: none !important; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
+           padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
            position: sticky; top: 0; z-index: 2; }
   header h1 { font-size: 15px; margin: 0; font-weight: 650; }
   header .version { color: var(--muted); font-size: 12px; }
-  header label { color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+  header label { color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; min-width: 0; }
   header .spacer { flex: 1; }
-  select, input[type=text] { font: inherit; color: var(--ink); background: var(--panel);
+  .tabs { display: flex; gap: 2px; background: var(--neutral-bg); border-radius: 8px; padding: 2px; }
+  .tabs button { border: none; background: none; padding: 4px 14px; border-radius: 6px; font-weight: 600; color: var(--muted); }
+  .tabs button[aria-selected=true] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  select, input[type=text], input[type=search] { font: inherit; color: var(--ink); background: var(--panel);
            border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0; }
-  #scope { max-width: 46ch; }
+  #scope { max-width: 42ch; }
   button { font: inherit; border-radius: 6px; padding: 5px 12px; cursor: pointer;
            border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
   button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
-  button.link { border: none; background: none; color: var(--accent); padding: 0; }
-  main { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: calc(100vh - 52px); }
+  button.link { border: none; background: none; color: var(--accent); padding: 0; text-align: left; }
+  .page { padding: 18px 24px 48px; max-width: 1400px; margin: 0 auto; }
+  .muted { color: var(--muted); }
+
+  /* search */
+  .searchbar { display: flex; gap: 8px; flex-wrap: wrap; }
+  .searchbar input[type=search] { flex: 1 1 360px; font-family: var(--mono); font-size: 15px; padding: 9px 12px; border-radius: 8px; }
+  .searchbar select { padding: 8px; border-radius: 8px; max-width: 30ch; }
+  .searchbar button.primary { padding: 8px 18px; border-radius: 8px; }
+  .options { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 8px 0 4px; font-size: 13px; }
+  .options label { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+  h3.section { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 6px; font-weight: 600; }
+  .note { font-size: 13px; color: var(--muted); margin: 4px 0; }
+
+  /* questions */
+  .questions { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: calc(100vh - 50px); }
   nav { border-right: 1px solid var(--line); padding: 12px 8px; overflow-y: auto; }
   nav h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
            margin: 14px 8px 4px; font-weight: 600; }
@@ -46,9 +64,9 @@
                padding: 4px 8px; border-radius: 5px; font-family: var(--mono); font-size: 13px; }
   nav button:hover { background: var(--neutral-bg); }
   nav button[aria-current=true] { background: var(--accent); color: var(--accent-ink); }
-  section#work { padding: 16px 24px 48px; min-width: 0; }
+  #work { padding: 16px 24px 48px; min-width: 0; }
   .desc { color: var(--muted); max-width: 80ch; margin: 2px 0 12px; }
-  form { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: flex-end; margin-bottom: 8px; }
+  form.q { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: flex-end; margin-bottom: 8px; }
   .field { display: flex; flex-direction: column; gap: 3px; }
   .field.grow { flex: 1 1 320px; }
   .field > span { font-size: 12px; color: var(--muted); }
@@ -56,10 +74,12 @@
   .field input[type=text] { font-family: var(--mono); }
   .check { display: flex; gap: 6px; align-items: center; font-size: 13px; }
   .actions { display: flex; gap: 8px; }
-  #status { color: var(--muted); font-size: 13px; min-height: 20px; margin: 6px 0 10px; }
+  .status { color: var(--muted); font-size: 13px; min-height: 20px; margin: 6px 0 8px; }
+
+  /* answers */
   .prov { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-bottom: 8px; word-break: break-all; }
   .answer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
-  .chip { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 600; }
+  .chip { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
   .chip.strong { background: var(--good-bg); color: var(--good); }
   .chip.weak { background: var(--warn-bg); color: var(--warn); }
   .chip.other { background: var(--neutral-bg); color: var(--ink); }
@@ -88,26 +108,50 @@
   .hit a:hover { text-decoration: underline; }
   .hit .text { white-space: pre-wrap; word-break: break-word; }
   .hit button { font-size: 11px; padding: 0 6px; color: var(--muted); }
+  mark { background: var(--mark); color: inherit; border-radius: 2px; }
   ul.warnings { margin: 0; padding-left: 18px; }
   .hints li { font-family: var(--mono); font-size: 12.5px; }
-  kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+
+  /* fleet */
+  .fleetbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .fleetbar input { flex: 0 1 320px; }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; cursor: pointer; user-select: none; background: var(--panel); }
+  th[aria-sort=ascending]::after { content: " ▲"; }
+  th[aria-sort=descending]::after { content: " ▼"; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.commit { white-space: normal; min-width: 280px; }
+  td.commit .sha { font-family: var(--mono); font-size: 12px; margin-right: 6px; }
+  td.commit a { color: var(--accent); text-decoration: none; }
+  td .repo-name { font-weight: 600; font-family: var(--mono); font-size: 13px; }
+  .stale { color: var(--warn); font-weight: 600; }
+
   @media (max-width: 760px) {
-    main { grid-template-columns: 1fr; }
+    .page { padding: 12px 16px 40px; }
+    .questions { grid-template-columns: 1fr; }
     nav { border-right: none; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 4px; }
     nav h2 { width: 100%; margin: 6px 4px 0; }
     nav button { width: auto; }
-    section#work { padding: 12px 16px 40px; }
+    #work { padding: 12px 16px 40px; }
     .hit { grid-template-columns: 1fr; gap: 0; }
-    #scope { max-width: 100%; }
+    #scope, .searchbar select { max-width: 100%; }
   }
 </style>
 </head>
 <body>
 <header>
   <h1>cs</h1><span class="version" id="version"></span>
-  <label>scope <select id="scope" aria-label="Scope"></select></label>
+  <div class="tabs" role="tablist">
+    <button role="tab" data-tab="search" aria-selected="true">Search</button>
+    <button role="tab" data-tab="fleet" aria-selected="false">Fleet</button>
+    <button role="tab" data-tab="questions" aria-selected="false">Questions</button>
+  </div>
   <span class="spacer"></span>
-  <label>open hits in
+  <label>scope <select id="scope" aria-label="Scope"></select></label>
+  <label>open in
     <select id="editor" aria-label="Editor">
       <option value="vscode://file/{path}:{line}">VS Code</option>
       <option value="cursor://file/{path}:{line}">Cursor</option>
@@ -115,19 +159,46 @@
       <option value="">nothing (copy only)</option>
     </select>
   </label>
-  <button id="doctor" type="button">Doctor</button>
 </header>
-<main>
+
+<section id="tab-search" class="page" role="tabpanel">
+  <form id="sform" class="searchbar" autocomplete="off">
+    <input type="search" id="q" placeholder="Search the code: a name, a string, a route, a config key…" aria-label="Search">
+    <select id="srepo" aria-label="Repository"><option value="">All repos</option></select>
+    <button class="primary" type="submit">Search</button>
+  </form>
+  <div class="options">
+    <label><input type="checkbox" id="o-regex"> regex</label>
+    <label title="match whole identifiers only, not substrings of longer ones"><input type="checkbox" id="o-word"> whole word</label>
+    <label title="skip data, doc and generated files (.json .csv .md .lock …)"><input type="checkbox" id="o-src"> skip data &amp; docs</label>
+  </div>
+  <div class="status" id="sstatus" role="status"></div>
+  <div id="sout"></div>
+</section>
+
+<section id="tab-fleet" class="page" role="tabpanel" hidden>
+  <div class="fleetbar">
+    <input type="search" id="ffilter" placeholder="Filter repos…" aria-label="Filter repos">
+    <span class="muted" id="fcount"></span>
+    <span class="spacer" style="flex:1"></span>
+    <button type="button" id="frefresh">Refresh</button>
+  </div>
+  <div class="status" id="fstatus" role="status"></div>
+  <div class="tablewrap"><table id="ftable"></table></div>
+</section>
+
+<div id="tab-questions" class="questions" role="tabpanel" hidden>
   <nav id="nav" aria-label="Questions"></nav>
   <section id="work">
     <h2 id="title" style="margin:0;font-family:var(--mono);font-size:18px"></h2>
     <p class="desc" id="desc"></p>
-    <form id="form" autocomplete="off"></form>
-    <div id="status" role="status"></div>
-    <div id="out"></div>
-    <datalist id="repo-names"></datalist>
+    <form id="qform" class="q" autocomplete="off"></form>
+    <div class="status" id="qstatus" role="status"></div>
+    <div id="qout"></div>
   </section>
-</main>
+</div>
+<datalist id="repo-names"></datalist>
+
 <script>
 "use strict";
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
@@ -144,8 +215,10 @@ const GROUPS = [
 // What a NEGATIVE of each kind is worth -- the MCP instructions' rule: a
 // resolved no is strong, a textual no is weak. The rest: read `cs why`.
 const STRENGTH = { resolved: "strong", textual: "weak", heuristic: "weak" };
+const STALE_DAYS = 7;
 
-let META = null, TOOLS = {}, current = null, inflight = null;
+let TOOLS = {}, REPOS = {}, current = null, inflight = null, tab = "search";
+let FLEET = null, fleetSort = { key: "name", dir: 1 };
 const $ = (id) => document.getElementById(id);
 
 function el(tag, attrs, ...kids) {
@@ -160,8 +233,17 @@ function el(tag, attrs, ...kids) {
     n.append(c instanceof Node ? c : document.createTextNode(String(c)));
   return n;
 }
-
 function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+function ago(ts, now) {
+  if (!ts) return "";
+  const s = Math.max(0, (now || Date.now() / 1000) - ts);
+  if (s < 90) return "just now";
+  if (s < 5400) return Math.round(s / 60) + "m ago";
+  if (s < 129600) return Math.round(s / 3600) + "h ago";
+  if (s < 86400 * 60) return Math.round(s / 86400) + "d ago";
+  return Math.round(s / (86400 * 30)) + "mo ago";
+}
+const when = (ts) => ts ? new Date(ts * 1000).toLocaleString() : "";
 
 async function api(path, body, signal) {
   const opts = { headers: { "X-CS-Token": TOKEN }, signal };
@@ -171,135 +253,152 @@ async function api(path, body, signal) {
   if (!r.ok && !j.error) j.error = "HTTP " + r.status;
   return j;
 }
+const scope = () => $("scope").value;
 
-// ---- navigation and forms ------------------------------------------------
-function buildNav() {
-  const nav = $("nav"), seen = new Set();
-  const groups = GROUPS.map(([g, names]) => [g, names.filter((n) => TOOLS[n])]);
-  const other = Object.keys(TOOLS).filter((n) => !GROUPS.some(([, ns]) => ns.includes(n)));
-  if (other.length) groups.push(["Other", other]);
-  for (const [g, names] of groups) {
-    if (!names.length) continue;
-    nav.append(el("h2", {}, g));
-    for (const n of names) {
-      seen.add(n);
-      nav.append(el("button", { type: "button", "data-tool": n, title: TOOLS[n].description,
-        onclick: () => selectTool(n, {}, false) }, n.replace(/^cs_/, "")));
-    }
-  }
+// ---- tabs and the URL ----------------------------------------------------
+// Everything lives in the fragment, so a search is a link you can share or
+// bookmark, Back works -- and the query never reaches a server log.
+function setTab(name) {
+  tab = name;
+  for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-selected", b.dataset.tab === name ? "true" : "false");
+  for (const t of ["search", "fleet", "questions"]) $("tab-" + t).hidden = t !== name;
+  if (name === "fleet" && !FLEET) loadFleet();
+  if (name === "search") $("q").focus();
 }
-
-function props(tool) {
-  const s = tool.inputSchema || {};
-  return Object.entries(s.properties || {}).filter(([k]) => k !== "scope")
-    .map(([k, p]) => ({ name: k, prop: p, required: (s.required || []).includes(k) }));
-}
-
-function selectTool(name, values, run) {
-  const tool = TOOLS[name];
-  if (!tool) return;
-  current = name;
-  for (const b of document.querySelectorAll("nav button"))
-    b.setAttribute("aria-current", b.dataset.tool === name ? "true" : "false");
-  $("title").textContent = name.replace(/^cs_/, "cs ");
-  $("desc").textContent = tool.description;
-  const form = $("form");
-  form.replaceChildren();
-  const fields = props(tool);
-  for (const f of fields.filter((f) => f.prop.type !== "boolean")) {
-    const input = el("input", { type: "text", name: f.name, required: f.required,
-      placeholder: f.required ? "" : "optional", value: values[f.name] || "",
-      list: f.name === "repo" ? "repo-names" : null });
-    form.append(el("label", { class: "field" + (fields.indexOf(f) === 0 ? " grow" : ""), title: f.prop.description },
-      el("span", {}, el("b", {}, f.name), f.required ? "" : " (optional)"), input));
-  }
-  const checks = fields.filter((f) => f.prop.type === "boolean");
-  for (const f of checks) {
-    form.append(el("label", { class: "check", title: f.prop.description },
-      el("input", { type: "checkbox", name: f.name, checked: !!values[f.name] }), f.name.replace(/_/g, " ")));
-  }
-  form.append(el("div", { class: "actions" },
-    el("button", { class: "primary", type: "submit" }, fields.length ? "Search" : "Run"),
-    el("button", { type: "button", id: "stop", hidden: true, onclick: stopWaiting }, "Stop waiting")));
-  if (!run) { $("out").replaceChildren(); $("status").textContent = ""; }
-  const first = form.querySelector("input[type=text]");
-  if (first && !run) first.focus();
-  if (run) go(false);
-}
-
-function readForm() {
-  const args = {};
-  for (const i of $("form").querySelectorAll("input")) {
-    if (i.type === "checkbox") { if (i.checked) args[i.name] = true; }
-    else if (i.value.trim() !== "") args[i.name] = i.value.trim();
-  }
-  return args;
-}
-
-// The query lives in the fragment, so a result is a shareable/bookmarkable
-// link and Back works -- and the query text never reaches a server log.
-function toHash(tool, args, scope) {
+function pushHash(params) {
   const p = new URLSearchParams();
-  p.set("tool", tool); p.set("scope", scope);
-  for (const [k, v] of Object.entries(args)) p.set(k, v === true ? "1" : v);
-  return "#" + p.toString();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "" && v !== false) p.set(k, v === true ? "1" : v);
+  p.set("scope", scope());
+  const h = "#" + p.toString();
+  if (location.hash !== h) history.pushState(null, "", h);
 }
-function fromHash() {
+function fromLocation() {
   const p = new URLSearchParams(location.hash.slice(1));
-  const tool = p.get("tool");
-  if (!tool || !TOOLS[tool]) return null;
-  const values = {};
-  for (const f of props(TOOLS[tool])) if (p.has(f.name))
-    values[f.name] = f.prop.type === "boolean" ? p.get(f.name) === "1" : p.get(f.name);
-  return { tool, values, scope: p.get("scope") };
+  if (p.get("scope") && [...$("scope").options].some((o) => o.value === p.get("scope")) && p.get("scope") !== scope()) {
+    $("scope").value = p.get("scope"); scopeChanged(false);
+  }
+  const t = p.get("tab") || (p.get("tool") ? "questions" : "search");
+  setTab(t);
+  if (t === "search") {
+    $("q").value = p.get("q") || "";
+    $("o-regex").checked = p.get("regex") === "1";
+    $("o-word").checked = p.get("word") === "1";
+    $("o-src").checked = p.get("src") === "1";
+    setRepo(p.get("repo") || "");
+    if ($("q").value) runSearch(false); else { $("sout").replaceChildren(); $("sstatus").textContent = ""; }
+  } else if (t === "questions") {
+    const tool = p.get("tool");
+    if (tool && TOOLS[tool]) {
+      const values = {};
+      for (const f of props(TOOLS[tool])) if (p.has(f.name))
+        values[f.name] = f.prop.type === "boolean" ? p.get(f.name) === "1" : p.get(f.name);
+      selectTool(tool, values, true);
+    } else selectTool(current || "cs_uses", {}, false);
+  }
 }
 
-// ---- running -------------------------------------------------------------
-function stopWaiting() {
-  if (inflight) inflight.abort();
+// ---- scope and repos -----------------------------------------------------
+async function loadRepos() {
+  const r = await api("/api/repos?scope=" + encodeURIComponent(scope())).catch(() => ({}));
+  REPOS = r.repos || {};
+  const names = Object.keys(REPOS).sort();
+  $("repo-names").replaceChildren(...names.map((n) => el("option", { value: n })));
+  const sel = $("srepo"), keep = sel.dataset.want || sel.value;
+  sel.replaceChildren(el("option", { value: "" }, "All repos (" + names.length + ")"),
+    ...names.map((n) => el("option", { value: n }, n + (REPOS[n].layer === "ticket" ? "  · your branch" : ""))));
+  sel.value = names.includes(keep) ? keep : "";
+}
+function setRepo(name) { $("srepo").dataset.want = name; $("srepo").value = name; }
+async function scopeChanged(user) {
+  // A scope picked on the page goes into the URL too, or Back / reload would
+  // quietly put the old one back while the page showed the new one.
+  if (user) {
+    const p = new URLSearchParams(location.hash.slice(1));
+    p.set("scope", scope());
+    history.replaceState(null, "", "#" + p.toString());
+  }
+  FLEET = null;
+  await loadRepos();
+  if (tab === "fleet") loadFleet();
+  if (user && tab === "search" && $("q").value.trim()) runSearch(true);
 }
 
-async function go(push) {
-  const tool = TOOLS[current];
-  const args = readForm();
-  const hasScope = (tool.inputSchema.properties || {}).scope;
-  if (hasScope) args.scope = $("scope").value;
-  const hash = toHash(current, Object.fromEntries(Object.entries(args).filter(([k]) => k !== "scope")), $("scope").value);
-  if (push && location.hash !== hash) history.pushState(null, "", hash);
+// ---- Search tab ----------------------------------------------------------
+// One box. It runs `cs text` (literal unless "regex" is ticked) and, when the
+// query is a bare identifier, `cs def` beside it so definitions come first.
+// The repo menu narrows INSIDE cs (--repo=), before the result cap.
+const IDENT = /^[A-Za-z_$][\w$]*$/;
+function highlighter(q, regex, word) {
+  let re = null;
+  try {
+    const src = regex ? q : q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    re = new RegExp(word ? "\\b(?:" + src + ")\\b" : src, "g");
+  } catch (e) { return null; }
+  return (text) => {
+    const out = []; let last = 0, m; re.lastIndex = 0;
+    while ((m = re.exec(text)) !== null) {
+      if (m[0] === "") { re.lastIndex++; continue; }
+      out.push(text.slice(last, m.index), el("mark", {}, m[0])); last = m.index + m[0].length;
+    }
+    out.push(text.slice(last));
+    return out;
+  };
+}
+
+async function runSearch(push) {
+  const q = $("q").value.trim();
+  if (!q) return;
+  const repo = $("srepo").value, regex = $("o-regex").checked, word = $("o-word").checked, src = $("o-src").checked;
+  if (push) pushHash({ tab: "search", q, repo, regex, word, src });
   if (inflight) inflight.abort();
   const ctl = new AbortController(); inflight = ctl;
+  const out = $("sout"), defBox = el("div"), matchBox = el("div");
+  out.replaceChildren(defBox, matchBox);
+  const textArgs = { pattern: q, scope: scope(), literal: !regex, word, source_only: src, in_repo: repo || undefined };
   const t0 = performance.now();
-  $("out").replaceChildren();
-  $("stop") && ($("stop").hidden = false);
-  const tick = setInterval(() => {
-    $("status").textContent = "running " + current.replace(/^cs_/, "cs ") + " … " +
-      Math.round((performance.now() - t0) / 1000) + "s (a language server's first run can take minutes)";
-  }, 250);
+  const tick = setInterval(() => { $("sstatus").textContent = "searching… " + Math.round((performance.now() - t0) / 1000) + "s"; }, 250);
+  const hl = highlighter(q, regex, word);
+  const defP = !regex && IDENT.test(q)
+    ? api("/api/call", { tool: "cs_def", arguments: { symbol: q, scope: scope(), repo: repo || undefined } }, ctl.signal)
+        .then((r) => showDefs(defBox, r, q)).catch(() => {})
+    : Promise.resolve();
   try {
-    const res = await api("/api/call", { tool: current, arguments: args }, ctl.signal);
-    show(res, args);
-    $("status").textContent = res.seconds !== undefined ? "took " + res.seconds + "s" : "";
+    const res = await api("/api/call", { tool: "cs_text", arguments: textArgs }, ctl.signal);
+    matchBox.append(el("h3", { class: "section" }, "Matches"));
+    show(matchBox, res, { tool: "cs_text", hl, onDoctor: () => openQuestion("cs_doctor") });
+    await defP;
+    $("sstatus").textContent = res.seconds !== undefined ? "took " + res.seconds + "s" : "";
   } catch (e) {
-    if (e.name === "AbortError") {
-      $("status").textContent = "Stopped waiting. cs keeps running on its own until it finishes or times out; its answer is discarded.";
-    } else {
-      $("out").replaceChildren(el("div", { class: "box bad" }, el("strong", {}, "cs serve did not answer"),
-        "Is it still running in your terminal? " + e.message));
-      $("status").textContent = "";
-    }
+    $("sstatus").textContent = "";
+    if (e.name !== "AbortError") out.replaceChildren(el("div", { class: "box bad" }, el("strong", {}, "cs serve did not answer"),
+      "Is it still running in your terminal? " + e.message));
   } finally {
     clearInterval(tick);
     if (inflight === ctl) inflight = null;
-    $("stop") && ($("stop").hidden = true);
   }
+}
+
+function showDefs(box, res, q) {
+  const env = res.envelope;
+  if (res.error || !env) return;
+  if (env.refused) {
+    box.append(el("p", { class: "note" }, "Definitions not looked up: " + (env.reason || "").split("\n")[0]));
+    return;
+  }
+  const results = env.results || [];
+  if (!results.length) return;
+  box.append(el("h3", { class: "section" }, "Definitions of ", el("code", { style: "text-transform:none;letter-spacing:0" }, q)),
+    el("div", { class: "answer" }, el("span", { class: "chip " + (STRENGTH[env.kind] || "other") }, env.kind || "?"),
+      el("span", { class: "muted" }, "via " + (env.engine || "?") + (env.note ? " (" + env.note + ")" : ""))));
+  renderHits(box, results, res.repos || {}, highlighter(q, false, true));
 }
 
 // ---- rendering an answer -------------------------------------------------
 // Same order as cs-mcp's render(): provenance, refusal or kind, every warning,
 // then the hits -- warnings ABOVE the hits, because below is where they get
 // skimmed past.
-function show(res, args) {
-  const out = $("out");
+function show(out, res, opt) {
+  opt = opt || {};
   if (res.error) {
     out.append(el("div", { class: "box bad" }, el("strong", {}, "Not run"), el("pre", {}, res.error)));
     return;
@@ -311,7 +410,7 @@ function show(res, args) {
     out.append(el("div", { class: "box bad" },
       el("strong", {}, "REFUSED: this search did not run, so nothing is ruled out."),
       el("pre", {}, env.reason || "(no reason given)"),
-      el("p", { style: "margin:8px 0 0" }, el("button", { type: "button", onclick: () => selectTool("cs_doctor", {}, true) },
+      el("p", { style: "margin:8px 0 0" }, el("button", { type: "button", onclick: opt.onDoctor || (() => openQuestion("cs_doctor")) },
         "Run cs doctor"), " to see what this machine is missing and the fix.")));
     return;
   }
@@ -321,15 +420,15 @@ function show(res, args) {
     out.append(el("div", { class: "answer" },
       el("span", { class: "chip " + strength, title: "the kind of evidence behind this answer" }, env.kind),
       el("span", {}, "via ", el("b", {}, env.engine || "?"), env.note ? " (" + env.note + ")" : ""),
-      bits.length ? el("span", { style: "color:var(--muted)" }, "· " + bits.join(" · ")) : null,
+      bits.length ? el("span", { class: "muted" }, "· " + bits.join(" · ")) : null,
       el("button", { class: "link", type: "button", onclick: (ev) => whyInline(env.kind, ev.target) },
         "what can a " + env.kind + " answer not see?")));
   }
   const warnings = [];
   if (env.degraded) warnings.push("degraded: " + env.degraded);
   if (env.partial) warnings.push("PARTIAL: an engine timed out or files could not be read. These results are a subset of the truth, not a complete answer.");
-  if (env.truncated) warnings.push("TRUNCATED: " + env.returned + " of " + env.hits + " hits shown. Narrow the query to see the rest" +
-    (TOOLS[current] && props(TOOLS[current]).some((f) => f.name === "count") ? ", or tick count for the per-repo tally." : "."));
+  if (env.truncated) warnings.push("TRUNCATED: " + env.returned + " of " + env.hits + " hits shown. " +
+    (opt.tool === "cs_text" ? "Pick a repo, tick whole word, or make the query longer to see the rest." : "Narrow the query to see the rest."));
   for (const e of env.engine_errors || []) warnings.push("engine error: " + e);
   const sk = env.skipped || [];
   if (sk.length) warnings.push("could not read: " + sk.slice(0, 5).join(", ") + (sk.length > 5 ? " (+" + (sk.length - 5) + " more)" : ""));
@@ -349,7 +448,7 @@ function show(res, args) {
       (env.hints || []).length ? el("ul", { class: "hints" }, env.hints.map((h) => el("li", {}, "try: " + h))) : null));
     return;
   }
-  renderHits(out, results, res.repos || {});
+  renderHits(out, results, res.repos || {}, opt.hl);
 }
 
 function editorLink(abs, line) {
@@ -358,7 +457,7 @@ function editorLink(abs, line) {
   return tpl.replace("{path}", encodeURI(abs)).replace("{line}", String(line));
 }
 
-function renderHits(out, results, repos) {
+function renderHits(out, results, repos, hl) {
   // Hits arrive grouped by repo already; consecutive runs are kept in order
   // rather than re-sorted, so the page shows what cs returned, as returned.
   const loose = [], groups = [];
@@ -370,14 +469,14 @@ function renderHits(out, results, repos) {
   }
   if (loose.length) out.append(el("pre", { class: "plain" }, loose.join("\n")));
   for (const g of groups) {
-    const info = repos[g.repo] || {};
+    const info = repos[g.repo] || REPOS[g.repo] || {};
     const rows = g.hits.map((h) => {
       const abs = info.path ? info.path + "/" + h.path : null;
       const loc = h.path + ":" + h.line;
       const href = editorLink(abs, h.line);
       return el("div", { class: "hit" },
         href ? el("a", { href, title: abs + ":" + h.line }, loc) : el("span", { title: abs || "" }, loc),
-        el("span", { class: "text" }, h.text),
+        el("span", { class: "text" }, hl ? hl(h.text) : h.text),
         el("button", { type: "button", title: "copy the absolute path:line", onclick: (ev) => copy((abs || g.repo + "/" + h.path) + ":" + h.line, ev.target) }, "copy"));
     });
     out.append(el("details", { class: "repo", open: true },
@@ -401,11 +500,161 @@ async function whyInline(kind, btn) {
   btn.replaceWith(el("pre", { class: "plain", style: "width:100%" }, res.text || res.error || ""));
 }
 
+// ---- Fleet tab -----------------------------------------------------------
+const COLS = [
+  { key: "name", label: "Repo" },
+  { key: "branch", label: "Branch" },
+  { key: "committed", label: "Last commit" },
+  { key: "synced", label: "Synced" },
+  { key: "files", label: "Files", num: true },
+  { key: "symbols", label: "Symbols", num: true },
+];
+
+async function loadFleet() {
+  $("fstatus").textContent = "reading the repos…";
+  $("ftable").replaceChildren();
+  const r = await api("/api/fleet?scope=" + encodeURIComponent(scope())).catch((e) => ({ error: e.message }));
+  if (r.error) { $("fstatus").replaceChildren(el("span", { class: "stale" }, r.error)); return; }
+  FLEET = r;
+  $("fstatus").textContent = "";
+  renderFleet();
+}
+
+function renderFleet() {
+  if (!FLEET) return;
+  const f = $("ffilter").value.trim().toLowerCase();
+  const rows = FLEET.repos.filter((r) => !f || r.name.toLowerCase().includes(f) || (r.branch || "").toLowerCase().includes(f));
+  const { key, dir } = fleetSort;
+  rows.sort((a, b) => {
+    const x = a[key], y = b[key];
+    if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
+    return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * dir;
+  });
+  const total = FLEET.repos.length;
+  $("fcount").textContent = (rows.length === total ? total : rows.length + " of " + total) + " repo(s)";
+  const head = el("tr", {}, COLS.map((c) => el("th", {
+    class: c.num ? "num" : null, "aria-sort": key === c.key ? (dir > 0 ? "ascending" : "descending") : null,
+    onclick: () => { fleetSort = { key: c.key, dir: key === c.key ? -dir : (c.num || c.key === "committed" || c.key === "synced" ? -1 : 1) }; renderFleet(); },
+  }, c.label)));
+  const now = FLEET.now;
+  const body = rows.map((r) => {
+    const stale = r.synced && now - r.synced > STALE_DAYS * 86400;
+    return el("tr", {},
+      el("td", {}, el("button", { class: "link repo-name", type: "button", title: "search in " + r.name + "\n" + r.path,
+        onclick: () => { setRepo(r.name); setTab("search"); pushHash({ tab: "search", repo: r.name }); } }, r.name), " ",
+        el("span", { class: "chip " + r.layer, title: r.layer === "ticket" ? "your ticket workspace" : "the fleet clone" }, r.layer),
+        r.web ? [" ", el("a", { href: r.web, target: "_blank", rel: "noopener", class: "muted", title: r.web }, "↗")] : null),
+      el("td", {}, r.branch || el("span", { class: "muted" }, "—")),
+      el("td", { class: "commit" }, r.commit ? [
+        r.commit_url ? el("a", { class: "sha", href: r.commit_url, target: "_blank", rel: "noopener", title: r.commit }, r.commit.slice(0, 8))
+                     : el("span", { class: "sha", title: r.commit + "\n(no web remote to link to)" }, r.commit.slice(0, 8)),
+        r.subject, " ", el("span", { class: "muted", title: when(r.committed) + " · " + (r.author || "") }, "· " + ago(r.committed, now))]
+        : el("span", { class: "muted" }, "no commits")),
+      el("td", { title: r.synced ? (r.synced_how === "cloned" ? "cloned, never fetched since: " : "last fetch: ") + when(r.synced) : "no fetch or clone recorded" },
+        r.synced ? el("span", { class: stale ? "stale" : null }, ago(r.synced, now) + (r.synced_how === "cloned" ? " (clone)" : "")) : el("span", { class: "muted" }, "unknown")),
+      el("td", { class: "num" }, (r.files || 0).toLocaleString()),
+      el("td", { class: "num", title: r.graph_built ? "tokensave graph built " + ago(r.graph_built, now) + " (" + when(r.graph_built) + ")" : (r.graph_error || "no tokensave graph in this repo") },
+        r.symbols != null ? r.symbols.toLocaleString() : el("span", { class: "muted" }, r.graph_error ? "graph error" : "no graph")));
+  });
+  $("ftable").replaceChildren(el("thead", {}, head), el("tbody", {}, body));
+}
+
+// ---- Questions tab -------------------------------------------------------
+function buildNav() {
+  const nav = $("nav");
+  const groups = GROUPS.map(([g, names]) => [g, names.filter((n) => TOOLS[n])]);
+  const other = Object.keys(TOOLS).filter((n) => !GROUPS.some(([, ns]) => ns.includes(n)));
+  if (other.length) groups.push(["Other", other]);
+  for (const [g, names] of groups) {
+    if (!names.length) continue;
+    nav.append(el("h2", {}, g));
+    for (const n of names)
+      nav.append(el("button", { type: "button", "data-tool": n, title: TOOLS[n].description,
+        onclick: () => { pushHash({ tab: "questions", tool: n }); selectTool(n, {}, false); } }, n.replace(/^cs_/, "")));
+  }
+}
+function props(tool) {
+  const s = tool.inputSchema || {};
+  return Object.entries(s.properties || {}).filter(([k]) => k !== "scope")
+    .map(([k, p]) => ({ name: k, prop: p, required: (s.required || []).includes(k) }));
+}
+function openQuestion(name) { setTab("questions"); pushHash({ tab: "questions", tool: name }); selectTool(name, {}, true); }
+
+function selectTool(name, values, run) {
+  const tool = TOOLS[name];
+  if (!tool) return;
+  current = name;
+  for (const b of document.querySelectorAll("nav button"))
+    b.setAttribute("aria-current", b.dataset.tool === name ? "true" : "false");
+  $("title").textContent = name.replace(/^cs_/, "cs ");
+  $("desc").textContent = tool.description;
+  const form = $("qform");
+  form.replaceChildren();
+  const fields = props(tool);
+  for (const f of fields.filter((f) => f.prop.type !== "boolean")) {
+    form.append(el("label", { class: "field" + (fields.indexOf(f) === 0 ? " grow" : ""), title: f.prop.description },
+      el("span", {}, el("b", {}, f.name), f.required ? "" : " (optional)"),
+      el("input", { type: "text", name: f.name, required: f.required, placeholder: f.required ? "" : "optional",
+        value: values[f.name] || "", list: /repo$/.test(f.name) ? "repo-names" : null })));
+  }
+  for (const f of fields.filter((f) => f.prop.type === "boolean"))
+    form.append(el("label", { class: "check", title: f.prop.description },
+      el("input", { type: "checkbox", name: f.name, checked: !!values[f.name] }), f.name.replace(/_/g, " ")));
+  form.append(el("div", { class: "actions" },
+    el("button", { class: "primary", type: "submit" }, fields.length ? "Search" : "Run"),
+    el("button", { type: "button", id: "stop", hidden: true, onclick: () => inflight && inflight.abort() }, "Stop waiting")));
+  if (!run) { $("qout").replaceChildren(); $("qstatus").textContent = ""; }
+  const first = form.querySelector("input[type=text]");
+  if (first && !run) first.focus();
+  if (run) runQuestion(false);
+}
+
+function readForm() {
+  const args = {};
+  for (const i of $("qform").querySelectorAll("input")) {
+    if (i.type === "checkbox") { if (i.checked) args[i.name] = true; }
+    else if (i.value.trim() !== "") args[i.name] = i.value.trim();
+  }
+  return args;
+}
+
+async function runQuestion(push) {
+  const tool = TOOLS[current];
+  const args = readForm();
+  if (push) pushHash(Object.assign({ tab: "questions", tool: current }, args));
+  if ((tool.inputSchema.properties || {}).scope) args.scope = scope();
+  if (inflight) inflight.abort();
+  const ctl = new AbortController(); inflight = ctl;
+  const t0 = performance.now();
+  $("qout").replaceChildren();
+  $("stop").hidden = false;
+  const tick = setInterval(() => {
+    $("qstatus").textContent = "running " + current.replace(/^cs_/, "cs ") + " … " +
+      Math.round((performance.now() - t0) / 1000) + "s (a language server's first run can take minutes)";
+  }, 250);
+  try {
+    const res = await api("/api/call", { tool: current, arguments: args }, ctl.signal);
+    show($("qout"), res, { tool: current, onDoctor: () => openQuestion("cs_doctor") });
+    $("qstatus").textContent = res.seconds !== undefined ? "took " + res.seconds + "s" : "";
+  } catch (e) {
+    if (e.name === "AbortError") {
+      $("qstatus").textContent = "Stopped waiting. cs keeps running on its own until it finishes or times out; its answer is discarded.";
+    } else {
+      $("qout").replaceChildren(el("div", { class: "box bad" }, el("strong", {}, "cs serve did not answer"),
+        "Is it still running in your terminal? " + e.message));
+      $("qstatus").textContent = "";
+    }
+  } finally {
+    clearInterval(tick);
+    if (inflight === ctl) inflight = null;
+    if ($("stop")) $("stop").hidden = true;
+  }
+}
+
 // ---- start ---------------------------------------------------------------
 async function start() {
   const m = await api("/api/meta");
-  if (m.error) { $("out").append(el("div", { class: "box bad" }, el("strong", {}, "cs serve refused"), m.error)); return; }
-  META = m;
+  if (m.error) { $("sout").append(el("div", { class: "box bad" }, el("strong", {}, "cs serve refused"), m.error)); return; }
   for (const t of m.tools) TOOLS[t.name] = t;
   $("version").textContent = "cs " + m.version;
   const sel = $("scope");
@@ -421,40 +670,40 @@ async function start() {
       (s.value === "fleet" ? "fleet only (main) · " + s.repos + " repo(s)"
         : label(s.value) + " (" + s.repos + " repo(s), your branch) + fleet") + (here ? " · where cs serve started" : "")));
   }
-  sel.addEventListener("change", loadRepos);
-  loadRepos();
   if (!m.scopes.length) sel.append(el("option", { value: "fleet" }, "fleet"));
-  sel.title = m.scopes_note || "";
   const ed = store("cs-serve-editor");
   if (ed !== null && [...$("editor").options].some((o) => o.value === ed)) $("editor").value = ed;
   $("editor").addEventListener("change", () => store("cs-serve-editor", $("editor").value));
-  $("doctor").addEventListener("click", () => { history.pushState(null, "", toHash("cs_doctor", {}, sel.value)); selectTool("cs_doctor", {}, true); });
-  $("form").addEventListener("submit", (ev) => { ev.preventDefault(); go(true); });
+  sel.addEventListener("change", () => scopeChanged(true));
+  for (const b of document.querySelectorAll(".tabs button"))
+    b.addEventListener("click", () => { setTab(b.dataset.tab); pushHash(b.dataset.tab === "questions" && current ? { tab: "questions", tool: current } : { tab: b.dataset.tab }); });
+  $("sform").addEventListener("submit", (ev) => { ev.preventDefault(); runSearch(true); });
+  for (const id of ["o-regex", "o-word", "o-src", "srepo"])
+    $(id).addEventListener("change", () => { $("srepo").dataset.want = $("srepo").value; if ($("q").value.trim()) runSearch(true); });
+  $("qform").addEventListener("submit", (ev) => { ev.preventDefault(); runQuestion(true); });
+  $("ffilter").addEventListener("input", renderFleet);
+  $("frefresh").addEventListener("click", loadFleet);
   buildNav();
+  await loadRepos();
   window.addEventListener("popstate", fromLocation);
   window.addEventListener("keydown", (ev) => {
     if (ev.key === "/" && !/input|select|textarea/i.test(document.activeElement.tagName)) {
-      ev.preventDefault(); const i = $("form").querySelector("input[type=text]"); if (i) i.focus();
+      ev.preventDefault();
+      const i = tab === "search" ? $("q") : tab === "fleet" ? $("ffilter") : $("qform").querySelector("input[type=text]");
+      if (i) i.focus();
     }
   });
   fromLocation();
 }
 
-async function loadRepos() {
-  const r = await api("/api/repos?scope=" + encodeURIComponent($("scope").value)).catch(() => ({}));
-  $("repo-names").replaceChildren(...Object.keys(r.repos || {}).map((n) => el("option", { value: n })));
+// Show the tab the URL names straight away, rather than Search for the moment
+// the tool list takes to arrive; fromLocation() fills it in once it has.
+{
+  const p = new URLSearchParams(location.hash.slice(1));
+  const t = p.get("tab") || (p.get("tool") ? "questions" : "search");
+  for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-selected", b.dataset.tab === t ? "true" : "false");
+  for (const n of ["search", "fleet", "questions"]) $("tab-" + n).hidden = n !== t;
 }
-
-function fromLocation() {
-  const h = fromHash();
-  if (h) {
-    if (h.scope && [...$("scope").options].some((o) => o.value === h.scope)) $("scope").value = h.scope;
-    selectTool(h.tool, h.values, true);
-  } else {
-    selectTool(current || "cs_uses", {}, false);
-  }
-}
-
 start();
 </script>
 </body>

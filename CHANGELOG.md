@@ -12,21 +12,39 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 - **New: `cs serve`, the fleet search as a local web page.** Run it from a
   terminal (in a ticket workspace to search your branch). It opens a page on
-  127.0.0.1 with every question cs answers, grouped (strings, symbols, config,
-  packages, this setup).
-  - **What the page shows:** the scope searched, the evidence kind (a
-    `resolved` no is strong, a `textual` or `heuristic` no is weak, with a link
-    to `cs why`), every PARTIAL / degraded / truncated warning above the hits,
+  127.0.0.1 with three tabs.
+  - **Search:** one box and a repo menu. It runs `cs text` (literal, or regex
+    when ticked) narrowed to that repo, plus `cs def` when the query is a
+    bare name, so definitions come first. Matches are highlighted.
+  - **Fleet:** every repo in the scope: layer (`ticket` / `fleet`), branch,
+    last commit (linked to GitHub or GitLab when the remote is one), when it
+    was last fetched (or cloned), files, and symbols from the repo's tokensave
+    graph ("no graph" without one). Click a repo to search in it.
+  - **Questions:** every other cs question as a form, from cs-mcp's tool list.
+  - **What an answer shows:** the scope searched, the evidence kind (a
+    `resolved` no is strong, a `textual` or `heuristic` no is weak, with `cs
+    why` inline), every PARTIAL / degraded / truncated warning above the hits,
     and a refusal's reason instead of an empty list. Hits are grouped by repo,
     marked `ticket` or `fleet`, and open in VS Code, Cursor or JetBrains.
-  - **Same answers as the CLI and MCP:** the page offers exactly cs-mcp's
-    tools, with its argument checks, and shows cs's own porcelain envelope.
+  - **Same answers as the CLI and MCP:** the page calls cs-mcp's tools, with
+    their argument checks, and shows cs's own porcelain envelope.
   - **Local only:** it listens on 127.0.0.1 and every request needs the
     random token in the URL it prints, plus a matching Host and Origin, so a
     web page you have open cannot query your fleet through it. Queries are not
     logged. `--port N` and `--no-open` are its only options.
   - **Stop waiting** on the page stops waiting, not cs: the search runs until
     it finishes or reaches its timeout (`CS_MCP_TIMEOUT`, 600s).
+- **New: `cs text --literal`** (`literal` on `cs_text`). `cs text` is a regex
+  search, so a pasted `foo(` was refused as a regex that does not compile.
+  With `--literal` it is searched as written. `seam` and `uses` are literal
+  already and refuse the flag.
+- **New: `--repo=<name>` on `cs text` and `cs uses`** (`in_repo` on `cs_text`
+  / `cs_uses`). Searches one repo of the view. It narrows before the result
+  cap, so a capped answer is that repo's own hits and counts, not a
+  fleet-wide answer filtered down. The `searching:` line says `<repo> only …
+  narrowed by --repo=`. In a ticket workspace it reads the workspace's copy.
+  Other verbs refuse it: they take the repo as an argument, or (`seam`) ask
+  about every repo.
 
 ## 1.27.0 — 2026-10-10
 

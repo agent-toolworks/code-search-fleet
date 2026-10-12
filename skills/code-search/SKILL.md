@@ -174,7 +174,8 @@ Run `cs which` for this table at any time.
 |---|---|
 | Who calls/uses this endpoint, topic, config key | `cs uses <string>` |
 | Which repos share this string | `cs seam <string>` |
-| Any text or regex, comments included | `cs text <pattern>` |
+| Any text or regex, comments included | `cs text <pattern>` (`--literal` to search it as written) |
+| The same, in one repo only (narrowed before the cap) | `cs text\|uses <q> --repo=<name>` (`in_repo` over MCP) |
 | Where a symbol is defined | `cs def <symbol> [repo]` |
 | Calls shaped like X, or taking literal Y | `cs calls '<pattern>' [lang]` |
 | What implements this interface | `cs impls <symbol> <repo>` |
@@ -709,7 +710,8 @@ Give file paths as `repo/path:line`, which is the format `cs` already emits and
 which stays clickable.
 
 **A user who wants to search for themselves** can run `cs serve` in a terminal
-(since 1.28.0): a local web page with the same questions, answers and warnings,
+(since 1.28.0): a local web page with a search box, a Fleet tab listing every
+repo (last commit, last fetch, files, symbols) and the other questions as forms,
 whose hits open in their editor. It is a page for a person, not a tool for you:
 keep calling `cs` or the `cs_*` tools yourself.
 

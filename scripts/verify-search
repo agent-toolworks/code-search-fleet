@@ -124,7 +124,7 @@ skip() {  # skip <check-name> <why>
 # below fails the suite if a raw one reappears.
 #
 #   emits   <out|err|both> <pattern> <command...>   run it, then match
-#   matches <pattern> <string>                      match something already held
+#   matches <string> <pattern>                      match something already held
 # -E, not basic regex. A caller writing `(a|b)` gets alternation rather than a
 # literal parenthesis, which is what anyone reaching for this expects; every
 # existing pattern here is ERE-compatible.
@@ -4987,6 +4987,65 @@ fi
 
 rm -rf "$FLEET_ROOT/web-monorepo-node/probe"
 
+# ---- cs text --literal, and --repo= on cs text / cs uses ---------------------
+# The local web page has ONE search box, and people paste into it what they
+# would paste into an editor's find: `DiscountEngine(` is a regex that does not
+# compile. --literal searches it as written. --repo= narrows the view to one
+# repo INSIDE cs, before the result cap; a page filtering a capped fleet-wide
+# answer down would silently show a subset of that repo's hits.
+info ""
+info "${C_BOLD}cs text --literal / --repo=${C_OFF}"
+if "$here/cs" text 'DiscountEngine(' >/dev/null 2>&1; then
+  err "cs text without --literal accepted an uncompilable regex"; fail=$((fail + 1)); failed_ids+=("text-literal")
+elif emits out 'pricing-lib-java/.*DiscountEngine\(' "$here/cs" text 'DiscountEngine(' --literal; then
+  ok "cs text --literal searches a regex metacharacter as written"; pass=$((pass + 1))
+else
+  err "cs text --literal did not find 'DiscountEngine('"; fail=$((fail + 1)); failed_ids+=("text-literal")
+fi
+
+rp_out=$("$here/cs" text DiscountEngine --repo=checkout-service-kotlin 2>/dev/null)
+rp_err=$("$here/cs" text DiscountEngine --repo=checkout-service-kotlin 2>&1 >/dev/null)
+if [[ -n "$rp_out" ]] && ! grep -qv '^checkout-service-kotlin/' <<< "$rp_out" \
+   && matches "$rp_err" 'checkout-service-kotlin only .*narrowed by --repo='; then
+  ok "--repo= searches that one repo, and the searching: line says so"; pass=$((pass + 1))
+else
+  err "--repo= did not narrow to one repo: $rp_out / $rp_err"; fail=$((fail + 1)); failed_ids+=("repo-narrow")
+fi
+
+# Narrowed BEFORE the cap: with a cap of 1, the narrowed answer reports that
+# repo's own total, not the fleet's.
+rp_cap=$(CS_MAX_RESULTS=1 "$here/cs" text DiscountEngine --repo=pricing-lib-java --porcelain 2>/dev/null \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["hits"], d["returned"], d["repos"], d["truncated"])' 2>/dev/null)
+rp_all=$("$here/cs" text DiscountEngine --repo=pricing-lib-java 2>/dev/null | grep -c .)
+if [[ "$rp_cap" == "$rp_all 1 1 True" && "$rp_all" -gt 1 ]]; then
+  ok "--repo= narrows before the result cap ($rp_all hits in that repo, 1 shown, truncation reported)"; pass=$((pass + 1))
+else
+  err "--repo= under a cap: got '$rp_cap', expected '$rp_all 1 1 True'"; fail=$((fail + 1)); failed_ids+=("repo-before-cap")
+fi
+
+rp_bad=0
+for _args in "seam x --repo=pricing-lib-java" "def x --repo=pricing-lib-java" "uses x --literal" "text x --repo=no-such-repo" "text x --repo=../x"; do
+  # shellcheck disable=SC2086
+  "$here/cs" $_args >/dev/null 2>&1; _rc=$?
+  [[ $_rc -eq 1 ]] || { rp_bad=1; err "cs $_args exited $_rc, expected a refusal (1)"; }
+done
+if [[ $rp_bad -eq 0 ]]; then
+  ok "--repo= and --literal are refused where they mean nothing, and on an unknown repo"; pass=$((pass + 1))
+else
+  fail=$((fail + 1)); failed_ids+=("repo-literal-refusals")
+fi
+
+# In a layered view, --repo= reads the workspace's copy, as the unnarrowed search would.
+rp_tk=$(mktemp -d)
+mkdir -p "$rp_tk/RP-1" && git clone -q "$FLEET_ROOT/pricing-lib-java" "$rp_tk/RP-1/pricing-lib-java" 2>/dev/null
+rp_lay=$(cd "$rp_tk/RP-1" && TICKETS_ROOT="$rp_tk" "$here/cs" text DiscountEngine --repo=pricing-lib-java 2>&1 >/dev/null)
+if matches "$rp_lay" 'pricing-lib-java only \(your branch\)'; then
+  ok "--repo= in a ticket workspace searches the workspace's copy"; pass=$((pass + 1))
+else
+  err "--repo= in a ticket workspace: $rp_lay"; fail=$((fail + 1)); failed_ids+=("repo-layered")
+fi
+rm -rf "$rp_tk"
+
 # ---- the MCP surface -------------------------------------------------------
 # scripts/cs-mcp exposes the same subcommands over MCP, as an additional
 # surface. It is a second door to the same engine room, and the danger of a
@@ -5713,7 +5772,7 @@ rm -rf "$qlog_dir"
 dg_out=$(python3 "$repo_root_dir/fixtures/disconnect-guard/cases.py" "$here/cs-disconnect-guard" 2>&1)
 dg_pass=$(grep -c '^PASS ' <<< "$dg_out")
 dg_fail=$(grep '^FAIL ' <<< "$dg_out")
-if [[ -z "$dg_fail" && "$dg_pass" -gt 0 ]] && matches "^$dg_pass of $dg_pass cases passed" "$dg_out"; then
+if [[ -z "$dg_fail" && "$dg_pass" -gt 0 ]] && matches "$dg_out" "^$dg_pass of $dg_pass cases passed"; then
   ok "the disconnect guard passes its $dg_pass fixture cases"
   pass=$((pass + 1))
 else
@@ -5732,7 +5791,7 @@ fi
 sv_out=$(python3 "$repo_root_dir/fixtures/cs-serve/cases.py" "$here/cs" "$FLEET_ROOT" 2>&1)
 sv_pass=$(grep -c '^PASS ' <<< "$sv_out")
 sv_fail=$(grep '^FAIL ' <<< "$sv_out")
-if [[ -z "$sv_fail" && "$sv_pass" -gt 0 ]] && matches "^$sv_pass of $sv_pass cases passed" "$sv_out"; then
+if [[ -z "$sv_fail" && "$sv_pass" -gt 0 ]] && matches "$sv_out" "^$sv_pass of $sv_pass cases passed"; then
   ok "cs serve passes its $sv_pass fixture cases"
   pass=$((pass + 1))
 else

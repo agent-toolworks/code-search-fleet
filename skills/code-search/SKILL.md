@@ -708,6 +708,11 @@ regression. The same goes for Serena's Java server running without a JDK.
 Give file paths as `repo/path:line`, which is the format `cs` already emits and
 which stays clickable.
 
+**A user who wants to search for themselves** can run `cs serve` in a terminal
+(since 1.28.0): a local web page with the same questions, answers and warnings,
+whose hits open in their editor. It is a page for a person, not a tool for you:
+keep calling `cs` or the `cs_*` tools yourself.
+
 **Carry the answer kind into what you tell the user.** `cs` prints it precisely
 so it does not have to be guessed at: an answer that rests on a string match
 across a repo boundary is a textual link, not a resolved reference, and saying

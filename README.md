@@ -221,6 +221,18 @@ Tool names, argument names per tool, and why `scope` is required:
 | How much to trust an answer | `cs why [kind]` |
 | What will not work on this machine, and the fix | `cs doctor` |
 | What changed since the version I knew | `cs changes [version]` |
+| All of the above in a browser, on this machine | `cs serve` |
+
+`cs serve` opens a local web page that asks the same questions. Pick a
+question, fill in its fields, and the answer shows the scope that was searched,
+the kind of evidence behind it, and every PARTIAL / degraded / truncated
+warning above the hits. A refusal says why instead of showing an empty list.
+Hits are grouped by repo, marked `ticket` or `fleet`, and open in your editor
+(VS Code, Cursor or JetBrains). The page opens on the workspace you started it
+in, like the CLI; the query is in the page's URL, so Back and bookmarks work.
+It listens on 127.0.0.1 only and needs the per-run token in the URL it prints
+(`--port N` to choose the port, `--no-open` to skip the browser), so another
+web page cannot query your fleet through it. Ctrl-C stops it.
 
 ## How far to trust an answer
 

@@ -8,6 +8,26 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.28.0 — 2026-10-12
+
+- **New: `cs serve`, the fleet search as a local web page.** Run it from a
+  terminal (in a ticket workspace to search your branch). It opens a page on
+  127.0.0.1 with every question cs answers, grouped (strings, symbols, config,
+  packages, this setup).
+  - **What the page shows:** the scope searched, the evidence kind (a
+    `resolved` no is strong, a `textual` or `heuristic` no is weak, with a link
+    to `cs why`), every PARTIAL / degraded / truncated warning above the hits,
+    and a refusal's reason instead of an empty list. Hits are grouped by repo,
+    marked `ticket` or `fleet`, and open in VS Code, Cursor or JetBrains.
+  - **Same answers as the CLI and MCP:** the page offers exactly cs-mcp's
+    tools, with its argument checks, and shows cs's own porcelain envelope.
+  - **Local only:** it listens on 127.0.0.1 and every request needs the
+    random token in the URL it prints, plus a matching Host and Origin, so a
+    web page you have open cannot query your fleet through it. Queries are not
+    logged. `--port N` and `--no-open` are its only options.
+  - **Stop waiting** on the page stops waiting, not cs: the search runs until
+    it finishes or reaches its timeout (`CS_MCP_TIMEOUT`, 600s).
+
 ## 1.27.0 — 2026-10-10
 
 - **`cs callers` / `callees` / `impact` mark an edge tokensave guessed**

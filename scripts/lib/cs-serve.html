@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cs fleet search</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e4e3df;
+    --accent: #2b59c3; --accent-ink: #ffffff; --code-bg: #f4f4f1;
+    --bad: #b42318; --bad-bg: #fdecea; --warn: #8a5a00; --warn-bg: #fff4dc;
+    --good: #18794e; --good-bg: #e6f4ec; --neutral-bg: #eef0f4;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --panel: #1f1f1d; --ink: #ecebe6; --muted: #9d9c95; --line: #33332f;
+      --accent: #7aa2f7; --accent-ink: #10131a; --code-bg: #262624;
+      --bad: #ff8a80; --bad-bg: #3a1d1b; --warn: #f5c26b; --warn-bg: #362b14;
+      --good: #6fd3a0; --good-bg: #16301f; --neutral-bg: #2a2c31;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+           padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+           position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; }
+  header .version { color: var(--muted); font-size: 12px; }
+  header label { color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+  header .spacer { flex: 1; }
+  select, input[type=text] { font: inherit; color: var(--ink); background: var(--panel);
+           border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+  #scope { max-width: 46ch; }
+  button { font: inherit; border-radius: 6px; padding: 5px 12px; cursor: pointer;
+           border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button.link { border: none; background: none; color: var(--accent); padding: 0; }
+  main { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: calc(100vh - 52px); }
+  nav { border-right: 1px solid var(--line); padding: 12px 8px; overflow-y: auto; }
+  nav h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+           margin: 14px 8px 4px; font-weight: 600; }
+  nav h2:first-child { margin-top: 0; }
+  nav button { display: block; width: 100%; text-align: left; border: none; background: none;
+               padding: 4px 8px; border-radius: 5px; font-family: var(--mono); font-size: 13px; }
+  nav button:hover { background: var(--neutral-bg); }
+  nav button[aria-current=true] { background: var(--accent); color: var(--accent-ink); }
+  section#work { padding: 16px 24px 48px; min-width: 0; }
+  .desc { color: var(--muted); max-width: 80ch; margin: 2px 0 12px; }
+  form { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: flex-end; margin-bottom: 8px; }
+  .field { display: flex; flex-direction: column; gap: 3px; }
+  .field.grow { flex: 1 1 320px; }
+  .field > span { font-size: 12px; color: var(--muted); }
+  .field > span b { color: var(--ink); font-weight: 600; }
+  .field input[type=text] { font-family: var(--mono); }
+  .check { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+  .actions { display: flex; gap: 8px; }
+  #status { color: var(--muted); font-size: 13px; min-height: 20px; margin: 6px 0 10px; }
+  .prov { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-bottom: 8px; word-break: break-all; }
+  .answer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .chip { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 600; }
+  .chip.strong { background: var(--good-bg); color: var(--good); }
+  .chip.weak { background: var(--warn-bg); color: var(--warn); }
+  .chip.other { background: var(--neutral-bg); color: var(--ink); }
+  .chip.ticket { background: var(--accent); color: var(--accent-ink); }
+  .chip.fleet { background: var(--neutral-bg); color: var(--muted); }
+  .box { border-radius: 8px; padding: 10px 14px; margin: 8px 0; border: 1px solid transparent; }
+  .box.bad { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+  .box.warn { background: var(--warn-bg); color: var(--warn); }
+  .box.empty { background: var(--neutral-bg); }
+  .box strong { display: block; margin-bottom: 2px; }
+  .box pre { color: var(--ink); }
+  pre { font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; }
+  pre.plain { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  details.repo { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; }
+  details.repo > summary { padding: 7px 12px; cursor: pointer; display: flex; gap: 10px; align-items: center;
+                           font-weight: 600; list-style: none; }
+  details.repo > summary::-webkit-details-marker { display: none; }
+  details.repo > summary::before { content: "▸"; color: var(--muted); }
+  details.repo[open] > summary::before { content: "▾"; }
+  details.repo .count { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: auto; }
+  .hits { border-top: 1px solid var(--line); }
+  .hit { display: grid; grid-template-columns: minmax(0, 34%) minmax(0, 1fr) auto; gap: 12px;
+         padding: 4px 12px; font-family: var(--mono); font-size: 12.5px; align-items: baseline; }
+  .hit:nth-child(even) { background: var(--code-bg); }
+  .hit a { color: var(--accent); text-decoration: none; word-break: break-all; }
+  .hit a:hover { text-decoration: underline; }
+  .hit .text { white-space: pre-wrap; word-break: break-word; }
+  .hit button { font-size: 11px; padding: 0 6px; color: var(--muted); }
+  ul.warnings { margin: 0; padding-left: 18px; }
+  .hints li { font-family: var(--mono); font-size: 12.5px; }
+  kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; }
+    nav { border-right: none; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 4px; }
+    nav h2 { width: 100%; margin: 6px 4px 0; }
+    nav button { width: auto; }
+    section#work { padding: 12px 16px 40px; }
+    .hit { grid-template-columns: 1fr; gap: 0; }
+    #scope { max-width: 100%; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>cs</h1><span class="version" id="version"></span>
+  <label>scope <select id="scope" aria-label="Scope"></select></label>
+  <span class="spacer"></span>
+  <label>open hits in
+    <select id="editor" aria-label="Editor">
+      <option value="vscode://file/{path}:{line}">VS Code</option>
+      <option value="cursor://file/{path}:{line}">Cursor</option>
+      <option value="idea://open?file={path}&line={line}">JetBrains</option>
+      <option value="">nothing (copy only)</option>
+    </select>
+  </label>
+  <button id="doctor" type="button">Doctor</button>
+</header>
+<main>
+  <nav id="nav" aria-label="Questions"></nav>
+  <section id="work">
+    <h2 id="title" style="margin:0;font-family:var(--mono);font-size:18px"></h2>
+    <p class="desc" id="desc"></p>
+    <form id="form" autocomplete="off"></form>
+    <div id="status" role="status"></div>
+    <div id="out"></div>
+    <datalist id="repo-names"></datalist>
+  </section>
+</main>
+<script>
+"use strict";
+const TOKEN = new URLSearchParams(location.search).get("t") || "";
+
+// Grouping only: every tool the server lists is shown, and one not named here
+// lands under "Other", so a verb added to cs-mcp appears with no change here.
+const GROUPS = [
+  ["Strings across repos", ["cs_uses", "cs_seam", "cs_text", "cs_calls", "cs_history", "cs_gaps"]],
+  ["Symbols", ["cs_def", "cs_impls", "cs_refs", "cs_callers", "cs_callees", "cs_impact", "cs_fields", "cs_constructs"]],
+  ["Config & contracts", ["cs_values", "cs_strictness", "cs_resilience"]],
+  ["Packages & owners", ["cs_provides", "cs_publishes", "cs_deps", "cs_versions", "cs_owns"]],
+  ["This setup", ["cs_repos", "cs_scopes", "cs_engines", "cs_doctor", "cs_which", "cs_why", "cs_changes"]],
+];
+// What a NEGATIVE of each kind is worth -- the MCP instructions' rule: a
+// resolved no is strong, a textual no is weak. The rest: read `cs why`.
+const STRENGTH = { resolved: "strong", textual: "weak", heuristic: "weak" };
+
+let META = null, TOOLS = {}, current = null, inflight = null;
+const $ = (id) => document.getElementById(id);
+
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") n.className = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat()) if (c !== null && c !== undefined && c !== false)
+    n.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return n;
+}
+
+function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+
+async function api(path, body, signal) {
+  const opts = { headers: { "X-CS-Token": TOKEN }, signal };
+  if (body) { opts.method = "POST"; opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({ error: "cs serve answered HTTP " + r.status + " with no JSON" }));
+  if (!r.ok && !j.error) j.error = "HTTP " + r.status;
+  return j;
+}
+
+// ---- navigation and forms ------------------------------------------------
+function buildNav() {
+  const nav = $("nav"), seen = new Set();
+  const groups = GROUPS.map(([g, names]) => [g, names.filter((n) => TOOLS[n])]);
+  const other = Object.keys(TOOLS).filter((n) => !GROUPS.some(([, ns]) => ns.includes(n)));
+  if (other.length) groups.push(["Other", other]);
+  for (const [g, names] of groups) {
+    if (!names.length) continue;
+    nav.append(el("h2", {}, g));
+    for (const n of names) {
+      seen.add(n);
+      nav.append(el("button", { type: "button", "data-tool": n, title: TOOLS[n].description,
+        onclick: () => selectTool(n, {}, false) }, n.replace(/^cs_/, "")));
+    }
+  }
+}
+
+function props(tool) {
+  const s = tool.inputSchema || {};
+  return Object.entries(s.properties || {}).filter(([k]) => k !== "scope")
+    .map(([k, p]) => ({ name: k, prop: p, required: (s.required || []).includes(k) }));
+}
+
+function selectTool(name, values, run) {
+  const tool = TOOLS[name];
+  if (!tool) return;
+  current = name;
+  for (const b of document.querySelectorAll("nav button"))
+    b.setAttribute("aria-current", b.dataset.tool === name ? "true" : "false");
+  $("title").textContent = name.replace(/^cs_/, "cs ");
+  $("desc").textContent = tool.description;
+  const form = $("form");
+  form.replaceChildren();
+  const fields = props(tool);
+  for (const f of fields.filter((f) => f.prop.type !== "boolean")) {
+    const input = el("input", { type: "text", name: f.name, required: f.required,
+      placeholder: f.required ? "" : "optional", value: values[f.name] || "",
+      list: f.name === "repo" ? "repo-names" : null });
+    form.append(el("label", { class: "field" + (fields.indexOf(f) === 0 ? " grow" : ""), title: f.prop.description },
+      el("span", {}, el("b", {}, f.name), f.required ? "" : " (optional)"), input));
+  }
+  const checks = fields.filter((f) => f.prop.type === "boolean");
+  for (const f of checks) {
+    form.append(el("label", { class: "check", title: f.prop.description },
+      el("input", { type: "checkbox", name: f.name, checked: !!values[f.name] }), f.name.replace(/_/g, " ")));
+  }
+  form.append(el("div", { class: "actions" },
+    el("button", { class: "primary", type: "submit" }, fields.length ? "Search" : "Run"),
+    el("button", { type: "button", id: "stop", hidden: true, onclick: stopWaiting }, "Stop waiting")));
+  if (!run) { $("out").replaceChildren(); $("status").textContent = ""; }
+  const first = form.querySelector("input[type=text]");
+  if (first && !run) first.focus();
+  if (run) go(false);
+}
+
+function readForm() {
+  const args = {};
+  for (const i of $("form").querySelectorAll("input")) {
+    if (i.type === "checkbox") { if (i.checked) args[i.name] = true; }
+    else if (i.value.trim() !== "") args[i.name] = i.value.trim();
+  }
+  return args;
+}
+
+// The query lives in the fragment, so a result is a shareable/bookmarkable
+// link and Back works -- and the query text never reaches a server log.
+function toHash(tool, args, scope) {
+  const p = new URLSearchParams();
+  p.set("tool", tool); p.set("scope", scope);
+  for (const [k, v] of Object.entries(args)) p.set(k, v === true ? "1" : v);
+  return "#" + p.toString();
+}
+function fromHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const tool = p.get("tool");
+  if (!tool || !TOOLS[tool]) return null;
+  const values = {};
+  for (const f of props(TOOLS[tool])) if (p.has(f.name))
+    values[f.name] = f.prop.type === "boolean" ? p.get(f.name) === "1" : p.get(f.name);
+  return { tool, values, scope: p.get("scope") };
+}
+
+// ---- running -------------------------------------------------------------
+function stopWaiting() {
+  if (inflight) inflight.abort();
+}
+
+async function go(push) {
+  const tool = TOOLS[current];
+  const args = readForm();
+  const hasScope = (tool.inputSchema.properties || {}).scope;
+  if (hasScope) args.scope = $("scope").value;
+  const hash = toHash(current, Object.fromEntries(Object.entries(args).filter(([k]) => k !== "scope")), $("scope").value);
+  if (push && location.hash !== hash) history.pushState(null, "", hash);
+  if (inflight) inflight.abort();
+  const ctl = new AbortController(); inflight = ctl;
+  const t0 = performance.now();
+  $("out").replaceChildren();
+  $("stop") && ($("stop").hidden = false);
+  const tick = setInterval(() => {
+    $("status").textContent = "running " + current.replace(/^cs_/, "cs ") + " … " +
+      Math.round((performance.now() - t0) / 1000) + "s (a language server's first run can take minutes)";
+  }, 250);
+  try {
+    const res = await api("/api/call", { tool: current, arguments: args }, ctl.signal);
+    show(res, args);
+    $("status").textContent = res.seconds !== undefined ? "took " + res.seconds + "s" : "";
+  } catch (e) {
+    if (e.name === "AbortError") {
+      $("status").textContent = "Stopped waiting. cs keeps running on its own until it finishes or times out; its answer is discarded.";
+    } else {
+      $("out").replaceChildren(el("div", { class: "box bad" }, el("strong", {}, "cs serve did not answer"),
+        "Is it still running in your terminal? " + e.message));
+      $("status").textContent = "";
+    }
+  } finally {
+    clearInterval(tick);
+    if (inflight === ctl) inflight = null;
+    $("stop") && ($("stop").hidden = true);
+  }
+}
+
+// ---- rendering an answer -------------------------------------------------
+// Same order as cs-mcp's render(): provenance, refusal or kind, every warning,
+// then the hits -- warnings ABOVE the hits, because below is where they get
+// skimmed past.
+function show(res, args) {
+  const out = $("out");
+  if (res.error) {
+    out.append(el("div", { class: "box bad" }, el("strong", {}, "Not run"), el("pre", {}, res.error)));
+    return;
+  }
+  if (res.text !== undefined) { out.append(el("pre", { class: "plain" }, res.text)); return; }
+  const env = res.envelope;
+  if (env.view) out.append(el("div", { class: "prov" }, "searching: " + env.view));
+  if (env.refused) {
+    out.append(el("div", { class: "box bad" },
+      el("strong", {}, "REFUSED: this search did not run, so nothing is ruled out."),
+      el("pre", {}, env.reason || "(no reason given)"),
+      el("p", { style: "margin:8px 0 0" }, el("button", { type: "button", onclick: () => selectTool("cs_doctor", {}, true) },
+        "Run cs doctor"), " to see what this machine is missing and the fix.")));
+    return;
+  }
+  const strength = STRENGTH[env.kind] || "other";
+  if (env.kind) {
+    const bits = [env.hits != null ? env.hits + " hit(s)" : null, env.repos != null ? env.repos + " repo(s)" : null].filter(Boolean);
+    out.append(el("div", { class: "answer" },
+      el("span", { class: "chip " + strength, title: "the kind of evidence behind this answer" }, env.kind),
+      el("span", {}, "via ", el("b", {}, env.engine || "?"), env.note ? " (" + env.note + ")" : ""),
+      bits.length ? el("span", { style: "color:var(--muted)" }, "· " + bits.join(" · ")) : null,
+      el("button", { class: "link", type: "button", onclick: (ev) => whyInline(env.kind, ev.target) },
+        "what can a " + env.kind + " answer not see?")));
+  }
+  const warnings = [];
+  if (env.degraded) warnings.push("degraded: " + env.degraded);
+  if (env.partial) warnings.push("PARTIAL: an engine timed out or files could not be read. These results are a subset of the truth, not a complete answer.");
+  if (env.truncated) warnings.push("TRUNCATED: " + env.returned + " of " + env.hits + " hits shown. Narrow the query to see the rest" +
+    (TOOLS[current] && props(TOOLS[current]).some((f) => f.name === "count") ? ", or tick count for the per-repo tally." : "."));
+  for (const e of env.engine_errors || []) warnings.push("engine error: " + e);
+  const sk = env.skipped || [];
+  if (sk.length) warnings.push("could not read: " + sk.slice(0, 5).join(", ") + (sk.length > 5 ? " (+" + (sk.length - 5) + " more)" : ""));
+  if (env.exclusions) warnings.push("non-default exclusion list in force: " + env.exclusions);
+  if (env.elided) warnings.push(env.elided.lines + " hit line(s) longer than " + env.elided.max_line +
+    " bytes were cut around the match. Open the file at the line shown for the rest.");
+  for (const n of env.notes || []) warnings.push(n);
+  if (warnings.length) out.append(el("div", { class: "box warn" }, el("ul", { class: "warnings" }, warnings.map((w) => el("li", {}, w)))));
+
+  const results = env.results || [];
+  if (!results.length) {
+    const worth = strength === "strong" ? "A resolved negative is strong evidence."
+      : strength === "weak" ? "A " + env.kind + " negative is weak evidence: read what it cannot see before concluding nothing exists."
+      : env.kind ? "How much this is worth depends on the kind (" + env.kind + "): read what it cannot see before concluding nothing exists." : "";
+    out.append(el("div", { class: "box empty" },
+      el("strong", {}, "No hits. The search ran and found nothing: this is an answer, not a failure."), worth,
+      (env.hints || []).length ? el("ul", { class: "hints" }, env.hints.map((h) => el("li", {}, "try: " + h))) : null));
+    return;
+  }
+  renderHits(out, results, res.repos || {});
+}
+
+function editorLink(abs, line) {
+  const tpl = $("editor").value;
+  if (!tpl || !abs) return null;
+  return tpl.replace("{path}", encodeURI(abs)).replace("{line}", String(line));
+}
+
+function renderHits(out, results, repos) {
+  // Hits arrive grouped by repo already; consecutive runs are kept in order
+  // rather than re-sorted, so the page shows what cs returned, as returned.
+  const loose = [], groups = [];
+  for (const r of results) {
+    if (!r.path) { loose.push(r.text); continue; }
+    let g = groups.length && groups[groups.length - 1].repo === r.repo ? groups[groups.length - 1] : null;
+    if (!g) { g = { repo: r.repo, hits: [] }; groups.push(g); }
+    g.hits.push(r);
+  }
+  if (loose.length) out.append(el("pre", { class: "plain" }, loose.join("\n")));
+  for (const g of groups) {
+    const info = repos[g.repo] || {};
+    const rows = g.hits.map((h) => {
+      const abs = info.path ? info.path + "/" + h.path : null;
+      const loc = h.path + ":" + h.line;
+      const href = editorLink(abs, h.line);
+      return el("div", { class: "hit" },
+        href ? el("a", { href, title: abs + ":" + h.line }, loc) : el("span", { title: abs || "" }, loc),
+        el("span", { class: "text" }, h.text),
+        el("button", { type: "button", title: "copy the absolute path:line", onclick: (ev) => copy((abs || g.repo + "/" + h.path) + ":" + h.line, ev.target) }, "copy"));
+    });
+    out.append(el("details", { class: "repo", open: true },
+      el("summary", {}, g.repo, info.layer ? el("span", { class: "chip " + info.layer,
+        title: info.layer === "ticket" ? "from your ticket workspace (your branch)" : "from the fleet (main)" }, info.layer) : null,
+        el("span", { class: "count" }, g.hits.length + " hit(s)")),
+      el("div", { class: "hits" }, rows)));
+  }
+}
+
+async function copy(text, btn) {
+  try { await navigator.clipboard.writeText(text); btn.textContent = "copied"; }
+  catch (e) { btn.textContent = "copy failed"; }
+  setTimeout(() => (btn.textContent = "copy"), 1200);
+}
+
+async function whyInline(kind, btn) {
+  if (btn.dataset.done) return;
+  btn.dataset.done = "1"; btn.textContent = "loading…";
+  const res = await api("/api/call", { tool: "cs_why", arguments: { kind } });
+  btn.replaceWith(el("pre", { class: "plain", style: "width:100%" }, res.text || res.error || ""));
+}
+
+// ---- start ---------------------------------------------------------------
+async function start() {
+  const m = await api("/api/meta");
+  if (m.error) { $("out").append(el("div", { class: "box bad" }, el("strong", {}, "cs serve refused"), m.error)); return; }
+  META = m;
+  for (const t of m.tools) TOOLS[t.name] = t;
+  $("version").textContent = "cs " + m.version;
+  const sel = $("scope");
+  // A workspace is shown by its folder name, with as many parent folders as it
+  // takes to tell two apart; the full path is the value and the tooltip.
+  const short = (p, n) => p.split("/").filter(Boolean).slice(-n).join("/");
+  const paths = m.scopes.filter((s) => s.value !== "fleet").map((s) => s.value);
+  const label = (p) => { for (let n = 1; ; n++) { const l = short(p, n);
+    if (paths.filter((q) => short(q, n) === l).length === 1 || l === short(p, 99)) return l; } };
+  for (const s of m.scopes) {
+    const here = s.value === m.default_scope;
+    sel.append(el("option", { value: s.value, selected: here, title: s.label },
+      (s.value === "fleet" ? "fleet only (main) · " + s.repos + " repo(s)"
+        : label(s.value) + " (" + s.repos + " repo(s), your branch) + fleet") + (here ? " · where cs serve started" : "")));
+  }
+  sel.addEventListener("change", loadRepos);
+  loadRepos();
+  if (!m.scopes.length) sel.append(el("option", { value: "fleet" }, "fleet"));
+  sel.title = m.scopes_note || "";
+  const ed = store("cs-serve-editor");
+  if (ed !== null && [...$("editor").options].some((o) => o.value === ed)) $("editor").value = ed;
+  $("editor").addEventListener("change", () => store("cs-serve-editor", $("editor").value));
+  $("doctor").addEventListener("click", () => { history.pushState(null, "", toHash("cs_doctor", {}, sel.value)); selectTool("cs_doctor", {}, true); });
+  $("form").addEventListener("submit", (ev) => { ev.preventDefault(); go(true); });
+  buildNav();
+  window.addEventListener("popstate", fromLocation);
+  window.addEventListener("keydown", (ev) => {
+    if (ev.key === "/" && !/input|select|textarea/i.test(document.activeElement.tagName)) {
+      ev.preventDefault(); const i = $("form").querySelector("input[type=text]"); if (i) i.focus();
+    }
+  });
+  fromLocation();
+}
+
+async function loadRepos() {
+  const r = await api("/api/repos?scope=" + encodeURIComponent($("scope").value)).catch(() => ({}));
+  $("repo-names").replaceChildren(...Object.keys(r.repos || {}).map((n) => el("option", { value: n })));
+}
+
+function fromLocation() {
+  const h = fromHash();
+  if (h) {
+    if (h.scope && [...$("scope").options].some((o) => o.value === h.scope)) $("scope").value = h.scope;
+    selectTool(h.tool, h.values, true);
+  } else {
+    selectTool(current || "cs_uses", {}, false);
+  }
+}
+
+start();
+</script>
+</body>
+</html>

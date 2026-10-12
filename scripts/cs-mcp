@@ -867,6 +867,20 @@ def positional(spec, arguments):
 
 
 def call_tool(name, arguments):
+    plain, env = answer(name, arguments)
+    if env is None:
+        return plain, False
+    return render(env)
+
+
+def answer(name, arguments):
+    """Run a tool and return (plain_text, None) for the explain-yourself
+    subcommands, or (None, envelope) for a search.
+
+    Split from call_tool so that scripts/cs-serve -- the local web page -- runs
+    the same validation and the same argv as this server, and renders the
+    envelope itself rather than parsing render()'s text back apart.
+    """
     spec = BY_NAME.get(name)
     if spec is None:
         raise ToolError(f"unknown tool: {name}")
@@ -896,7 +910,7 @@ def call_tool(name, arguments):
         scope_flag(scope)
 
     if sub in PLAIN_SUBS:
-        return run_cs_plain(sub, positional(spec, arguments), scope=scope), False
+        return run_cs_plain(sub, positional(spec, arguments), scope=scope), None
 
     flags = []
     if arguments.get("word"):
@@ -913,8 +927,7 @@ def call_tool(name, arguments):
     if arguments.get("field_name"):
         flags.append("--field=" + str(arguments["field_name"]))
 
-    env = run_cs(sub, positional(spec, arguments), scope=scope, flags=flags)
-    return render(env)
+    return None, run_cs(sub, positional(spec, arguments), scope=scope, flags=flags)
 
 
 def handle(msg):

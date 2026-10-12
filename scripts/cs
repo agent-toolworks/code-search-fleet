@@ -68,6 +68,8 @@
 #                                  will not work, what it costs, and the fix
 #   cs changes [version]           what changed in cs: the latest releases, or
 #                                  everything since <version> -- small fixes too
+#   cs serve [--port N] [--no-open]  the same questions as a local web page:
+#                                  127.0.0.1 only, with a per-run token
 #
 #   --fleet          ignore the ticket workspace, search the fleet only
 #   --ticket=<path>  search a workspace layered over the fleet: the absolute
@@ -6290,6 +6292,15 @@ TABLE
   # visible nowhere.
   print_kinds_table
 }
+
+# Before the flag loop: cs serve is a server, not a query, and the loop would
+# otherwise eat --fleet / --ticket= meant for no search at all. It keeps this
+# process's working directory, which is how the page knows which workspace to
+# open on -- the same $PWD rule as every other subcommand.
+if [[ "${1:-}" == serve ]]; then
+  shift
+  exec python3 "$(dirname "${BASH_SOURCE[0]}")/cs-serve" "$@"
+fi
 
 fleet_only=0
 show_why=0

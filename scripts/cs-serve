@@ -1,0 +1,445 @@
+#!/usr/bin/env python3
+"""cs-serve -- `cs serve`: the fleet search as a page in your browser.
+
+A third surface over the same engine room, beside the CLI and scripts/cs-mcp,
+and built so it cannot become a third set of answers. It does not define a
+single verb or argument of its own: the tool table, the argument checks, the
+argv each verb becomes and the porcelain envelope all come from cs-mcp, which
+imports them from nothing but `cs`. A verb added to cs-mcp appears on the page
+with no change here.
+
+LOCAL ONLY, and that is a design input rather than a deployment detail. It runs
+the user's own cs against the user's own FLEET_ROOT, engines and ticket
+workspaces, so there is no fleet to host, no index to keep fresh and no login.
+What local does NOT buy is safety from the browser itself: any web page the
+user has open can send requests to 127.0.0.1. Without a guard, a hostile page
+could run searches and read the fleet's code out of the answers. So:
+
+  1. it binds 127.0.0.1 and nothing else;
+  2. every request needs a random per-run token, printed with the URL and
+     opened in the browser (the way Jupyter does it) -- a page that does not
+     know the token gets 403;
+  3. the Host header must name this server, which defeats DNS rebinding (a
+     hostile name re-pointed at 127.0.0.1 still sends its own Host);
+  4. the API takes JSON only, so a cross-origin POST needs a CORS preflight,
+     which is never answered.
+
+The scope is the CLI's, not the MCP server's: the page opens on the workspace
+`cs serve` was started from, the way the CLI reads $PWD, and says so. Each
+query still passes it explicitly, so switching scope on the page is a choice
+the answer's `searching:` line then confirms.
+
+Usage: cs serve [--port N] [--no-open]
+Stdlib only, like cs-mcp: nothing to install beyond the python3 cs needs.
+"""
+
+import concurrent.futures
+import hmac
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import secrets
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit, parse_qs
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PAGE = os.path.join(HERE, "lib", "cs-serve.html")
+
+# cs-mcp is a script, not a module (no .py), so it is loaded by path. Its
+# main() is behind `if __name__ == "__main__"` and does not run.
+_loader = importlib.machinery.SourceFileLoader("cs_mcp", os.path.join(HERE, "cs-mcp"))
+_spec = importlib.util.spec_from_loader("cs_mcp", _loader)
+mcp = importlib.util.module_from_spec(_spec)
+_loader.exec_module(mcp)
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+LISTEN = "127.0.0.1"
+
+
+def usage(code):
+    sys.stderr.write("usage: cs serve [--port N] [--no-open]\n"
+                     "  a local web page for searching the fleet; Ctrl-C stops it\n")
+    sys.exit(code)
+
+
+# ---- what the page needs besides the tools ---------------------------------
+
+def run_plain(args):
+    """Run `cs <args>` from / and return (stdout, stderr), colour stripped."""
+    proc = subprocess.run([mcp.CS] + args, cwd=mcp.CS_CWD, stdin=subprocess.DEVNULL,
+                          capture_output=True, timeout=mcp.CALL_TIMEOUT)
+    clean = lambda b: ANSI_RE.sub("", b.decode("utf-8", "replace"))
+    return proc.returncode, clean(proc.stdout), clean(proc.stderr)
+
+
+def list_scopes():
+    """The scopes `cs scopes` lists: ("fleet", label) then every workspace by path.
+
+    Parsed from the CLI's table rather than re-derived, so the page offers
+    exactly the scopes cs would accept.
+    """
+    _, out, err = run_plain(["scopes"])
+    scopes = []
+    for line in out.splitlines()[1:]:
+        m = re.match(r"^\s*(\S+)\s\s(.+)$", line)
+        if not m:
+            continue
+        n, rest = m.groups()
+        if rest.startswith("fleet"):
+            scopes.append({"value": "fleet", "repos": n, "label": rest.strip()})
+        else:
+            path = rest.split("   (mixed")[0].strip()
+            scopes.append({"value": path, "repos": n, "label": path})
+    return scopes, err.strip()
+
+
+def default_scope(scopes, cwd):
+    """The workspace cwd is in, deepest first -- what the CLI would layer."""
+    # A plain prefix test is enough: os.getcwd() is resolved, and so are the
+    # paths `cs scopes` prints (macOS /var comes back as /private/var).
+    best = "fleet"
+    for s in scopes:
+        p = s["value"]
+        if p != "fleet" and (cwd == p or cwd.startswith(p.rstrip("/") + "/")):
+            if best == "fleet" or len(p) > len(best):
+                best = p
+    return best
+
+
+_repo_cache = {}
+_repo_lock = threading.Lock()
+
+
+def repo_paths(scope):
+    """{repo: {"path": abs, "layer": "ticket"|"fleet"}} for this scope.
+
+    A hit is reported as repo + path relative to it; which directory that repo
+    IS depends on the scope (a ticket worktree or the fleet clone), and `cs
+    repos` is the one place that says. Cached briefly: a page of results asks
+    once, not once per hit.
+    """
+    now = time.time()
+    with _repo_lock:
+        hit = _repo_cache.get(scope)
+        if hit and now - hit[0] < 30:
+            return hit[1]
+    rc, out, _ = run_plain(["repos", mcp.scope_flag(scope)])
+    repos = {}
+    if rc == 0:
+        for line in out.splitlines()[1:]:
+            m = re.match(r"^(\S+)\s+(ticket|fleet)\s+(/.*)$", line)
+            if m:
+                repos[m.group(1)] = {"layer": m.group(2), "path": m.group(3)}
+    with _repo_lock:
+        _repo_cache[scope] = (now, repos)
+    return repos
+
+
+# ---- the Fleet tab ---------------------------------------------------------
+# Facts ABOUT each repo, read from git and from the repo's tokensave graph --
+# not answers about the code, so nothing here competes with a cs verb.
+
+# Node kinds that are not definitions: the file itself, its package line, its
+# imports, and an annotation's use site. Counted out so that "symbols" means
+# what a reader assumes it means -- classes, methods, fields and the like.
+NOT_SYMBOLS = ("file", "package", "use", "import", "annotation_usage", "module")
+
+
+# How each known forge spells a commit page. A host not on this list gets no
+# link rather than a guessed one: Bitbucket's /commit/<sha> is a 404, and a
+# remote that is a local mirror is not a web page at all.
+COMMIT_PATH = (("github", "/commit/"), ("gitlab", "/-/commit/"), ("bitbucket", "/commits/"))
+
+
+def web_url(origin):
+    """(https://host/owner/repo, commit path) for a forge remote, else None.
+
+    Only the forms a forge hands out are accepted -- http(s)://, ssh:// and
+    scp-style user@host:path -- with a dotted host, so a local mirror
+    (file:///…, /srv/…, C:/…) never turns into https://file//… .
+    """
+    u = (origin or "").strip()
+    if not u:
+        return None
+    u = re.sub(r"\.git/?$", "", u.rstrip("/"))
+    m = (re.match(r"^(?:https?|ssh|git\+ssh)://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+)$", u)
+         or re.match(r"^(?:[^@/:]+@)?([^/:]+):(?!\d)([^/].*)$", u))
+    if not m or "." not in m.group(1):
+        return None
+    host = m.group(1).lower()
+    for name, path in COMMIT_PATH:
+        if name in host:
+            return "https://%s/%s" % (host, m.group(2)), path
+    return None
+
+
+def last_synced(path, git):
+    """(unix time, how) of the last fetch, or of the clone when never fetched.
+
+    A linked worktree (a ticket workspace made with `git worktree add`) has a
+    FETCH_HEAD of its own that a fetch in the main clone never writes, so the
+    shared one under --git-common-dir is read too, and the newer one wins.
+    """
+    stamps = []
+    for rel in (git("rev-parse", "--git-path", "FETCH_HEAD"),
+                os.path.join(git("rev-parse", "--git-common-dir") or ".git", "FETCH_HEAD")):
+        fh = rel if os.path.isabs(rel) else os.path.join(path, rel)
+        if rel and os.path.exists(fh):
+            stamps.append(int(os.path.getmtime(fh)))
+    if stamps:
+        return max(stamps), "fetched"
+    rel = git("rev-parse", "--git-path", "logs/HEAD")
+    if rel:
+        try:
+            with open(rel if os.path.isabs(rel) else os.path.join(path, rel)) as f:
+                first = f.readline()
+            m = re.search(r"> (\d+) [+-]\d{4}\t(clone|branch)", first)
+            if m:
+                return int(m.group(1)), "cloned"
+        except OSError:
+            pass
+    return None, None
+
+
+def repo_facts(name, info):
+    path = info["path"]
+
+    def git(*args):
+        try:
+            p = subprocess.run(["git", "-C", path] + list(args), capture_output=True,
+                               text=True, timeout=60, stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            return ""
+        return p.stdout.strip() if p.returncode == 0 else ""
+
+    out = {"name": name, "layer": info["layer"], "path": path}
+    head = git("log", "-1", "--format=%H%x1f%s%x1f%ct%x1f%an")
+    if head:
+        sha, subject, ct, author = (head.split("\x1f") + ["", "", "", ""])[:4]
+        out.update(commit=sha, subject=subject, committed=int(ct or 0), author=author)
+    out["branch"] = git("rev-parse", "--abbrev-ref", "HEAD")
+    web = web_url(git("config", "--get", "remote.origin.url"))
+    if web:
+        out["web"] = web[0]
+        if out.get("commit"):
+            out["commit_url"] = web[0] + web[1] + out["commit"]
+    out["synced"], out["synced_how"] = last_synced(path, git)
+    files = git("ls-files", "-z")
+    out["files"] = files.count("\0") if files else 0
+    db = os.path.join(path, ".tokensave", "tokensave.db")
+    if os.path.isfile(db):
+        try:
+            # Plain connect + query_only: mode=ro fails on a cleanly closed WAL
+            # graph, which has no -shm file.
+            con = sqlite3.connect(db, timeout=5)
+            con.execute("PRAGMA query_only = 1")
+            q = "SELECT count(*) FROM nodes WHERE kind NOT IN (%s)" % ",".join("?" * len(NOT_SYMBOLS))
+            out["symbols"] = con.execute(q, NOT_SYMBOLS).fetchone()[0]
+            con.close()
+        except sqlite3.Error as e:
+            out["graph_error"] = str(e)
+        out["graph_built"] = int(os.path.getmtime(db))
+    return out
+
+
+def fleet(scope):
+    repos = repo_paths(scope)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        rows = list(pool.map(lambda kv: repo_facts(*kv), sorted(repos.items())))
+    return {"repos": rows, "now": int(time.time())}
+
+
+def meta(start_cwd):
+    scopes, scopes_note = list_scopes()
+    tools = [mcp.tool_schema(t) for t in mcp.TOOLS]
+    return {
+        "version": mcp._version(),
+        "tools": tools,
+        "scopes": scopes,
+        "scopes_note": scopes_note,
+        "default_scope": default_scope(scopes, start_cwd),
+        "started_in": start_cwd,
+    }
+
+
+def call(body):
+    name = body.get("tool")
+    arguments = body.get("arguments") or {}
+    if not isinstance(name, str) or not isinstance(arguments, dict):
+        return {"error": "a call is {\"tool\": <name>, \"arguments\": {...}}"}
+    t0 = time.time()
+    try:
+        plain, env = mcp.answer(name, arguments)
+    except mcp.ToolError as e:
+        return {"error": str(e)}
+    out = {"seconds": round(time.time() - t0, 2)}
+    if env is None:
+        out["text"] = ANSI_RE.sub("", plain)
+        return out
+    out["envelope"] = env
+    scope = arguments.get("scope")
+    if env.get("results") and scope:
+        out["repos"] = repo_paths(scope)
+    return out
+
+
+# ---- HTTP ------------------------------------------------------------------
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "cs-serve"
+    token = ""
+    port = 0
+    start_cwd = "/"
+
+    def log_message(self, fmt, *args):
+        # The default writes every request, query strings and all, to stderr.
+        # A query is the proprietary part of a private fleet (see CS_LOG in cs),
+        # so only failures are reported.
+        pass
+
+    def send(self, code, body, ctype="application/json; charset=utf-8"):
+        data = body if isinstance(body, bytes) else json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def allowed(self, token):
+        host = self.headers.get("Host", "")
+        if host not in ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port):
+            self.send(403, {"error": "wrong Host: this server answers only as "
+                                     "127.0.0.1 or localhost"})
+            return False
+        if not token or not hmac.compare_digest(token, self.token):
+            self.send(403, {"error": "missing or wrong token: open the URL "
+                                     "`cs serve` printed"})
+            return False
+        return True
+
+    def do_GET(self):
+        url = urlsplit(self.path)
+        q = parse_qs(url.query)
+        if url.path == "/":
+            if not self.allowed((q.get("t") or [""])[0]):
+                return
+            with open(PAGE, "rb") as f:
+                self.send(200, f.read(), "text/html; charset=utf-8")
+            return
+        if url.path == "/api/repos":
+            # The repo names in a scope, for the page to suggest: a mistyped
+            # repo is a refusal, and the names are long and hyphenated.
+            if not self.allowed(self.headers.get("X-CS-Token", "")):
+                return
+            try:
+                self.send(200, {"repos": repo_paths((q.get("scope") or ["fleet"])[0])})
+            except mcp.ToolError as e:
+                self.send(200, {"error": str(e)})
+            return
+        if url.path == "/api/fleet":
+            if not self.allowed(self.headers.get("X-CS-Token", "")):
+                return
+            try:
+                self.send(200, fleet((q.get("scope") or ["fleet"])[0]))
+            except mcp.ToolError as e:
+                self.send(200, {"error": str(e)})
+            return
+        if url.path == "/api/meta":
+            if not self.allowed(self.headers.get("X-CS-Token", "")):
+                return
+            self.send(200, meta(self.start_cwd))
+            return
+        self.send(404, {"error": "not found"})
+
+    def do_POST(self):
+        if urlsplit(self.path).path != "/api/call":
+            self.send(404, {"error": "not found"})
+            return
+        if not self.allowed(self.headers.get("X-CS-Token", "")):
+            return
+        origin = self.headers.get("Origin")
+        if origin and origin not in ("http://127.0.0.1:%d" % self.port,
+                                     "http://localhost:%d" % self.port):
+            self.send(403, {"error": "cross-origin request refused"})
+            return
+        if not self.headers.get("Content-Type", "").startswith("application/json"):
+            self.send(415, {"error": "the API takes application/json"})
+            return
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+            if n < 0:  # rfile.read(-1) would read until the client hangs up
+                raise ValueError
+            body = json.loads(self.rfile.read(min(n, 1 << 20)) or b"{}")
+        except ValueError:
+            self.send(400, {"error": "request body is not JSON"})
+            return
+        if not isinstance(body, dict):
+            self.send(400, {"error": "request body is not a JSON object"})
+            return
+        try:
+            self.send(200, call(body))
+        except Exception as e:  # one bad query must not take the page down
+            sys.stderr.write("cs serve: %s failed: %r\n" % (body.get("tool"), e))
+            self.send(500, {"error": "cs serve failed on this query: %r" % e})
+
+
+def main(argv):
+    port, open_browser = 0, True
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--no-open":
+            open_browser = False
+        elif a == "--port" and i + 1 < len(argv):
+            i += 1
+            port = argv[i]
+        elif a.startswith("--port="):
+            port = a.split("=", 1)[1]
+        elif a in ("-h", "--help"):
+            usage(0)
+        else:
+            sys.stderr.write("cs serve: unknown argument %r\n" % a)
+            usage(1)
+        i += 1
+    try:
+        port = int(port)
+    except ValueError:
+        sys.stderr.write("cs serve: --port takes a number\n")
+        sys.exit(1)
+
+    Handler.token = secrets.token_urlsafe(24)
+    Handler.start_cwd = os.getcwd()
+    try:
+        httpd = ThreadingHTTPServer((LISTEN, port), Handler)
+    except OSError as e:
+        sys.stderr.write("cs serve: cannot listen on %s:%d: %s\n" % (LISTEN, port, e.strerror))
+        sys.exit(1)
+    httpd.daemon_threads = True
+    Handler.port = httpd.server_address[1]
+    url = "http://127.0.0.1:%d/?t=%s" % (Handler.port, Handler.token)
+    sys.stderr.write("cs serve: %s\n" % url)
+    sys.stderr.write("  local only (127.0.0.1); the token in the URL is required. Ctrl-C stops it.\n")
+    sys.stderr.flush()
+    if open_browser:
+        threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        sys.stderr.write("\ncs serve: stopped\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -195,7 +195,8 @@ Tool names, argument names per tool, and why `scope` is required:
 |---|---|
 | Who calls/uses this endpoint, topic, config key | `cs uses <string>` |
 | Which repos share this string | `cs seam <string>` |
-| Any text or regex, comments included | `cs text <pattern>` |
+| Any text or regex, comments included | `cs text <pattern>` (`--literal` to search it as written) |
+| The same, in one repo only | `cs text\|uses <q> --repo=<name>` |
 | Where is a symbol defined | `cs def <symbol> [repo]` |
 | Calls shaped like X, or taking literal Y | `cs calls '<pattern>' [lang]` |
 | Where a type is constructed, all idioms | `cs constructs <Type> [repo]` |
@@ -221,6 +222,30 @@ Tool names, argument names per tool, and why `scope` is required:
 | How much to trust an answer | `cs why [kind]` |
 | What will not work on this machine, and the fix | `cs doctor` |
 | What changed since the version I knew | `cs changes [version]` |
+| All of the above in a browser, on this machine | `cs serve` |
+
+`cs serve` opens a local web page with three tabs:
+
+- **Search**: one box and a repo menu. It runs `cs text` (literal, or regex
+  when ticked) narrowed to the chosen repo, and, when the query is a bare
+  name, `cs def` beside it so definitions come first. Matches are highlighted.
+- **Fleet**: every repo in the scope with its layer (`ticket` or `fleet`),
+  branch, last commit (linked to GitHub when the remote is there), when it
+  was last fetched, its file count, and its symbol count from the tokensave
+  graph. Click a repo to search in it.
+- **Questions**: every other cs question (callers, impact, versions, owns,
+  doctor…) as a form.
+
+Each answer shows the scope searched, the kind of evidence behind it, and
+every PARTIAL / degraded / truncated warning above the hits; a refusal says
+why instead of showing an empty list. Hits are grouped by repo and open in
+your editor (VS Code, Cursor or JetBrains). The page opens on the workspace you
+started it in, like the CLI, and the query is in the page's URL, so Back
+works. A copied link lasts until `cs serve` stops: the token in it is new each
+run. It listens on 127.0.0.1 only and needs the per-run token in
+the URL it prints (`--port N` to choose the port, `--no-open` to skip the
+browser), so another web page cannot query your fleet through it. Ctrl-C
+stops it.
 
 ## How far to trust an answer
 

@@ -127,7 +127,7 @@ SCOPE_PATH_RE = re.compile(r"\A/[^\x00-\x1f]*\Z")
 CS_FLAGS = {
     "--fleet", "--why", "--quiet", "-q", "--all", "--touched",
     "--refresh", "--porcelain", "--json", "--word", "-w",
-    "--source-only", "--count", "--suggest-clone", "--full-lines",
+    "--source-only", "--count", "--suggest-clone", "--full-lines", "--literal",
 }
 
 
@@ -228,6 +228,17 @@ COUNT_TEXT_ARG = arg(
     type_="boolean",
 )
 
+# `repo` is positional on the verbs that take one (cs def <symbol> [repo]); on
+# the text verbs it is a FLAG, --repo=, so it gets its own name here rather than
+# overloading `repo` with two calling conventions.
+IN_REPO_ARG = arg(
+    "in_repo",
+    "Search only this repo directory name (cs repos lists them). Narrowed "
+    "before the result cap, so the hits are that repo's own, not a fleet-wide "
+    "answer filtered down.",
+    required=False,
+)
+
 TOOLS = [
     # --- the questions ------------------------------------------------------
     ("cs_uses", "uses",
@@ -240,7 +251,8 @@ TOOLS = [
       SCOPE_ARG,
       WORD_ARG,
       SOURCE_ONLY_ARG,
-      COUNT_TEXT_ARG]),
+      COUNT_TEXT_ARG,
+      IN_REPO_ARG]),
 
     ("cs_seam", "seam",
      "Which repos share this string, comments included — and warns when only "
@@ -254,11 +266,15 @@ TOOLS = [
     ("cs_text", "text",
      "Plain text or regex across every repo, comments included. The fallback "
      "when no sharper question fits.",
-     [arg("pattern", "A literal string or regex."),
+     [arg("pattern", "A regex, or a literal string when literal is set."),
       SCOPE_ARG,
       WORD_ARG,
       SOURCE_ONLY_ARG,
-      COUNT_TEXT_ARG]),
+      COUNT_TEXT_ARG,
+      IN_REPO_ARG,
+      arg("literal", "Match the pattern as a literal string rather than a regex, "
+                     "so `foo(` or `a.b` is searched as written.",
+          required=False, type_="boolean")]),
 
     ("cs_def", "def",
      "Where a symbol is defined, across the fleet or within one repo.",
@@ -614,7 +630,7 @@ def run_cs(sub, argv, scope=None, flags=()):
     parsing back out what we already have structured.
     """
     for a in argv:
-        if a in CS_FLAGS or a.startswith("--ticket=") or a.startswith("--field="):
+        if a in CS_FLAGS or a.startswith(("--ticket=", "--field=", "--repo=")):
             raise ToolError(
                 f"argument {a!r} is spelled like a cs flag and would change the "
                 "query rather than be searched for.\n"
@@ -824,7 +840,7 @@ def render(env):
 # ---- dispatch --------------------------------------------------------------
 
 # Value-carrying arguments that cs takes as a flag rather than by position.
-NOT_POSITIONAL = {"field_name"}
+NOT_POSITIONAL = {"field_name", "in_repo"}
 
 
 def positional(spec, arguments):
@@ -867,6 +883,20 @@ def positional(spec, arguments):
 
 
 def call_tool(name, arguments):
+    plain, env = answer(name, arguments)
+    if env is None:
+        return plain, False
+    return render(env)
+
+
+def answer(name, arguments):
+    """Run a tool and return (plain_text, None) for the explain-yourself
+    subcommands, or (None, envelope) for a search.
+
+    Split from call_tool so that scripts/cs-serve -- the local web page -- runs
+    the same validation and the same argv as this server, and renders the
+    envelope itself rather than parsing render()'s text back apart.
+    """
     spec = BY_NAME.get(name)
     if spec is None:
         raise ToolError(f"unknown tool: {name}")
@@ -896,7 +926,7 @@ def call_tool(name, arguments):
         scope_flag(scope)
 
     if sub in PLAIN_SUBS:
-        return run_cs_plain(sub, positional(spec, arguments), scope=scope), False
+        return run_cs_plain(sub, positional(spec, arguments), scope=scope), None
 
     flags = []
     if arguments.get("word"):
@@ -912,9 +942,12 @@ def call_tool(name, arguments):
     # A value flag, not a boolean: cs constructs takes --field=<name>.
     if arguments.get("field_name"):
         flags.append("--field=" + str(arguments["field_name"]))
+    if arguments.get("literal"):
+        flags.append("--literal")
+    if arguments.get("in_repo"):
+        flags.append("--repo=" + str(arguments["in_repo"]))
 
-    env = run_cs(sub, positional(spec, arguments), scope=scope, flags=flags)
-    return render(env)
+    return None, run_cs(sub, positional(spec, arguments), scope=scope, flags=flags)
 
 
 def handle(msg):

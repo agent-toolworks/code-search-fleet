@@ -369,3 +369,10 @@ before 1.16. Update anything that says otherwise:
 - **`verify-engines`** probes tokensave's C# interface edges as a capability
   (1.16.2), and Serena on Java without a JDK, Kotlin without a toolchain
   request, and .NET Framework projects (1.18.0).
+- **`cs_text` takes `literal`, and `cs_text` / `cs_uses` take `in_repo`**
+  (1.28.0). `cs text` is a regex search, so a pasted `foo(` is refused as a
+  regex that does not compile: pass `literal: true` (`--literal`) rather than
+  escaping it. To search one repo, pass `in_repo: "<repo>"` (`--repo=<repo>`)
+  rather than filtering a fleet-wide answer: it narrows before the 200-hit
+  cap, so the hits and counts are that repo's own, and the `searching:` line
+  says `<repo> only … narrowed by --repo=`. Other verbs refuse both flags.

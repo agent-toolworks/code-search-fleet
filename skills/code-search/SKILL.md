@@ -55,6 +55,9 @@ repos rather than guessing.
 (`cs_changes` over MCP) lists everything since, small fixes included, and the
 MCP instructions name the running version. Details are in `docs/install.md`,
 "If you already use cs":
+- `cs_text` takes `literal` (since 1.28.0): pass it for a pasted `foo(` instead
+  of escaping it. `cs_text` / `cs_uses` take `in_repo` to search one repo; it
+  narrows before the hit cap, so do not filter a fleet-wide answer instead.
 - A scope is the **absolute path** of the workspace you are in, or of any
   directory inside it (since 1.16.0). A bare folder name still works when it is
   unique. `cs_scopes` lists workspaces by path, across `TICKETS_ROOT` and
@@ -174,7 +177,8 @@ Run `cs which` for this table at any time.
 |---|---|
 | Who calls/uses this endpoint, topic, config key | `cs uses <string>` |
 | Which repos share this string | `cs seam <string>` |
-| Any text or regex, comments included | `cs text <pattern>` |
+| Any text or regex, comments included | `cs text <pattern>` (`--literal` to search it as written) |
+| The same, in one repo only (narrowed before the cap) | `cs text\|uses <q> --repo=<name>` (`in_repo` over MCP) |
 | Where a symbol is defined | `cs def <symbol> [repo]` |
 | Calls shaped like X, or taking literal Y | `cs calls '<pattern>' [lang]` |
 | What implements this interface | `cs impls <symbol> <repo>` |
@@ -707,6 +711,12 @@ regression. The same goes for Serena's Java server running without a JDK.
 
 Give file paths as `repo/path:line`, which is the format `cs` already emits and
 which stays clickable.
+
+**A user who wants to search for themselves** can run `cs serve` in a terminal
+(since 1.28.0): a local web page with a search box, a Fleet tab listing every
+repo (last commit, last fetch, files, symbols) and the other questions as forms,
+whose hits open in their editor. It is a page for a person, not a tool for you:
+keep calling `cs` or the `cs_*` tools yourself.
 
 **Carry the answer kind into what you tell the user.** `cs` prints it precisely
 so it does not have to be guessed at: an answer that rests on a string match

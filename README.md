@@ -240,8 +240,9 @@ Each answer shows the scope searched, the kind of evidence behind it, and
 every PARTIAL / degraded / truncated warning above the hits; a refusal says
 why instead of showing an empty list. Hits are grouped by repo and open in
 your editor (VS Code, Cursor or JetBrains). The page opens on the workspace you
-started it in, like the CLI, and the query is in the page's URL, so Back and
-bookmarks work. It listens on 127.0.0.1 only and needs the per-run token in
+started it in, like the CLI, and the query is in the page's URL, so Back
+works. A copied link lasts until `cs serve` stops: the token in it is new each
+run. It listens on 127.0.0.1 only and needs the per-run token in
 the URL it prints (`--port N` to choose the port, `--no-open` to skip the
 browser), so another web page cannot query your fleet through it. Ctrl-C
 stops it.

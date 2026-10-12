@@ -17,15 +17,19 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
     when ticked) narrowed to that repo, plus `cs def` when the query is a
     bare name, so definitions come first. Matches are highlighted.
   - **Fleet:** every repo in the scope: layer (`ticket` / `fleet`), branch,
-    last commit (linked to GitHub or GitLab when the remote is one), when it
-    was last fetched (or cloned), files, and symbols from the repo's tokensave
-    graph ("no graph" without one). Click a repo to search in it.
+    last commit (linked when the remote is on GitHub, GitLab or Bitbucket, and
+    not linked for any other remote, such as a local mirror), when it was last
+    fetched (the shared clone's fetch counts for a worktree), or cloned, files,
+    and symbols from the repo's tokensave graph ("no graph" without one).
+    Click a repo to search in it.
   - **Questions:** every other cs question as a form, from cs-mcp's tool list.
   - **What an answer shows:** the scope searched, the evidence kind (a
     `resolved` no is strong, a `textual` or `heuristic` no is weak, with `cs
     why` inline), every PARTIAL / degraded / truncated warning above the hits,
     and a refusal's reason instead of an empty list. Hits are grouped by repo,
     marked `ticket` or `fleet`, and open in VS Code, Cursor or JetBrains.
+    The query is in the page URL, so Back works; a copied link lasts until
+    `cs serve` stops, because the token in it is new each run.
   - **Same answers as the CLI and MCP:** the page calls cs-mcp's tools, with
     their argument checks, and shows cs's own porcelain envelope.
   - **Local only:** it listens on 127.0.0.1 and every request needs the

@@ -153,27 +153,49 @@ def repo_paths(scope):
 NOT_SYMBOLS = ("file", "package", "use", "import", "annotation_usage", "module")
 
 
+# How each known forge spells a commit page. A host not on this list gets no
+# link rather than a guessed one: Bitbucket's /commit/<sha> is a 404, and a
+# remote that is a local mirror is not a web page at all.
+COMMIT_PATH = (("github", "/commit/"), ("gitlab", "/-/commit/"), ("bitbucket", "/commits/"))
+
+
 def web_url(origin):
-    """https://host/owner/repo for a git remote, or None when it is not one."""
+    """(https://host/owner/repo, commit path) for a forge remote, else None.
+
+    Only the forms a forge hands out are accepted -- http(s)://, ssh:// and
+    scp-style user@host:path -- with a dotted host, so a local mirror
+    (file:///…, /srv/…, C:/…) never turns into https://file//… .
+    """
     u = (origin or "").strip()
     if not u:
         return None
     u = re.sub(r"\.git/?$", "", u.rstrip("/"))
-    m = re.match(r"^[\w.+-]+://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+)$", u)  # https://, ssh://
-    if not m:
-        m = re.match(r"^(?:[^@/]+@)?([^/:]+):(?!\d)(.+)$", u)  # git@host:owner/repo
-    if not m:
+    m = (re.match(r"^(?:https?|ssh|git\+ssh)://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+)$", u)
+         or re.match(r"^(?:[^@/:]+@)?([^/:]+):(?!\d)([^/].*)$", u))
+    if not m or "." not in m.group(1):
         return None
-    return "https://%s/%s" % (m.group(1), m.group(2))
+    host = m.group(1).lower()
+    for name, path in COMMIT_PATH:
+        if name in host:
+            return "https://%s/%s" % (host, m.group(2)), path
+    return None
 
 
 def last_synced(path, git):
-    """(unix time, how) of the last fetch, or of the clone when never fetched."""
-    rel = git("rev-parse", "--git-path", "FETCH_HEAD")
-    if rel:
+    """(unix time, how) of the last fetch, or of the clone when never fetched.
+
+    A linked worktree (a ticket workspace made with `git worktree add`) has a
+    FETCH_HEAD of its own that a fetch in the main clone never writes, so the
+    shared one under --git-common-dir is read too, and the newer one wins.
+    """
+    stamps = []
+    for rel in (git("rev-parse", "--git-path", "FETCH_HEAD"),
+                os.path.join(git("rev-parse", "--git-common-dir") or ".git", "FETCH_HEAD")):
         fh = rel if os.path.isabs(rel) else os.path.join(path, rel)
-        if os.path.exists(fh):
-            return int(os.path.getmtime(fh)), "fetched"
+        if rel and os.path.exists(fh):
+            stamps.append(int(os.path.getmtime(fh)))
+    if stamps:
+        return max(stamps), "fetched"
     rel = git("rev-parse", "--git-path", "logs/HEAD")
     if rel:
         try:
@@ -206,9 +228,9 @@ def repo_facts(name, info):
     out["branch"] = git("rev-parse", "--abbrev-ref", "HEAD")
     web = web_url(git("config", "--get", "remote.origin.url"))
     if web:
-        out["web"] = web
+        out["web"] = web[0]
         if out.get("commit"):
-            out["commit_url"] = web + "/commit/" + out["commit"]
+            out["commit_url"] = web[0] + web[1] + out["commit"]
     out["synced"], out["synced_how"] = last_synced(path, git)
     files = git("ls-files", "-z")
     out["files"] = files.count("\0") if files else 0
@@ -357,6 +379,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             n = int(self.headers.get("Content-Length", "0"))
+            if n < 0:  # rfile.read(-1) would read until the client hangs up
+                raise ValueError
             body = json.loads(self.rfile.read(min(n, 1 << 20)) or b"{}")
         except ValueError:
             self.send(400, {"error": "request body is not JSON"})

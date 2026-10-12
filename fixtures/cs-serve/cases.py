@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -108,6 +109,13 @@ try:
     same = lambda p: bool(p) and os.path.realpath(p) == rws
     inside = os.path.join(ws, "pricing-lib-java", "src")
 
+    # A grouping folder holding a stray clone beside a workspace: `cs scopes`
+    # lists it with a "(mixed: …)" suffix, which the page must strip, not keep.
+    grp = os.path.join(tickets, "grp")
+    os.makedirs(os.path.join(grp, "W-2"))
+    for dest in (os.path.join(grp, "stray"), os.path.join(grp, "W-2", "kit-service-python")):
+        subprocess.run(["git", "clone", "-q", os.path.join(FLEET, "kit-service-python"), dest], check=True)
+
     proc, port, token = start(inside, tickets)
     servers.append(proc)
 
@@ -146,6 +154,14 @@ try:
     version = open(os.path.join(HERE, "..", "VERSION")).read().strip()
     case("meta-states-version", meta.get("version") == version,
          "meta says %r, VERSION says %r" % (meta.get("version"), version))
+
+    # The scope menu is parsed from `cs scopes`' table: every value must be a
+    # real directory, the mixed one included, or the parse has drifted.
+    values = [x["value"] for x in meta.get("scopes", []) if x["value"] != "fleet"]
+    real = set(os.path.realpath(v) for v in values)
+    case("scope-menu-paths-exist", values and all(os.path.isdir(v) for v in values)
+         and {os.path.realpath(grp), rws, os.path.realpath(os.path.join(grp, "W-2"))} <= real,
+         "parsed scopes %r" % values)
 
     # ---- 3. the scope ------------------------------------------------------
     case("opens-on-start-workspace", same(meta.get("default_scope")),
@@ -214,6 +230,47 @@ try:
     others = [r for n, r in rows.items() if n != "pricing-lib-java"]
     case("fleet-no-graph-is-none", others and all(r.get("symbols") is None or r.get("graph_built") for r in others),
          "a repo without a graph reported symbols: %r" % [r for r in others if r.get("symbols") is not None and not r.get("graph_built")])
+
+    # A negative Content-Length is refused at once, not read until the client
+    # hangs up (rfile.read(-1) reads to EOF).
+    sk = socket.create_connection(("127.0.0.1", port), timeout=10)
+    sk.sendall(("POST /api/call HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nX-CS-Token: %s\r\n"
+                "Content-Type: application/json\r\nContent-Length: -1\r\n\r\n" % (port, token)).encode())
+    try:
+        status = sk.recv(64).decode("latin-1").split(" ")[1]
+    except (socket.timeout, IndexError):
+        status = "no answer within 10s"
+    sk.close()
+    case("negative-content-length-refused", status == "400", "answered %s" % status)
+
+    # Commit links only for forge remotes, each with its own commit path; a
+    # local mirror or a Windows path is never turned into https://file//… .
+    sloader = importlib.machinery.SourceFileLoader("cs_serve_cases", os.path.join(HERE, "cs-serve"))
+    srv = importlib.util.module_from_spec(importlib.util.spec_from_loader("cs_serve_cases", sloader))
+    sloader.exec_module(srv)
+    expect = {
+        "git@github.com:acme/a.git": ("https://github.com/acme/a", "/commit/"),
+        "https://user@github.acme.io/o/r.git": ("https://github.acme.io/o/r", "/commit/"),
+        "ssh://git@gitlab.example.com:2222/g/s/z.git": ("https://gitlab.example.com/g/s/z", "/-/commit/"),
+        "git@bitbucket.org:t/r.git": ("https://bitbucket.org/t/r", "/commits/"),
+        "file:///Users/x/fleet/repo.git": None, "C:/x/repo": None, "/srv/mirror/repo": None,
+        "https://git.internal.example/acme/a": None, "git@host:2222/x": None,
+    }
+    wrong = {u: srv.web_url(u) for u, w in expect.items() if srv.web_url(u) != w}
+    case("commit-links-forges-only", not wrong, "got %r" % wrong)
+
+    # A ticket repo made with `git worktree add` has its own FETCH_HEAD, which a
+    # fetch in the main clone never writes: the shared one must count.
+    main_clone = os.path.join(tmp, "mirror", "kit-service-python")
+    subprocess.run(["git", "clone", "-q", os.path.join(FLEET, "kit-service-python"), main_clone], check=True)
+    subprocess.run(["git", "-C", main_clone, "fetch", "-q"], check=True)
+    wt = os.path.join(tmp, "wt", "WT-1", "kit-service-python")
+    subprocess.run(["git", "-C", main_clone, "worktree", "add", "-q", "-b", "wt1", wt],
+                   check=True, capture_output=True)
+    shared = int(os.path.getmtime(os.path.join(main_clone, ".git", "FETCH_HEAD")))
+    facts = srv.repo_facts("kit-service-python", {"path": wt, "layer": "ticket"})
+    case("worktree-synced-from-shared-fetch", facts.get("synced") == shared and facts.get("synced_how") == "fetched",
+         "synced %r (%r), shared FETCH_HEAD %r" % (facts.get("synced"), facts.get("synced_how"), shared))
 
     # Started outside every workspace, it opens on the fleet -- and says so.
     proc2, port2, token2 = start(FLEET, tickets)

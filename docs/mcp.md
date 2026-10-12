@@ -130,8 +130,8 @@ For every tool's required and optional arguments, use `cs-mcp --tools`:
 
 ```
 $ "$CS_ROOT/scripts/cs-mcp" --tools
-cs_uses        cs uses       (query, scope; optional: word, source_only, count)
-cs_text        cs text       (pattern, scope; optional: word, source_only, count)
+cs_uses        cs uses       (query, scope; optional: word, source_only, count, in_repo)
+cs_text        cs text       (pattern, scope; optional: word, source_only, count, in_repo, literal)
 cs_impls       cs impls      (symbol, repo, scope)
 …
 ```
@@ -141,7 +141,7 @@ the tool does take. The call does not run:
 
 ```
 cs_text {"scope": "fleet", "query": "probe"}
-→ unknown argument 'query' — cs_text takes: pattern, scope, word, source_only, count
+→ unknown argument 'query' — cs_text takes: pattern, scope, word, source_only, count, in_repo, literal
 ```
 
 ## Every tool requires an explicit scope

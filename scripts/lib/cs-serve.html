@@ -256,8 +256,9 @@ async function api(path, body, signal) {
 const scope = () => $("scope").value;
 
 // ---- tabs and the URL ----------------------------------------------------
-// Everything lives in the fragment, so a search is a link you can share or
-// bookmark, Back works -- and the query never reaches a server log.
+// Everything lives in the fragment, so Back works and a search can be copied
+// as a link -- and the query never reaches a server log. The link lasts for
+// this run only: the token in it is new each time `cs serve` starts.
 function setTab(name) {
   tab = name;
   for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-selected", b.dataset.tab === name ? "true" : "false");
@@ -328,6 +329,10 @@ async function scopeChanged(user) {
 // query is a bare identifier, `cs def` beside it so definitions come first.
 // The repo menu narrows INSIDE cs (--repo=), before the result cap.
 const IDENT = /^[A-Za-z_$][\w$]*$/;
+// Cosmetic only: the highlight compiles the query as a JavaScript RegExp, but
+// the search ran in the text engine's flavour (ripgrep, or grep -E). Where they
+// differ -- \<, POSIX classes, \b under --word -- a hit can show unhighlighted
+// or with a different span marked. The hit list is cs's answer; the marks are not.
 function highlighter(q, regex, word) {
   let re = null;
   try {

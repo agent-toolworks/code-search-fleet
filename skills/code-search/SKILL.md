@@ -55,6 +55,9 @@ repos rather than guessing.
 (`cs_changes` over MCP) lists everything since, small fixes included, and the
 MCP instructions name the running version. Details are in `docs/install.md`,
 "If you already use cs":
+- `cs_text` takes `literal` (since 1.28.0): pass it for a pasted `foo(` instead
+  of escaping it. `cs_text` / `cs_uses` take `in_repo` to search one repo; it
+  narrows before the hit cap, so do not filter a fleet-wide answer instead.
 - A scope is the **absolute path** of the workspace you are in, or of any
   directory inside it (since 1.16.0). A bare folder name still works when it is
   unique. `cs_scopes` lists workspaces by path, across `TICKETS_ROOT` and

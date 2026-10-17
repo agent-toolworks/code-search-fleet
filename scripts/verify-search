@@ -5781,33 +5781,15 @@ else
   fail=$((fail + 1)); failed_ids+=("disconnect-guard")
 fi
 
-# ---- cs serve: the local web page --------------------------------------------
-# A third door to the same engine room, and the one any web page the user has
-# open can knock on: 127.0.0.1 is reachable from the browser. The cases start
-# the server for real against this fleet and check the lock (token, Host,
-# Origin, JSON only), that the page offers exactly cs-mcp's tools and passes
-# cs's envelope through (refusals included), and the scope it opens on. They
-# live in fixtures/cs-serve/cases.py because they are an HTTP client.
-sv_out=$(python3 "$repo_root_dir/fixtures/cs-serve/cases.py" "$here/cs" "$FLEET_ROOT" 2>&1)
-sv_pass=$(grep -c '^PASS ' <<< "$sv_out")
-sv_fail=$(grep '^FAIL ' <<< "$sv_out")
-if [[ -z "$sv_fail" && "$sv_pass" -gt 0 ]] && matches "$sv_out" "^$sv_pass of $sv_pass cases passed"; then
-  ok "cs serve passes its $sv_pass fixture cases"
-  pass=$((pass + 1))
-else
-  err "cs serve failed its fixture cases"
-  while IFS= read -r _l; do [[ -n "$_l" ]] && info "    $_l"; done <<< "${sv_fail:-$sv_out}"
-  fail=$((fail + 1)); failed_ids+=("cs-serve")
-fi
-
 # ---- hub-source: what toolworks-hub runs -------------------------------------
-# hub-source/run is a fourth door, for toolworks-hub's local page. Like cs serve
-# it defines no answers of its own (cs-mcp's run_cs, cs-serve's fleet()), so
-# the cases check what it adds: a refusal stays an error rather than becoming
-# an empty result, each hit keeps its evidence kind and the searching: line,
-# and detect tells an empty or missing fleet from a working one. They live in
-# fixtures/hub-source/cases.py; a case that needs a toolworks-hub checkout is
-# reported as skipped without one, and a skip is not a pass.
+# hub-source/run is a third door to the same engine room, beside the CLI and
+# the MCP server: toolworks-hub's code-search page runs `run call` through it.
+# It defines no answers of its own (cs-mcp's answer()), so the cases check that
+# it offers exactly cs-mcp's tools, passes cs's envelope through (refusals
+# included), resolves hits to the layer they came from, reads the Fleet facts
+# right, and that detect tells an empty or missing fleet from a working one.
+# They live in fixtures/hub-source/cases.py; a case that needs a toolworks-hub
+# checkout is reported as skipped without one, and a skip is not a pass.
 hs_out=$(python3 "$repo_root_dir/fixtures/hub-source/cases.py" "$here/cs" "$FLEET_ROOT" 2>&1)
 hs_pass=$(grep -c '^PASS ' <<< "$hs_out")
 hs_fail=$(grep '^FAIL ' <<< "$hs_out")

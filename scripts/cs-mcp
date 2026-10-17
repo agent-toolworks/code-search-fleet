@@ -893,9 +893,10 @@ def answer(name, arguments):
     """Run a tool and return (plain_text, None) for the explain-yourself
     subcommands, or (None, envelope) for a search.
 
-    Split from call_tool so that scripts/cs-serve -- the local web page -- runs
-    the same validation and the same argv as this server, and renders the
-    envelope itself rather than parsing render()'s text back apart.
+    Split from call_tool so that hub-source/run -- what toolworks-hub's page
+    for code-search runs -- gets the same validation and the same argv as this
+    server, and the page renders the envelope itself rather than parsing
+    render()'s text back apart.
     """
     spec = BY_NAME.get(name)
     if spec is None:

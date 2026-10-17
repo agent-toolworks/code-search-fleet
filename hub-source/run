@@ -60,6 +60,15 @@ def first_line(text):
     return (text or "").strip().splitlines()[0] if (text or "").strip() else "no reason given"
 
 
+class CallError(Exception):
+    """A call that could not answer: printed as {"error"}, so the page says
+    why instead of showing an empty list."""
+
+
+def refused(what, rc, err):
+    return CallError("%s failed (exit %d): %s" % (what, rc, first_line(err).lstrip("✗ ").strip()))
+
+
 def run_plain(args):
     """Run `cs <args>` from / and return (rc, stdout, stderr), colour stripped."""
     proc = subprocess.run([mcp.CS] + args, cwd=mcp.CS_CWD, stdin=subprocess.DEVNULL,
@@ -95,7 +104,9 @@ def list_scopes():
     Parsed from the CLI's table rather than re-derived, so the page offers
     exactly the scopes cs would accept.
     """
-    _, out, err = run_plain(["scopes"])
+    rc, out, err = run_plain(["scopes"])
+    if rc != 0:
+        raise refused("cs scopes", rc, err)
     scopes = []
     for line in out.splitlines()[1:]:
         m = re.match(r"^\s*(\S+)\s\s(.+)$", line)
@@ -105,7 +116,7 @@ def list_scopes():
         if rest.startswith("fleet"):
             scopes.append({"value": "fleet", "repos": n, "label": rest.strip()})
         else:
-            path = rest.split("   (mixed")[0].strip()
+            path = re.sub(r"\s+\(mixed\b.*$", "", rest).strip()
             scopes.append({"value": path, "repos": n, "label": path})
     return scopes, err.strip()
 
@@ -129,13 +140,14 @@ def repo_paths(scope):
     IS depends on the scope (a ticket worktree or the fleet clone), and `cs
     repos` is the one place that says.
     """
-    rc, text, _ = run_plain(["repos", mcp.scope_flag(scope)])
+    rc, text, err = run_plain(["repos", mcp.scope_flag(scope)])
+    if rc != 0:
+        raise refused("cs repos", rc, err)
     repos = {}
-    if rc == 0:
-        for line in text.splitlines()[1:]:
-            m = re.match(r"^(\S+)\s+(ticket|fleet)\s+(/.*)$", line)
-            if m:
-                repos[m.group(1)] = {"layer": m.group(2), "path": m.group(3)}
+    for line in text.splitlines()[1:]:
+        m = re.match(r"^(\S+)\s+(ticket|fleet)\s+(/.*)$", line)
+        if m:
+            repos[m.group(1)] = {"layer": m.group(2), "path": m.group(3)}
     return repos
 
 
@@ -276,7 +288,12 @@ def ask(args):
     result["envelope"] = env
     scope = arguments.get("scope")
     if env.get("results") and scope:
-        result["repos"] = repo_paths(scope)
+        # The paths only turn hits into editor links: the answer stands
+        # without them, with the reason they are missing beside it.
+        try:
+            result["repos"] = repo_paths(scope)
+        except CallError as e:
+            result["repos_error"] = str(e)
     return result
 
 
@@ -297,8 +314,10 @@ def main(argv):
             sys.exit(2)
         try:
             return out(CALLS[cmd[1]](args))
-        except mcp.ToolError as e:
+        except (mcp.ToolError, CallError) as e:
             return out({"error": str(e)})
+        except Exception as e:  # cs missing, past its time limit: still an answer
+            return out({"error": "%s: %s" % (type(e).__name__, e)})
     print("unknown command: %s" % " ".join(cmd), file=sys.stderr)
     sys.exit(2)
 

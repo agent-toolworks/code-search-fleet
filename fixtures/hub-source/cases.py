@@ -19,8 +19,10 @@ Usage: python3 cases.py CS FLEET_ROOT
 Prints one `PASS <name>`, `FAIL <name> ...` or `SKIP <name> ...` line per case;
 exits 1 if any failed.
 """
+import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -130,7 +132,7 @@ try:
     meta = meta or {}
     names = [t["name"] for t in meta.get("tools", [])]
     case("meta: the page is offered exactly cs-mcp's tools", rc == 0 and names == [t[0] for t in mcp.TOOLS],
-         "offered %r" % names or raw[:400])
+         "offered %r" % names if names else raw[:400])
     case("meta: states cs's version", meta.get("version") == version,
          "meta says %r, VERSION says %r" % (meta.get("version"), version))
     values = [x["value"] for x in meta.get("scopes", []) if x["value"] != "fleet"]
@@ -179,6 +181,41 @@ try:
          hits and all(h["repo"] == "pricing-lib-java" for h in hits)
          and "narrowed by --repo=" in (env.get("view") or "") and env.get("note") == "literal",
          "got %r" % {k: env.get(k) for k in ("view", "note", "hits", "refused", "reason")})
+
+    # A command that fails is an error, never an empty list: "did not run" and
+    # "found nothing" are opposite facts.
+    rc, d, raw = call("repos", {"scope": "/nonexistent"}, **T)
+    case("repos: cs repos failing is an error with its reason, not an empty list",
+         rc == 0 and d and "repos" not in d and "no such directory" in d.get("error", ""), raw[:400])
+    rc, d, raw = call("fleet", {"scope": "/nonexistent"}, **T)
+    case("fleet: a scope cs refuses is an error, not an empty table",
+         rc == 0 and d and "repos" not in d and "no such directory" in d.get("error", ""), raw[:400])
+    real_run_plain = hubrun.run_plain
+    for exc in (subprocess.TimeoutExpired(["cs", "scopes"], 600), OSError(2, "No such file or directory")):
+        def boom(args, exc=exc):
+            raise exc
+        hubrun.run_plain = boom
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            hubrun.main(["run", "call", "meta", "{}"])
+        got = json.loads(buf.getvalue() or "null")
+        case("call: %s is printed as an error, never a traceback" % type(exc).__name__,
+             isinstance(got, dict) and got.get("error", "").startswith(type(exc).__name__), buf.getvalue()[:400])
+    hubrun.run_plain = lambda args: (1, "", "✗ the scopes table could not be read\n")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        hubrun.main(["run", "call", "meta", "{}"])
+    got = json.loads(buf.getvalue() or "null") or {}
+    case("meta: cs scopes failing is an error with its reason, not an empty scope menu",
+         "scopes" not in got and "cs scopes failed (exit 1): the scopes table could not be read" in got.get("error", ""),
+         buf.getvalue()[:400])
+    hubrun.run_plain = real_run_plain
+    # A wider column before "(mixed: ...)" must still be stripped.
+    hubrun.run_plain = lambda args: (0, "REPOS  SCOPE\n   3  fleet only\n   2  /t/grp      (mixed: 1 stray)\n", "")
+    got = hubrun.list_scopes()[0]
+    case("meta: the mixed suffix is stripped whatever the spacing",
+         [s["value"] for s in got] == ["fleet", "/t/grp"], "%r" % got)
+    hubrun.run_plain = real_run_plain
 
     rc, d, raw = run("call", "ask", "not json", **T)
     case("call: arguments that are not a JSON object are a usage error", rc == 2 and "JSON object" in raw, raw[:400])

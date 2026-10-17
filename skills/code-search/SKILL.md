@@ -712,11 +712,13 @@ regression. The same goes for Serena's Java server running without a JDK.
 Give file paths as `repo/path:line`, which is the format `cs` already emits and
 which stays clickable.
 
-**A user who wants to search for themselves** can run `cs serve` in a terminal
-(since 1.28.0): a local web page with a search box, a Fleet tab listing every
-repo (last commit, last fetch, files, symbols) and the other questions as forms,
-whose hits open in their editor. It is a page for a person, not a tool for you:
-keep calling `cs` or the `cs_*` tools yourself.
+**A user who wants to search for themselves** can open code-search's tab in
+[toolworks-hub](https://github.com/agent-toolworks/toolworks-hub) (`hub open`):
+a search box, a Fleet tab listing every repo (last commit, last fetch, files,
+symbols) and the other questions as forms, whose hits open in their editor.
+It is a page for a person, not a tool for you: keep calling `cs` or the `cs_*`
+tools yourself. (`cs serve`, the page code-search shipped from 1.28.0, was
+removed in 1.30.0; the hub has it now.)
 
 **Carry the answer kind into what you tell the user.** `cs` prints it precisely
 so it does not have to be guessed at: an answer that rests on a string match

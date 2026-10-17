@@ -222,9 +222,14 @@ Tool names, argument names per tool, and why `scope` is required:
 | How much to trust an answer | `cs why [kind]` |
 | What will not work on this machine, and the fix | `cs doctor` |
 | What changed since the version I knew | `cs changes [version]` |
-| All of the above in a browser, on this machine | `cs serve` |
+| All of the above in a browser, on this machine | the code-search tab in [toolworks-hub](#in-toolworks-hub) |
 
-`cs serve` opens a local web page with three tabs:
+## In toolworks-hub
+
+[toolworks-hub](https://github.com/agent-toolworks/toolworks-hub) is a local
+page for Claude Code and the agent-toolworks tools you have installed. It finds
+`hub-source/` inside this plugin, and its code-search tab has three tabs of its
+own:
 
 - **Search**: one box and a repo menu. It runs `cs text` (literal, or regex
   when ticked) narrowed to the chosen repo, and, when the query is a bare
@@ -239,22 +244,13 @@ Tool names, argument names per tool, and why `scope` is required:
 Each answer shows the scope searched, the kind of evidence behind it, and
 every PARTIAL / degraded / truncated warning above the hits; a refusal says
 why instead of showing an empty list. Hits are grouped by repo and open in
-your editor (VS Code, Cursor or JetBrains). The page opens on the workspace you
-started it in, like the CLI, and the query is in the page's URL, so Back
-works. A copied link lasts until `cs serve` stops: the token in it is new each
-run. It listens on 127.0.0.1 only and needs the per-run token in
-the URL it prints (`--port N` to choose the port, `--no-open` to skip the
-browser), so another web page cannot query your fleet through it. Ctrl-C
-stops it.
+your editor (VS Code, Cursor or JetBrains). A scope menu picks the fleet or
+any ticket workspace.
 
-## In toolworks-hub
-
-[toolworks-hub](https://github.com/agent-toolworks/toolworks-hub) is a local
-page for Claude Code and the agent-toolworks tools you have installed. It finds
-`hub-source/` inside this plugin and shows a search box over the fleet, the
-Fleet table and `cs doctor`, with the same evidence kinds and warnings as `cs
-serve`. It searches the fleet (main) only; for a ticket workspace, run `cs
-serve` from inside it.
+The page is the hub's; code-search ships only what it runs.
+`hub-source/run call` answers it with cs-mcp's own tool table and checks, so
+the page and the MCP server cannot disagree. Up to 1.29.0 code-search had its
+own server for this page, `cs serve`; it was removed in 1.30.0.
 
 ## How far to trust an answer
 

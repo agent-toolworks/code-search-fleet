@@ -1,51 +1,54 @@
 #!/usr/bin/env python3
 """code-search's source for toolworks-hub.
 
-The hub finds this folder inside the installed plugin and runs `run detect`
-and `run fetch <widget>`, each printing JSON in the shapes of its source
-contract, version 1.
+The hub finds this folder inside the installed plugin. It runs `run detect`
+for the source's state, and the page it ships for code-search (Search, Fleet
+and Questions) runs `run call <op> <json arguments>` through it:
 
-Like `cs serve`, it defines no answers of its own. A search is cs-mcp's
-run_cs -- `cs text --literal --fleet --porcelain` -- and the fleet table is
-cs-serve's fleet(), so the hub, the page and the MCP server cannot disagree.
-Every answer keeps what makes it trustworthy: the evidence kind goes on each
-result, and the `searching:` line with any PARTIAL / degraded / truncated
-warning goes in the notice above the hits. A refusal is an error, never an
-empty result: "this search did not happen" and "it found nothing" are
-opposite facts.
+  call meta {}               cs's version, every cs-mcp tool with its argument
+                             schema, and the scopes `cs scopes` lists
+  call repos {"scope"}       {repo: {path, layer}} in that scope
+  call fleet {"scope"}       facts about each repo: branch, last commit and its
+                             forge link, last fetch, files, tokensave symbols
+  call ask {"tool", "arguments"}
+                             one cs-mcp tool: cs's porcelain envelope (or text
+                             for an explainer), plus the repos' paths for hits
 
-It always searches the fleet (main). Ticket workspaces are for `cs serve`,
-started in the workspace, or the CLI.
+It defines no answers of its own. A question is cs-mcp's answer() -- the
+tool table, argument checks and argv come from cs-mcp, which takes them from
+nothing but `cs` -- so the hub's page and the MCP server cannot disagree, and
+a verb added to cs-mcp appears on the page with no change here. A refusal is
+passed through as cs's envelope or an {"error"}, never as an empty result:
+"this search did not happen" and "it found nothing" are opposite facts.
+
+The page itself lives in toolworks-hub (web/views/code-search/); code-search
+ships no web page and no server.
 """
+import concurrent.futures
 import importlib.machinery
 import importlib.util
 import json
 import os
 import re
+import sqlite3
+import subprocess
 import sys
 import time
-from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_loader = importlib.machinery.SourceFileLoader("cs_serve", os.path.join(ROOT, "scripts", "cs-serve"))
-_spec = importlib.util.spec_from_loader("cs_serve", _loader)
-serve = importlib.util.module_from_spec(_spec)
-_loader.exec_module(serve)  # its main() is behind `if __name__ == "__main__"`
-mcp = serve.mcp
+# cs-mcp is a script, not a module (no .py), so it is loaded by path. Its
+# main() is behind `if __name__ == "__main__"` and does not run.
+_loader = importlib.machinery.SourceFileLoader("cs_mcp", os.path.join(ROOT, "scripts", "cs-mcp"))
+_spec = importlib.util.spec_from_loader("cs_mcp", _loader)
+mcp = importlib.util.module_from_spec(_spec)
+_loader.exec_module(mcp)
 
-MAX_RESULTS = 200
-ANSI = re.compile(r"\x1b\[[0-9;]*m")
-CHECK = re.compile(r"^\s+([✓!✗])\s+(\S+)\s+(.*)$")
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def out(value):
     json.dump(value, sys.stdout)
     sys.stdout.write("\n")
-
-
-def fail(message):
-    print(message, file=sys.stderr)
-    sys.exit(1)
 
 
 def version():
@@ -57,11 +60,19 @@ def first_line(text):
     return (text or "").strip().splitlines()[0] if (text or "").strip() else "no reason given"
 
 
+def run_plain(args):
+    """Run `cs <args>` from / and return (rc, stdout, stderr), colour stripped."""
+    proc = subprocess.run([mcp.CS] + args, cwd=mcp.CS_CWD, stdin=subprocess.DEVNULL,
+                          capture_output=True, timeout=mcp.CALL_TIMEOUT)
+    clean = lambda b: ANSI_RE.sub("", b.decode("utf-8", "replace"))
+    return proc.returncode, clean(proc.stdout), clean(proc.stderr)
+
+
 def detect():
-    # `cs repos` prints a table and has no porcelain form; cs-serve reads it the
-    # same way. A refusal exits non-zero with its reason on stderr.
+    # `cs repos` prints a table and has no porcelain form. A refusal exits
+    # non-zero with its reason on stderr.
     try:
-        rc, _, err = serve.run_plain(["repos", "--fleet"])
+        rc, _, err = run_plain(["repos", "--fleet"])
     except Exception as e:  # cs missing, or past its time limit
         return out({"state": "broken", "reason": "cs repos did not run (%s)" % e})
     if rc != 0:
@@ -76,109 +87,218 @@ def detect():
     out({"state": "working", "tool_version": version()})
 
 
-def notice(env, shown):
-    """The provenance line and every warning cs attached, in one line."""
-    parts = [env["view"]] if env.get("view") else []
-    if env.get("partial"):
-        parts.append("PARTIAL: not every engine finished, so a missing hit rules nothing out")
-    hits, returned = env.get("hits"), env.get("returned") or 0
-    if isinstance(hits, int) and hits > returned:
-        parts.append("showing %d of %d" % (returned, hits))
-    if shown < returned:
-        parts.append("first %d shown here" % shown)
-    if env.get("degraded"):
-        parts.append("degraded: %s" % env["degraded"])
-    for e in env.get("engine_errors") or []:
-        parts.append("engine error: %s" % e)
-    return "; ".join(parts) or None
+# ---- call meta -------------------------------------------------------------
 
+def list_scopes():
+    """The scopes `cs scopes` lists: ("fleet", label) then every workspace by path.
 
-def find(query):
-    try:
-        env = mcp.run_cs("text", [query], scope="fleet", flags=("--literal",))
-    except mcp.ToolError as e:
-        fail(str(e))
-    if env.get("refused"):
-        fail("cs refused, so nothing was searched: %s" % (env.get("reason") or "no reason given"))
-    results = []
-    for r in (env.get("results") or [])[:MAX_RESULTS]:
-        if r.get("repo"):
-            where = "%s/%s" % (r["repo"], r["path"]) + (":%d" % r["line"] if r.get("line") else "")
+    Parsed from the CLI's table rather than re-derived, so the page offers
+    exactly the scopes cs would accept.
+    """
+    _, out, err = run_plain(["scopes"])
+    scopes = []
+    for line in out.splitlines()[1:]:
+        m = re.match(r"^\s*(\S+)\s\s(.+)$", line)
+        if not m:
+            continue
+        n, rest = m.groups()
+        if rest.startswith("fleet"):
+            scopes.append({"value": "fleet", "repos": n, "label": rest.strip()})
         else:
-            where = None
-        item = {"title": where or (r.get("text") or "").strip() or "(empty line)"}
-        text = (r.get("text") or "").strip()
-        if where and text:
-            item["detail"] = text[:300]
-        if env.get("kind"):
-            item["evidence"] = env["kind"]
-        results.append(item)
-    result = {"kind": "search", "data": {"results": results}}
-    n = notice(env, len(results))
-    if n:
-        result["notice"] = n
-    out(result)
+            path = rest.split("   (mixed")[0].strip()
+            scopes.append({"value": path, "repos": n, "label": path})
+    return scopes, err.strip()
 
 
-def when(epoch):
-    return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M") if epoch else None
+def meta(_args):
+    scopes, scopes_note = list_scopes()
+    return {
+        "version": mcp._version(),
+        "tools": [mcp.tool_schema(t) for t in mcp.TOOLS],
+        "scopes": scopes,
+        "scopes_note": scopes_note,
+    }
 
 
-def fleet():
-    rows = []
-    for r in serve.fleet("fleet")["repos"]:
-        rows.append({
-            "repo": r["name"],
-            "branch": r.get("branch") or None,
-            "commit": (r.get("subject") or "")[:80] or None,
-            "committed": when(r.get("committed")),
-            "synced": when(r.get("synced")),
-            "files": r.get("files"),
-            "symbols": r.get("symbols") if "symbols" in r else None,
-        })
-    out({"kind": "table", "data": {
-        "columns": [
-            {"id": "repo", "title": "Repo"},
-            {"id": "branch", "title": "Branch"},
-            {"id": "commit", "title": "Last commit"},
-            {"id": "committed", "title": "Committed"},
-            {"id": "synced", "title": "Last fetched"},
-            {"id": "files", "title": "Files"},
-            {"id": "symbols", "title": "Symbols"},
-        ],
-        "rows": rows,
-    }})
+# ---- call repos ------------------------------------------------------------
+
+def repo_paths(scope):
+    """{repo: {"path": abs, "layer": "ticket"|"fleet"}} for this scope.
+
+    A hit is reported as repo + path relative to it; which directory that repo
+    IS depends on the scope (a ticket worktree or the fleet clone), and `cs
+    repos` is the one place that says.
+    """
+    rc, text, _ = run_plain(["repos", mcp.scope_flag(scope)])
+    repos = {}
+    if rc == 0:
+        for line in text.splitlines()[1:]:
+            m = re.match(r"^(\S+)\s+(ticket|fleet)\s+(/.*)$", line)
+            if m:
+                repos[m.group(1)] = {"layer": m.group(2), "path": m.group(3)}
+    return repos
 
 
-def doctor():
-    """`cs doctor` as a list: one item per check, its continuation lines kept.
-    cs doctor has no porcelain form, so its text is read line by line."""
-    rc, text, err = serve.run_plain(["doctor"])
-    items = []
-    for line in ANSI.sub("", text).splitlines():
-        m = CHECK.match(line)
-        if m:
-            items.append({"text": "%s %s" % (m.group(1), m.group(2)), "detail": m.group(3).strip()})
-        elif items and line.startswith("    ") and line.strip():
-            items[-1]["detail"] = (items[-1].get("detail", "") + " " + line.strip()).strip()
-    if not items:
-        fail("cs doctor printed no checks (exit %s): %s" % (rc, first_line(ANSI.sub("", err or text))))
-    for i in items:
-        if not i.get("detail"):
-            del i["detail"]
-    out({"kind": "list", "data": {"items": items}})
+def repos(args):
+    return {"repos": repo_paths(args.get("scope") or "fleet")}
+
+
+# ---- call fleet ------------------------------------------------------------
+# Facts ABOUT each repo, read from git and from the repo's tokensave graph --
+# not answers about the code, so nothing here competes with a cs verb.
+
+# Node kinds that are not definitions: the file itself, its package line, its
+# imports, and an annotation's use site. Counted out so that "symbols" means
+# what a reader assumes it means -- classes, methods, fields and the like.
+NOT_SYMBOLS = ("file", "package", "use", "import", "annotation_usage", "module")
+
+
+# How each known forge spells a commit page. A host not on this list gets no
+# link rather than a guessed one: Bitbucket's /commit/<sha> is a 404, and a
+# remote that is a local mirror is not a web page at all.
+COMMIT_PATH = (("github", "/commit/"), ("gitlab", "/-/commit/"), ("bitbucket", "/commits/"))
+
+
+def web_url(origin):
+    """(https://host/owner/repo, commit path) for a forge remote, else None.
+
+    Only the forms a forge hands out are accepted -- http(s)://, ssh:// and
+    scp-style user@host:path -- with a dotted host, so a local mirror
+    (file:///…, /srv/…, C:/…) never turns into https://file//… .
+    """
+    u = (origin or "").strip()
+    if not u:
+        return None
+    u = re.sub(r"\.git/?$", "", u.rstrip("/"))
+    m = (re.match(r"^(?:https?|ssh|git\+ssh)://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+)$", u)
+         or re.match(r"^(?:[^@/:]+@)?([^/:]+):(?!\d)([^/].*)$", u))
+    if not m or "." not in m.group(1):
+        return None
+    host = m.group(1).lower()
+    for name, path in COMMIT_PATH:
+        if name in host:
+            return "https://%s/%s" % (host, m.group(2)), path
+    return None
+
+
+def last_synced(path, git):
+    """(unix time, how) of the last fetch, or of the clone when never fetched.
+
+    A linked worktree (a ticket workspace made with `git worktree add`) has a
+    FETCH_HEAD of its own that a fetch in the main clone never writes, so the
+    shared one under --git-common-dir is read too, and the newer one wins.
+    """
+    stamps = []
+    for rel in (git("rev-parse", "--git-path", "FETCH_HEAD"),
+                os.path.join(git("rev-parse", "--git-common-dir") or ".git", "FETCH_HEAD")):
+        fh = rel if os.path.isabs(rel) else os.path.join(path, rel)
+        if rel and os.path.exists(fh):
+            stamps.append(int(os.path.getmtime(fh)))
+    if stamps:
+        return max(stamps), "fetched"
+    rel = git("rev-parse", "--git-path", "logs/HEAD")
+    if rel:
+        try:
+            with open(rel if os.path.isabs(rel) else os.path.join(path, rel)) as f:
+                first = f.readline()
+            m = re.search(r"> (\d+) [+-]\d{4}\t(clone|branch)", first)
+            if m:
+                return int(m.group(1)), "cloned"
+        except OSError:
+            pass
+    return None, None
+
+
+def repo_facts(name, info):
+    path = info["path"]
+
+    def git(*args):
+        try:
+            p = subprocess.run(["git", "-C", path] + list(args), capture_output=True,
+                               text=True, timeout=60, stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            return ""
+        return p.stdout.strip() if p.returncode == 0 else ""
+
+    out = {"name": name, "layer": info["layer"], "path": path}
+    head = git("log", "-1", "--format=%H%x1f%s%x1f%ct%x1f%an")
+    if head:
+        sha, subject, ct, author = (head.split("\x1f") + ["", "", "", ""])[:4]
+        out.update(commit=sha, subject=subject, committed=int(ct or 0), author=author)
+    out["branch"] = git("rev-parse", "--abbrev-ref", "HEAD")
+    web = web_url(git("config", "--get", "remote.origin.url"))
+    if web:
+        out["web"] = web[0]
+        if out.get("commit"):
+            out["commit_url"] = web[0] + web[1] + out["commit"]
+    out["synced"], out["synced_how"] = last_synced(path, git)
+    files = git("ls-files", "-z")
+    out["files"] = files.count("\0") if files else 0
+    db = os.path.join(path, ".tokensave", "tokensave.db")
+    if os.path.isfile(db):
+        try:
+            # Plain connect + query_only: mode=ro fails on a cleanly closed WAL
+            # graph, which has no -shm file.
+            con = sqlite3.connect(db, timeout=5)
+            con.execute("PRAGMA query_only = 1")
+            q = "SELECT count(*) FROM nodes WHERE kind NOT IN (%s)" % ",".join("?" * len(NOT_SYMBOLS))
+            out["symbols"] = con.execute(q, NOT_SYMBOLS).fetchone()[0]
+            con.close()
+        except sqlite3.Error as e:
+            out["graph_error"] = str(e)
+        out["graph_built"] = int(os.path.getmtime(db))
+    return out
+
+
+def fleet(args):
+    found = repo_paths(args.get("scope") or "fleet")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        rows = list(pool.map(lambda kv: repo_facts(*kv), sorted(found.items())))
+    return {"repos": rows, "now": int(time.time())}
+
+
+# ---- call ask --------------------------------------------------------------
+
+def ask(args):
+    name = args.get("tool")
+    arguments = args.get("arguments") or {}
+    if not isinstance(name, str) or not isinstance(arguments, dict):
+        return {"error": "ask takes {\"tool\": <name>, \"arguments\": {...}}"}
+    t0 = time.time()
+    try:
+        plain, env = mcp.answer(name, arguments)
+    except mcp.ToolError as e:
+        return {"error": str(e)}
+    result = {"seconds": round(time.time() - t0, 2)}
+    if env is None:
+        result["text"] = ANSI_RE.sub("", plain)
+        return result
+    result["envelope"] = env
+    scope = arguments.get("scope")
+    if env.get("results") and scope:
+        result["repos"] = repo_paths(scope)
+    return result
+
+
+CALLS = {"meta": meta, "repos": repos, "fleet": fleet, "ask": ask}
 
 
 def main(argv):
     cmd = argv[1:]
     if cmd == ["detect"]:
         return detect()
-    if cmd == ["fetch", "fleet"]:
-        return fleet()
-    if cmd == ["fetch", "doctor"]:
-        return doctor()
-    if len(cmd) == 4 and cmd[:2] == ["fetch", "find"] and cmd[2] == "--query":
-        return find(cmd[3])
+    if len(cmd) == 3 and cmd[0] == "call" and cmd[1] in CALLS:
+        try:
+            args = json.loads(cmd[2])
+        except ValueError:
+            args = None
+        if not isinstance(args, dict):
+            print("call %s: the arguments must be a JSON object" % cmd[1], file=sys.stderr)
+            sys.exit(2)
+        try:
+            return out(CALLS[cmd[1]](args))
+        except mcp.ToolError as e:
+            return out({"error": str(e)})
     print("unknown command: %s" % " ".join(cmd), file=sys.stderr)
     sys.exit(2)
 

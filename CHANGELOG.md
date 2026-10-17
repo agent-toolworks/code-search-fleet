@@ -8,6 +8,15 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+- **Removed: `cs serve`.** Its page (Search, Fleet, Questions) moved into
+  [toolworks-hub](https://github.com/agent-toolworks/toolworks-hub), as the
+  hub's code-search tab: run `hub open`. Everything it showed is there, and
+  the scope menu still picks any ticket workspace. `cs serve` now fails as an
+  unknown subcommand.
+- **Changed: `hub-source/`** answers the hub's page with `run call meta`,
+  `repos`, `fleet` and `ask` (a cs-mcp tool), in place of the `find`, `fleet`
+  and `doctor` widgets. It needs a toolworks-hub that has the code-search page.
+
 ## 1.29.0 — 2026-10-17
 
 - **New: code-search in toolworks-hub.** The plugin now carries `hub-source/`,

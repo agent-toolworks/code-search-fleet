@@ -8,6 +8,8 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.30.0 — 2026-10-17
+
 - **Removed: `cs serve`.** Its page (Search, Fleet, Questions) moved into
   [toolworks-hub](https://github.com/agent-toolworks/toolworks-hub), as the
   hub's code-search tab: run `hub open`. Everything it showed is there, and

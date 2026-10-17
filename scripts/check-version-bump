@@ -44,8 +44,9 @@ market=".claude-plugin/marketplace.json"
 # "new artifact under an unchanged version string" failure this gate exists for.
 # hooks/ ships for the same reason: installing the plugin registers its hooks.
 # fixtures/verified-versions.tsv ships because cs doctor and the release notes
-# read it as the versions a release was tested with (#100).
-SHIPPED_RE='^(scripts/|skills/|hooks/|\.mcp\.json|\.claude-plugin/marketplace\.json|fixtures/verified-versions\.tsv)'
+# read it as the versions a release was tested with (#100). hub-source/ ships
+# because toolworks-hub runs it from the installed plugin.
+SHIPPED_RE='^(scripts/|skills/|hooks/|hub-source/|\.mcp\.json|\.claude-plugin/marketplace\.json|fixtures/verified-versions\.tsv)'
 
 version_in() {  # <json text>
   sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<< "$1" | head -1
@@ -82,6 +83,9 @@ fi
 if [[ -f "$root/VERSION" ]]; then
   fv=$(tr -d '[:space:]' < "$root/VERSION")
   [[ "$fv" == "$pv" ]] || die "VERSION says $fv, $manifest says $pv
+  set all of them with: scripts/set-version <version>"
+  hv=$(version_in "$(cat "$root/hub-source/source.json" 2>/dev/null)")
+  [[ -z "$hv" || "$hv" == "$pv" ]] || die "hub-source/source.json says $hv, $manifest says $pv
   set all of them with: scripts/set-version <version>"
   grep -q "^## $pv " "$root/CHANGELOG.md" 2>/dev/null \
     || die "CHANGELOG.md has no \"## $pv\" entry

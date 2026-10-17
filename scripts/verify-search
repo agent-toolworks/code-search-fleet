@@ -5800,6 +5800,29 @@ else
   fail=$((fail + 1)); failed_ids+=("cs-serve")
 fi
 
+# ---- hub-source: what toolworks-hub runs -------------------------------------
+# hub-source/run is a fourth door, for toolworks-hub's local page. Like cs serve
+# it defines no answers of its own (cs-mcp's run_cs, cs-serve's fleet()), so
+# the cases check what it adds: a refusal stays an error rather than becoming
+# an empty result, each hit keeps its evidence kind and the searching: line,
+# and detect tells an empty or missing fleet from a working one. They live in
+# fixtures/hub-source/cases.py; a case that needs a toolworks-hub checkout is
+# reported as skipped without one, and a skip is not a pass.
+hs_out=$(python3 "$repo_root_dir/fixtures/hub-source/cases.py" "$here/cs" "$FLEET_ROOT" 2>&1)
+hs_pass=$(grep -c '^PASS ' <<< "$hs_out")
+hs_fail=$(grep '^FAIL ' <<< "$hs_out")
+if [[ -z "$hs_fail" && "$hs_pass" -gt 0 ]] && matches "$hs_out" "^$hs_pass of $hs_pass cases passed"; then
+  ok "hub-source passes its $hs_pass fixture cases"
+  pass=$((pass + 1))
+else
+  err "hub-source failed its fixture cases"
+  while IFS= read -r _l; do [[ -n "$_l" ]] && info "    $_l"; done <<< "${hs_fail:-$hs_out}"
+  fail=$((fail + 1)); failed_ids+=("hub-source")
+fi
+while IFS= read -r _l; do
+  [[ "$_l" == SKIP\ * ]] && skip "hub-source: ${_l#SKIP }" "no toolworks-hub checkout"
+done <<< "$hs_out"
+
 info ""
 if [[ $skipped -gt 0 ]]; then
   info "${C_BOLD}$pass passed, $fail failed, $skipped skipped${C_OFF}"

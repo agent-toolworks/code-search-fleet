@@ -8,6 +8,19 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.29.0 — 2026-10-17
+
+- **New: code-search in toolworks-hub.** The plugin now carries `hub-source/`,
+  which [toolworks-hub](https://github.com/agent-toolworks/toolworks-hub) runs
+  to show the fleet on its local page: a search box (`cs text --literal` over
+  the fleet), the Fleet table from `cs serve`, and `cs doctor`. Each hit keeps
+  its evidence kind, the `searching:` line and any PARTIAL / degraded /
+  truncated warning sit above the hits, and a refused query shows as an error,
+  never as "no results". With no repositories in the fleet root, the hub shows
+  code-search as not set up and names `fleet-init --clone`. Nothing to do if
+  you do not use the hub; it searches the fleet (main) only, so use `cs serve`
+  or the CLI for a ticket workspace.
+
 ## 1.28.0 — 2026-10-12
 
 - **New: `cs serve`, the fleet search as a local web page.** Run it from a

@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""code-search's source for toolworks-hub.
+
+The hub finds this folder inside the installed plugin and runs `run detect`
+and `run fetch <widget>`, each printing JSON in the shapes of its source
+contract, version 1.
+
+Like `cs serve`, it defines no answers of its own. A search is cs-mcp's
+run_cs -- `cs text --literal --fleet --porcelain` -- and the fleet table is
+cs-serve's fleet(), so the hub, the page and the MCP server cannot disagree.
+Every answer keeps what makes it trustworthy: the evidence kind goes on each
+result, and the `searching:` line with any PARTIAL / degraded / truncated
+warning goes in the notice above the hits. A refusal is an error, never an
+empty result: "this search did not happen" and "it found nothing" are
+opposite facts.
+
+It always searches the fleet (main). Ticket workspaces are for `cs serve`,
+started in the workspace, or the CLI.
+"""
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import sys
+import time
+from datetime import datetime
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_loader = importlib.machinery.SourceFileLoader("cs_serve", os.path.join(ROOT, "scripts", "cs-serve"))
+_spec = importlib.util.spec_from_loader("cs_serve", _loader)
+serve = importlib.util.module_from_spec(_spec)
+_loader.exec_module(serve)  # its main() is behind `if __name__ == "__main__"`
+mcp = serve.mcp
+
+MAX_RESULTS = 200
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+CHECK = re.compile(r"^\s+([✓!✗])\s+(\S+)\s+(.*)$")
+
+
+def out(value):
+    json.dump(value, sys.stdout)
+    sys.stdout.write("\n")
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+
+def version():
+    with open(os.path.join(ROOT, "VERSION"), encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def first_line(text):
+    return (text or "").strip().splitlines()[0] if (text or "").strip() else "no reason given"
+
+
+def detect():
+    # `cs repos` prints a table and has no porcelain form; cs-serve reads it the
+    # same way. A refusal exits non-zero with its reason on stderr.
+    try:
+        rc, _, err = serve.run_plain(["repos", "--fleet"])
+    except Exception as e:  # cs missing, or past its time limit
+        return out({"state": "broken", "reason": "cs repos did not run (%s)" % e})
+    if rc != 0:
+        reason = first_line(err).lstrip("✗ ").strip()
+        if "no repositories" in reason:
+            return out({"state": "not_set_up", "reason": reason,
+                        "fix": "clone repositories into the fleet: fleet-init --clone <owner/repo>"})
+        if "fleet root" in reason:
+            return out({"state": "not_set_up", "reason": reason,
+                        "fix": "set FLEET_ROOT in ~/.config/repo-fleet/fleet.env"})
+        return out({"state": "broken", "reason": reason})
+    out({"state": "working", "tool_version": version()})
+
+
+def notice(env, shown):
+    """The provenance line and every warning cs attached, in one line."""
+    parts = [env["view"]] if env.get("view") else []
+    if env.get("partial"):
+        parts.append("PARTIAL: not every engine finished, so a missing hit rules nothing out")
+    hits, returned = env.get("hits"), env.get("returned") or 0
+    if isinstance(hits, int) and hits > returned:
+        parts.append("showing %d of %d" % (returned, hits))
+    if shown < returned:
+        parts.append("first %d shown here" % shown)
+    if env.get("degraded"):
+        parts.append("degraded: %s" % env["degraded"])
+    for e in env.get("engine_errors") or []:
+        parts.append("engine error: %s" % e)
+    return "; ".join(parts) or None
+
+
+def find(query):
+    try:
+        env = mcp.run_cs("text", [query], scope="fleet", flags=("--literal",))
+    except mcp.ToolError as e:
+        fail(str(e))
+    if env.get("refused"):
+        fail("cs refused, so nothing was searched: %s" % (env.get("reason") or "no reason given"))
+    results = []
+    for r in (env.get("results") or [])[:MAX_RESULTS]:
+        if r.get("repo"):
+            where = "%s/%s" % (r["repo"], r["path"]) + (":%d" % r["line"] if r.get("line") else "")
+        else:
+            where = None
+        item = {"title": where or (r.get("text") or "").strip() or "(empty line)"}
+        text = (r.get("text") or "").strip()
+        if where and text:
+            item["detail"] = text[:300]
+        if env.get("kind"):
+            item["evidence"] = env["kind"]
+        results.append(item)
+    result = {"kind": "search", "data": {"results": results}}
+    n = notice(env, len(results))
+    if n:
+        result["notice"] = n
+    out(result)
+
+
+def when(epoch):
+    return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M") if epoch else None
+
+
+def fleet():
+    rows = []
+    for r in serve.fleet("fleet")["repos"]:
+        rows.append({
+            "repo": r["name"],
+            "branch": r.get("branch") or None,
+            "commit": (r.get("subject") or "")[:80] or None,
+            "committed": when(r.get("committed")),
+            "synced": when(r.get("synced")),
+            "files": r.get("files"),
+            "symbols": r.get("symbols") if "symbols" in r else None,
+        })
+    out({"kind": "table", "data": {
+        "columns": [
+            {"id": "repo", "title": "Repo"},
+            {"id": "branch", "title": "Branch"},
+            {"id": "commit", "title": "Last commit"},
+            {"id": "committed", "title": "Committed"},
+            {"id": "synced", "title": "Last fetched"},
+            {"id": "files", "title": "Files"},
+            {"id": "symbols", "title": "Symbols"},
+        ],
+        "rows": rows,
+    }})
+
+
+def doctor():
+    """`cs doctor` as a list: one item per check, its continuation lines kept.
+    cs doctor has no porcelain form, so its text is read line by line."""
+    rc, text, err = serve.run_plain(["doctor"])
+    items = []
+    for line in ANSI.sub("", text).splitlines():
+        m = CHECK.match(line)
+        if m:
+            items.append({"text": "%s %s" % (m.group(1), m.group(2)), "detail": m.group(3).strip()})
+        elif items and line.startswith("    ") and line.strip():
+            items[-1]["detail"] = (items[-1].get("detail", "") + " " + line.strip()).strip()
+    if not items:
+        fail("cs doctor printed no checks (exit %s): %s" % (rc, first_line(ANSI.sub("", err or text))))
+    for i in items:
+        if not i.get("detail"):
+            del i["detail"]
+    out({"kind": "list", "data": {"items": items}})
+
+
+def main(argv):
+    cmd = argv[1:]
+    if cmd == ["detect"]:
+        return detect()
+    if cmd == ["fetch", "fleet"]:
+        return fleet()
+    if cmd == ["fetch", "doctor"]:
+        return doctor()
+    if len(cmd) == 4 and cmd[:2] == ["fetch", "find"] and cmd[2] == "--query":
+        return find(cmd[3])
+    print("unknown command: %s" % " ".join(cmd), file=sys.stderr)
+    sys.exit(2)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

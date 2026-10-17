@@ -1,0 +1,14 @@
+{
+  "contract": 1,
+  "name": "code-search",
+  "title": "code-search",
+  "version": "1.29.0",
+  "network": false,
+  "refresh_seconds": 300,
+  "timeout_seconds": 45,
+  "widgets": [
+    {"id": "find", "kind": "search", "title": "Search the fleet", "example_query": "TODO"},
+    {"id": "fleet", "kind": "table", "title": "Fleet"},
+    {"id": "doctor", "kind": "list", "title": "cs doctor"}
+  ]
+}

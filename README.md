@@ -247,6 +247,15 @@ the URL it prints (`--port N` to choose the port, `--no-open` to skip the
 browser), so another web page cannot query your fleet through it. Ctrl-C
 stops it.
 
+## In toolworks-hub
+
+[toolworks-hub](https://github.com/agent-toolworks/toolworks-hub) is a local
+page for Claude Code and the agent-toolworks tools you have installed. It finds
+`hub-source/` inside this plugin and shows a search box over the fleet, the
+Fleet table and `cs doctor`, with the same evidence kinds and warnings as `cs
+serve`. It searches the fleet (main) only; for a ticket workspace, run `cs
+serve` from inside it.
+
 ## How far to trust an answer
 
 A perfect score on a fixture is not the goal; some questions are undecidable

@@ -4,8 +4,9 @@
 #
 # Set the plugin's version everywhere it is written, and date the changelog.
 #
-# Updates VERSION, the two manifests (.claude-plugin/plugin.json and the plugin
-# entry in .claude-plugin/marketplace.json), and CHANGELOG.md: what is under
+# Updates VERSION, the three manifests (.claude-plugin/plugin.json, the plugin
+# entry in .claude-plugin/marketplace.json, and hub-source/source.json, the
+# toolworks-hub source), and CHANGELOG.md: what is under
 # "## Unreleased" becomes the new version's entry, with today's date, and an
 # empty "## Unreleased" is left above it. Commit the result, then tag it
 # vMAJOR.MINOR.PATCH; `check-version-bump` holds the four in agreement.
@@ -32,7 +33,7 @@ subst() {  # <file> <sed expression>
 }
 
 printf '%s\n' "$new" > "$root/VERSION"
-for manifest in "$root/.claude-plugin/plugin.json" "$root/.claude-plugin/marketplace.json"; do
+for manifest in "$root/.claude-plugin/plugin.json" "$root/.claude-plugin/marketplace.json" "$root/hub-source/source.json"; do
   subst "$manifest" "s/\"version\": \"$old\"/\"version\": \"$new\"/"
   grep -q "\"version\": \"$new\"" "$manifest" || { echo "$manifest did not say $old" >&2; exit 1; }
 done

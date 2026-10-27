@@ -316,8 +316,8 @@ before 1.16. Update anything that says otherwise:
   `resolved · 0 hit(s)`. `cs doctor` lists the repos affected.
 - **`cs callers` / `callees` / `impact` answer for a method with many callers**
   (1.26.0, #108). Before 1.26.0 a method with more than about 50 callers was
-  refused as *no parseable JSON*, because tokensave's CLI cuts every reply at
-  15,000 characters. cs now reads the graph directly. Callers are one row per
+  refused as *no parseable JSON*, because tokensave's CLI cut every reply at
+  15,000 characters (until tokensave 7.16.0). cs now reads the graph directly. Callers are one row per
   call site, so a caller that calls on three lines is three rows and counts
   are higher than before. A refusal that says the CLI *cut the reply … at
   15,000 characters* (`cs impls`' graph fallback) means the
@@ -376,3 +376,15 @@ before 1.16. Update anything that says otherwise:
   rather than filtering a fleet-wide answer: it narrows before the 200-hit
   cap, so the hits and counts are that repo's own, and the `searching:` line
   says `<repo> only … narrowed by --repo=`. Other verbs refuse both flags.
+- **tokensave 7.16.0 is supported** (1.30.1). With 7.16.0, `cs impls`
+  answering from the graph said *nothing found* for every type before
+  1.30.1: cs read none of tokensave's rows, so this did not mean "nothing
+  implements it". Rerun any `cs impls` that came back empty from the graph
+  with tokensave 7.16.0. 7.16.0 no longer cuts the CLI's reply at 15,000
+  characters, so `cs fields` lists a large field whole where it refused
+  before, up to 2,000 writes. Past that it still refuses, naming
+  tokensave's 2,000-site limit, and `--count` answers. Its `--count` gives
+  sites, not references, up to 2,000 of a kind; past that the row says it
+  counts references and is PARTIAL. From 7.16.0 a
+  C# `cs impact` on a property or field lists the members that read or write
+  it, after `tokensave sync --force`. Before 7.16.0 it listed none.

@@ -279,9 +279,9 @@ tokensave 7.9.0 and re-measured on 7.11.0 and 7.13.0:
   assigned has no declaration to match, so a real type can answer zero. And
   sites whose receiver cannot be typed (`make()._x`) are counted, not listed,
   so a narrowed answer that dropped any is marked PARTIAL, a lower bound.
-- **At fleet scale, ask for counts instead.** A common field name overflows
-  tokensave's 15000-character output on its *write* list alone, so the listing
-  refuses — correctly, since a partial site list would understate the blast
+- **At fleet scale, ask for counts instead.** Before tokensave 7.16.0, a common
+  field name overflows the CLI's 15000-character output on its *write* list
+  alone, so the listing refuses — correctly, since a partial site list would understate the blast
   radius. `cs fields <field> --count` answers anyway, because the counts are
   emitted *before* the site arrays and survive the cut that destroys them:
 
@@ -310,9 +310,14 @@ tokensave 7.9.0 and re-measured on 7.11.0 and 7.13.0:
 - **The cap is per access kind, and engine truncation is `PARTIAL`.** Reads
   outnumber writes heavily, so one cap over the combined stream would spend the
   budget on reads and truncate the writes away. Separately, `tokensave tool`
-  cuts its own stdout at 15000 characters — mid-token, leaving invalid JSON — so
-  above roughly 75 sites the reads are re-requested with a limit and become a
-  sample of an unknown total. That is reported as `PARTIAL` with the read count
+  cut its own stdout at 15000 characters before 7.16.0 — mid-token, leaving
+  invalid JSON — so above roughly 75 sites the reads are re-requested with a
+  limit and become a sample of an unknown total. From 7.16.0 nothing is cut,
+  but tokensave lists at most 2000 sites of a kind: cs asks for that many, so
+  a field with more reads is a sample, and its `--count` row counts
+  references. A field with more than 2000 *writes* is refused, as an
+  overflowing write list was before 7.16.0, and the refusal points at
+  `--count`. That is reported as `PARTIAL` with the read count
   spelled `≥N`, never as a complete answer.
 
 ## Who can even OBSERVE an error contract

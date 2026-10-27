@@ -55,6 +55,13 @@ repos rather than guessing.
 (`cs_changes` over MCP) lists everything since, small fixes included, and the
 MCP instructions name the running version. Details are in `docs/install.md`,
 "If you already use cs":
+- With tokensave 7.16.0, a `cs impls` graph answer was always *nothing
+  found* before cs 1.30.1: cs read none of tokensave's rows, so it did not
+  mean "nothing implements it". Ask again. With 7.16.0, `cs fields` lists a
+  large field whole where it refused before (up to 2,000 writes; past that it
+  refuses, and `--count` answers), and a C# `cs impact` on a property or
+  field lists its
+  readers and writers once the graph is re-indexed (`tokensave sync --force`).
 - `cs_text` takes `literal` (since 1.28.0): pass it for a pasted `foo(` instead
   of escaping it. `cs_text` / `cs_uses` take `in_repo` to search one repo; it
   narrows before the hit cap, so do not filter a fleet-wide answer instead.
@@ -101,7 +108,7 @@ MCP instructions name the running version. Details are in `docs/install.md`,
   calls on three lines is three rows; before, it was one. A method with more
   than about 50 callers was refused as *no parseable JSON* before 1.26.0, and
   is now answered. A refusal saying tokensave's CLI *cut the reply … at
-  15,000 characters* means the answer is too large, not empty: narrow it,
+  15,000 characters* (tokensave before 7.16.0) means the answer is too large, not empty: narrow it,
   or use `cs uses`.
 - A graph row marked `guessed: …, resolved_by=N` (since 1.27.0) is an edge
   tokensave bound by name only. It may reach a same-named method elsewhere,

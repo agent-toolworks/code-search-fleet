@@ -5369,7 +5369,7 @@ fields_count_via_tokensave() {  # <field> [only-repo]
   fi
 
   [[ -n "$lower_bound" ]] && fields_lower_bound_warn "$field" "$lower_bound"
-  [[ -n "$refs_only" ]] && warn "PARTIAL: tokensave truncated its output for:$refs_only — those rows count REFERENCES, not sites, and are not comparable with a listing's site count (three references on one line are one place to edit)"
+  [[ -n "$refs_only" ]] && warn "PARTIAL: tokensave cut or capped its output for:$refs_only — those rows count REFERENCES, not sites, and are not comparable with a listing's site count (three references on one line are one place to edit)"
 
   emit_capped "$rows"
   # Parsed from the head of each row, anchored, rather than with a loose `.*`:
@@ -5412,16 +5412,24 @@ fields_via_tokensave() {  # <field> [only-repo]
   nothing was read there, so nothing was ruled out
   check: cs doctor   (graph coverage and age, and the fix)" ;;
       6) # Not a failure to answer -- a failure to LIST. The graph holds so many
-         # sites for this field in $name that tokensave's own 15000-character
-         # output overflows on the write list alone, so no complete listing can
-         # be read. The blast-radius question still has an answer, and refusing
-         # without naming it would leave the fleet-wide case with none at all.
-         die "cs fields: the site list for '$field' in $name does not fit in tokensave's output, and a partial list would understate the blast radius
-  the limit is output BYTES (15000 chars), not a number of sites — long
+         # sites for this field in $name that tokensave cannot return the write
+         # list whole: before 7.16.0 its 15000-character output overflows, and
+         # from 7.16.0 it lists at most 2000 sites of a kind. The blast-radius
+         # question still has an answer, and refusing without naming it would
+         # leave the fleet-wide case with none at all.
+         local why_cut
+         if version_lt "$(tokensave_version)" 7.16.0; then
+           why_cut="  the limit is output BYTES (15000 chars), not a number of sites — long
   snippets overflow it at a few dozen sites, so a small site count here is
-  expected rather than surprising
+  expected rather than surprising"
+         else
+           why_cut="  the limit is a number of sites: tokensave $(tokensave_version) lists at most
+  2000 sites of a kind, and this field has more writes than that"
+         fi
+         die "cs fields: the site list for '$field' in $name does not fit in tokensave's output, and a partial list would understate the blast radius
+$why_cut
   the COUNTS are unaffected -- they precede the sites in the graph's output and
-  survive the cut that destroys the arrays:
+  are totals however many sites are listed:
     cs fields '$field' --count     per-repo writes and reads, fleet-wide
   narrowing to $name does NOT help: it is the repo that overflows" ;;
       5) # Sites came back, but the engine cut its own output and the reads
@@ -5453,7 +5461,7 @@ fields_via_tokensave() {  # <field> [only-repo]
   # The write lists are complete because tokensave_call.py fetched them on
   # their own and CHECKED them against the graph's write total -- not because
   # --limit spares them, which stopped being true in tokensave 7.11 (#44).
-  [[ -n "$truncated_by_engine" ]] && warn "PARTIAL: tokensave truncated its own output for:$truncated_by_engine — the reads from those repos are a SAMPLE (each repo's true read-reference total is on the lines above). The write lists are complete. Narrow with: cs fields '$field' <repo>"
+  [[ -n "$truncated_by_engine" ]] && warn "PARTIAL: tokensave cut or capped its own output for:$truncated_by_engine — the reads from those repos are a SAMPLE (each repo's true read-reference total is on the lines above). The write lists are complete. Narrow with: cs fields '$field' <repo>"
 
   # An empty result REFUSES rather than reporting zero. tokensave's field_sites
   # returns write_count 0 / read_count 0 with exit 0 for a field that does not

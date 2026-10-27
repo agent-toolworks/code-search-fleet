@@ -49,8 +49,11 @@ import re
 import subprocess
 import sys
 
-# `Name (kind) -- path:line`, with the edge kind on the indented rows.
-ROW = re.compile(r"^\|-\s+(\w+)\s+(.+?)\s+\((\w+)\)\s+--\s+(.+):(\d+)\s*$")
+# `Name (kind) -- path:line`, with the edge kind on the indented rows. From
+# tokensave 7.16.0 the location is a range, `path:line-end_line` (its #674);
+# matching only the old form found no row at all, so every hierarchy came back
+# as "nothing implements this".
+ROW = re.compile(r"^\|-\s+(\w+)\s+(.+?)\s+\((\w+)\)\s+--\s+(.+):(\d+)(?:-\d+)?\s*$")
 
 TYPE_KINDS = ("interface", "class", "trait", "struct", "enum", "record", "type")
 
@@ -244,12 +247,13 @@ WALK_INTO_KINDS = ("class", "struct", "trait", "interface", "module", "impl", "e
 # How tokensave bound an edge, from `edges.resolved_by` (#111): the ResolvedBy
 # codes in 7.15.0's src/types.rs. Exact per its own is_exact(): 1 exact-match,
 # 3 qualified-match, 6 go-selector-import, 8/9 ruby receivers, 10 gdscript typed
-# receiver, 12 path-tail-match, 14 relative-import. The rest pick a target by
+# receiver, 12 path-tail-match, 14 relative-import, and from 7.16.0 15
+# rails-route (a Rails route bound to its controller action). The rest pick a target by
 # name when a same-named node elsewhere could be the real one -- a library's
 # `Broker.Execute` bound to the repo's only public `Execute`, say. NULL is an
 # edge the extractor emitted itself, not a resolver guess. A code this list does
 # not know is not assumed exact.
-EXACT_RESOLVED_BY = {1, 3, 6, 8, 9, 10, 12, 14}
+EXACT_RESOLVED_BY = {1, 3, 6, 8, 9, 10, 12, 14, 15}
 GUESSED_RESOLVED_BY = {2: "exact-match-scored", 4: "simple-name-match",
                        5: "simple-name-match-scored", 7: "same-file-blocklist",
                        11: "build-variant", 13: "path-tail-match-scored"}
@@ -653,6 +657,34 @@ def defs(project, repo, symbol):
 TRUNCATION_MARK = "[... truncated at"
 READ_LIMITS = (30, 10, 1)
 
+# field_sites lists at most 200 sites of each kind unless asked for more, and
+# clamps --limit to 2000 (handle_field_sites in 7.16.0). Before 7.16.0 a reply
+# that long was also cut at 15000 characters, so the cut is all cs saw. From
+# 7.16.0 the CLI no longer cuts, the reply parses, and 200 read as the total:
+# a field with 250 reads was counted "reads 200" with nothing marked. So a
+# capped reply is asked again, whole, up to the engine's maximum.
+FIELD_LIMIT_MAX = 2000
+
+
+def _capped(doc):
+    """True when the engine SAYS it listed fewer sites of a kind than exist."""
+    for kind in ("write", "read"):
+        returned, total = doc.get(f"{kind}_returned"), doc.get(f"{kind}_count")
+        if isinstance(returned, int) and isinstance(total, int) and returned < total:
+            return True
+    return False
+
+
+def _whole(base, doc):
+    """doc asked again at up to FIELD_LIMIT_MAX when it is capped: the whole
+    answer if the rest fits, else the largest sample the engine gives (still
+    capped, which the callers check). A retry that is cut (before 7.16.0) keeps doc."""
+    if not _capped(doc):
+        return doc
+    want = max(doc.get("write_count") or 0, doc.get("read_count") or 0)
+    more, _ = _field_json(base + ["--limit", str(min(want, FIELD_LIMIT_MAX))])
+    return more if more is not None else doc
+
 
 def _writes_complete(doc):
     """False when the engine SAYS it listed fewer writes than exist."""
@@ -706,6 +738,7 @@ def _field_doc(project, field):
     if doc is not None:
         if not isinstance(doc, dict):
             return None, "returned JSON that is not an object", head
+        doc = _whole(base, doc)
         # Uncut -- unless the engine's default per-kind limit (200) applied,
         # which 7.11+ says in write_returned/read_returned.
         if _writes_complete(doc):
@@ -717,7 +750,8 @@ def _field_doc(project, field):
     if wdoc is None:
         return None, why, head
     if not _writes_complete(wdoc):
-        return None, "truncated", head
+        # Parsed, so not cut: the engine listed fewer writes than it counted.
+        return None, "capped", head
     for limit in READ_LIMITS:
         rdoc, why = _field_json(base + ["--limit", str(limit)])
         if rdoc is None:
@@ -791,6 +825,13 @@ def field_sites(project, repo, field):
                   "from this graph. The limit is bytes, not a number of sites: "
                   "a few dozen long lines are enough." + _totals(head),
                   file=sys.stderr)
+            return 6
+        if read_limit == "capped":
+            # From 7.16.0 nothing is cut; the limit is a number of sites.
+            print(f"tokensave lists at most {FIELD_LIMIT_MAX} sites of a kind, "
+                  f"and this field has more writes than that, so no complete "
+                  f"write list can be read from this graph." + _totals(head),
+                  file=sys.stderr)
             # 6, not 4: the graph answered fine and the SITE LIST is what does
             # not fit. Counting still works, because the counts precede the
             # arrays in the JSON and survive the cut -- so the caller has an
@@ -862,8 +903,10 @@ def field_sites(project, repo, field):
         # stderr alone would be a fact the porcelain envelope does not carry.
         # "Complete" is said of the writes only because _field_doc checked it.
         total = head.get("read_count", doc.get("read_count"))
-        print(f"tokensave: output was truncated by the engine, so the reads "
-              f"were re-requested with --limit {read_limit}. The read sites "
+        print(f"tokensave: not every read came back (its CLI cut the reply "
+              f"at 15000 characters before 7.16.0, and it lists at most "
+              f"{FIELD_LIMIT_MAX} sites of a kind), so the reads were limited "
+              f"to {read_limit}. The read sites "
               f"below are a SAMPLE of {total} read references (the graph's "
               f"true total); the write list is complete, checked against the "
               f"graph's write total.", file=sys.stderr)
@@ -914,8 +957,9 @@ def field_counts(project, repo, field):
     that matched no site, 8 counted under an applied qualifier that dropped
     sites it could not type (a lower bound).
     """
-    out, err = _run(["tokensave", "tool", "field_sites", "--field", field,
-                     "--project", project], allow_cut=True)   # counts are in the head
+    base = ["tokensave", "tool", "field_sites", "--field", field,
+            "--project", project]
+    out, err = _run(base, allow_cut=True)   # counts are in the head
     if out is None:
         print(f"tokensave field_sites failed: {err}", file=sys.stderr)
         return 4
@@ -961,6 +1005,11 @@ def field_counts(project, repo, field):
         return 5
     if not isinstance(doc, dict):
         return 4
+    doc = _whole(base, doc)
+    if _capped(doc):
+        print(f"{repo}: writes {refs['write_count']}, reads {refs['read_count']}"
+              f" (references, not sites — over the {FIELD_LIMIT_MAX} sites of a kind tokensave lists)")
+        return 5
 
     sites = {}
     for kind in ("write", "read"):

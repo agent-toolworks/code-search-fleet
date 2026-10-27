@@ -5369,7 +5369,7 @@ fields_count_via_tokensave() {  # <field> [only-repo]
   fi
 
   [[ -n "$lower_bound" ]] && fields_lower_bound_warn "$field" "$lower_bound"
-  [[ -n "$refs_only" ]] && warn "PARTIAL: tokensave truncated its output for:$refs_only — those rows count REFERENCES, not sites, and are not comparable with a listing's site count (three references on one line are one place to edit)"
+  [[ -n "$refs_only" ]] && warn "PARTIAL: tokensave cut or capped its output for:$refs_only — those rows count REFERENCES, not sites, and are not comparable with a listing's site count (three references on one line are one place to edit)"
 
   emit_capped "$rows"
   # Parsed from the head of each row, anchored, rather than with a loose `.*`:
@@ -5453,7 +5453,7 @@ fields_via_tokensave() {  # <field> [only-repo]
   # The write lists are complete because tokensave_call.py fetched them on
   # their own and CHECKED them against the graph's write total -- not because
   # --limit spares them, which stopped being true in tokensave 7.11 (#44).
-  [[ -n "$truncated_by_engine" ]] && warn "PARTIAL: tokensave truncated its own output for:$truncated_by_engine — the reads from those repos are a SAMPLE (each repo's true read-reference total is on the lines above). The write lists are complete. Narrow with: cs fields '$field' <repo>"
+  [[ -n "$truncated_by_engine" ]] && warn "PARTIAL: tokensave cut or capped its own output for:$truncated_by_engine — the reads from those repos are a SAMPLE (each repo's true read-reference total is on the lines above). The write lists are complete. Narrow with: cs fields '$field' <repo>"
 
   # An empty result REFUSES rather than reporting zero. tokensave's field_sites
   # returns write_count 0 / read_count 0 with exit 0 for a field that does not

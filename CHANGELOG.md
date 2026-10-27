@@ -8,6 +8,36 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.30.1 — 2026-10-27
+
+- **Fixed: `cs impls` from the graph found nothing with tokensave 7.16.0.**
+  7.16.0 prints a hierarchy row's location as `file:line-end_line`. cs read
+  only `file:line`, so it matched no row and answered *nothing found* for
+  every type. That happened in the graph fallback and with
+  `--engine=tokensave`. cs now reads both forms. If a `cs impls` graph
+  answer came back empty with tokensave 7.16.0, ask again.
+- **Fixed: `cs fields` could count a capped list as the total, with tokensave
+  7.16.0.** `field_sites` lists at most 200 sites of each kind unless asked
+  for more. Before 7.16.0, a reply that long was also cut at 15,000
+  characters, and cs handled the cut. 7.16.0 no longer cuts the CLI, so a
+  field with 250 reads was counted `reads 200`, with nothing marked. cs now
+  asks for up to 2,000 sites of a kind (tokensave's maximum). Up to that
+  many, a listing is whole and a count is in sites. Past it, the reads are a
+  sample, the count row says it counts references, and both are PARTIAL.
+  With 7.16.0, a large field that cs refused to list before is now listed.
+- **Tested with tokensave 7.16.0** (was 7.15.0). The minimum stays 7.15.0.
+  After `brew upgrade aovestdipaperino/tap/tokensave`, run `tokensave sync
+  --force` in each repo with a graph to get 7.16.0's new edges. A C# read or
+  write of a property or field through a receiver of known type becomes an
+  edge, so `cs impact` on one lists the members that use it. Before, it
+  listed none, and that zero was wrong. A bare read inside the member's own
+  class, a `?.` read, and every field read in other languages are still not
+  edges, so a zero `cs impact` on a field is not "unused": check
+  `cs fields`.
+  A C# call through a field or property declared in a base class now binds,
+  and so does a TypeScript `implements IFoo<T>`. The new resolved_by code
+  15, a Rails route bound to its action, counts as exact, not as a guess.
+
 ## 1.30.0 — 2026-10-17
 
 - **Removed: `cs serve`.** Its page (Search, Fleet, Questions) moved into

@@ -1191,18 +1191,20 @@ if have_tokensave; then
   rm -rf "$acc_shim" "$(dirname "$acc_fleet")"
 
   # A call tokensave saw but bound to no node is no edge (#107): a getter's call
-  # to a method name two classes share is the measured case. cs callers lists
-  # it from the graph's unresolved_refs, marked and counted apart from the
-  # edges -- and not a bound call, which that table also holds (Render's call
-  # below is there twice). The control renames one method, so the name is
-  # unique and the getter's call is an edge.
+  # to a method name two classes share, on a receiver whose type it cannot see,
+  # is the measured case. cs callers lists it from the graph's unresolved_refs,
+  # marked and counted apart from the edges -- and not a bound call, which that
+  # table also holds (Render's call below is there twice). The control renames
+  # one method, so the name is unique and the getter's call is an edge. The
+  # receiver is a `dynamic` return: a class-qualified static call
+  # (`PriceLabel.ForDisplay`) was unbound in 7.15.0 and is bound from 7.16.0.
   ub_fleet=$(mktemp -d)/fleet
   for r in shop shopctl; do
     mkdir -p "$ub_fleet/$r/src"
     other=ForDisplay; [[ $r == shopctl ]] && other=ForShelf
-    printf 'namespace Acme.Shop {\npublic static class PriceLabel { public static string ForDisplay(int v) { return "p" + v; } }\npublic static class StockLabel { public static string %s(int v) { return "s" + v; } }\n}\n' \
+    printf 'namespace Acme.Shop {\npublic class PriceLabel { public string ForDisplay(int v) { return "p" + v; } }\npublic class StockLabel { public string %s(int v) { return "s" + v; } }\npublic static class Labels { public static dynamic Pick() { return null; } }\n}\n' \
       "$other" > "$ub_fleet/$r/src/Labels.cs"
-    printf 'namespace Acme.Shop {\npublic class Item {\n  public int Id { get; set; }\n  public string Shown { get { return PriceLabel.ForDisplay(Id); } }\n  public string Render() { return PriceLabel.ForDisplay(Id); }\n}\n}\n' \
+    printf 'namespace Acme.Shop {\npublic class Item {\n  public int Id { get; set; }\n  public string Shown { get { return Labels.Pick().ForDisplay(Id); } }\n  public string Render(PriceLabel p) { return p.ForDisplay(Id); }\n}\n}\n' \
       > "$ub_fleet/$r/src/Item.cs"
     (cd "$ub_fleet/$r" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i \
        && tokensave init </dev/null >/dev/null 2>&1)
@@ -1212,7 +1214,7 @@ if have_tokensave; then
   ub_imp=$(FLEET_ROOT="$ub_fleet" "$here/cs" impact ForDisplay shop 2>&1)
   ub_ctl=$(FLEET_ROOT="$ub_fleet" "$here/cs" callers ForDisplay shopctl 2>&1)
   if [[ $ub_rc -eq 0 ]] \
-     && matches "$ub_out" 'Item\.cs:4: \[csharp_property\] Shown \(unbound call: PriceLabel\.ForDisplay' \
+     && matches "$ub_out" 'Item\.cs:4: \[csharp_property\] Shown \(unbound call: Labels\.Pick\(\)\.ForDisplay' \
      && [[ $(printf '%s\n' "$ub_out" | grep -c 'Item\.cs:5: ') -eq 1 ]] \
      && matches "$ub_out" 'Item\.cs:5: \[method\] Render \(calls\)$' \
      && matches "$ub_out" 'answer:.*1 unbound call site\(s\) listed apart from the hits\) · 1 hit\(s\)' \
@@ -1291,12 +1293,13 @@ if have_tokensave; then
   fi
   rm -rf "$(dirname "$gs_fleet")"
 
-  # tokensave's CLI cuts every reply at 15000 characters (#108), so a method
-  # with ~50 callers, or a name with ~70 nodes, was refused as "no parseable
-  # JSON". The lookup, callers, callees and impact read the graph instead; a
-  # reply cs still takes from the CLI (type_hierarchy here) fails naming the
-  # cut rather than parsing a short list. 250 classes, each implementing IStep
-  # and calling Sink.Save from a method named RunTheStep.
+  # tokensave's CLI cut every reply at 15000 characters before 7.16.0 (#108),
+  # so a method with ~50 callers, or a name with ~70 nodes, was refused as "no
+  # parseable JSON". The lookup, callers, callees and impact read the graph
+  # instead; a reply cs still takes from the CLI (type_hierarchy here) fails
+  # naming the cut rather than parsing a short list -- and from 7.16.0, which
+  # no longer cuts the CLI, is answered whole. 250 classes, each implementing
+  # IStep and calling Sink.Save from a method named RunTheStep.
   big_fleet=$(mktemp -d)/fleet
   mkdir -p "$big_fleet/big/src"
   printf 'namespace Acme.Big { public interface IStep { void RunTheStep(); } public static class Sink { public static void Save(int x) { } } }\n' \
@@ -1315,8 +1318,12 @@ if have_tokensave; then
      && matches "$big_impact" 'answer:.* · 250 hit\(s\)' \
      && matches "$big_names" "'RunTheStep' is 251 nodes in this graph and ALL were asked \\(.*, and 241 more\\)" \
      && matches "$big_names" 'answer:.* · 1 hit\(s\)' \
-     && [[ $big_impls_rc -eq 4 ]] && matches "$big_impls" 'cut the reply of .tokensave tool type_hierarchy. at 15,000 characters'; then
-    ok "a method with 250 callers and a name with 251 nodes are answered from the graph; a reply the CLI cut is refused, naming the cut"
+     && if version_lt "$(tokensave_version)" 7.16.0; then
+          [[ $big_impls_rc -eq 4 ]] && matches "$big_impls" 'cut the reply of .tokensave tool type_hierarchy. at 15,000 characters'
+        else
+          [[ $big_impls_rc -eq 0 && $(printf '%s\n' "$big_impls" | grep -c '\] OrderWorkflowStepNumber[0-9]* (implements)$') -eq 250 ]]
+        fi; then
+    ok "a method with 250 callers and a name with 251 nodes are answered from the graph; a type_hierarchy reply the CLI cut (before 7.16.0) is refused naming the cut, and an uncut one lists all 250"
     pass=$((pass + 1))
   else
     err "a large graph answer was refused or cut (callers exit $big_rc, impls exit $big_impls_rc):"
@@ -2550,18 +2557,46 @@ PROBE
     # The graph's true read total is still stated: it is in the head of the
     # first, cut, output, which the truncation never reaches. In references --
     # the site total is what is unknown.
-    trunc_out=$(CS_MAX_RESULTS=0 "$here/cs" fields _capprobefield --fleet 2>&1)
-    trunc_json=$(CS_MAX_RESULTS=0 "$here/cs" fields _capprobefield --fleet --porcelain --quiet 2>/dev/null)
-    if printf '%s' "$trunc_out" | grep -q 'PARTIAL' \
-       && printf '%s' "$trunc_out" | grep -q 'true total unknown' \
-       && printf '%s' "$trunc_out" | grep -q 'SAMPLE of 60 read references' \
+    #
+    # From 7.16.0 the CLI no longer cuts, and field_sites lists at most 200
+    # sites of a kind unless asked, 2000 at most. So the 100-site probe comes
+    # back whole, and a sample takes more than 2000 reads (the 2100 below). A
+    # whole answer that parses is not the same as a complete one: 200 read as
+    # the total was the bug this guards (cs fields counted 250 reads as 200).
+    fld_cuts=""; version_lt "$(tokensave_version)" 7.16.0 && fld_cuts=1
+    trunc_field=_capprobefield trunc_n=60
+    if [[ -z "$fld_cuts" ]]; then
+      python3 - "$fld_repo/fulfillment/sampleprobe.py" <<'PROBE'
+import sys
+L = ["class Sample:", "    def __init__(self):", "        self._sampleprobefield = 0"]
+for i in range(2100):
+    L += [f"    def r{i}(self):", f"        return self._sampleprobefield"]
+open(sys.argv[1], "w").write("\n".join(L) + "\n")
+PROBE
+      (cd "$fld_repo" && tokensave sync </dev/null >/dev/null 2>&1) || true
+      trunc_field=_sampleprobefield trunc_n=2100
+    fi
+    trunc_out=$(CS_MAX_RESULTS=0 "$here/cs" fields "$trunc_field" --fleet 2>&1)
+    trunc_json=$(CS_MAX_RESULTS=0 "$here/cs" fields "$trunc_field" --fleet --porcelain --quiet 2>/dev/null)
+    cap_whole=$(CS_MAX_RESULTS=0 "$here/cs" fields _capprobefield --fleet 2>&1)
+    if [[ -z "$fld_cuts" ]]; then
+      rm -f "$fld_repo/fulfillment/sampleprobe.py"
+      (cd "$fld_repo" && tokensave sync </dev/null >/dev/null 2>&1) || true
+    fi
+    # matches, not printf | grep -q: the 2100-read answer is ~200 KB, grep -q
+    # stops at the first match, and printf's SIGPIPE fails the pipeline.
+    if matches "$trunc_out" 'PARTIAL' \
+       && matches "$trunc_out" 'true total unknown' \
+       && matches "$trunc_out" "SAMPLE of $trunc_n read references" \
+       && { [[ -n "$fld_cuts" ]] || { matches "$cap_whole" 'read sites:  60 \(shown 60\)' \
+                                       && ! matches "$cap_whole" 'PARTIAL'; }; } \
        && printf '%s' "$trunc_json" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 assert d["partial"] is True, "partial not set in the envelope"
 assert d["kind"] == "structural", d["kind"]
 ' 2>/dev/null; then
-      ok "an engine that truncates its own output is reported as PARTIAL"
+      ok "an engine that cuts or caps its own output is reported as PARTIAL, and an uncut whole answer is not"
       pass=$((pass + 1))
     else
       err "a truncated graph answer was presented as complete"
@@ -2666,7 +2701,7 @@ import sys
 L = ["class Huge:", "    def __init__(self):", "        self._hugeprobefield = 0"]
 for i in range(120):
     L += [f"    def w{i}(self):", f"        self._hugeprobefield = {i}"]
-for i in range(200):
+for i in range(250):
     L += [f"    def r{i}(self):", f"        return self._hugeprobefield"]
 open(sys.argv[1], "w").write("\n".join(L) + "\n")
 PROBE
@@ -2675,17 +2710,27 @@ PROBE
     # The listing must still REFUSE -- a partial site list presented as complete
     # would understate the blast radius -- but it must name the mode that can
     # answer, or the refusal is the whole story again.
+    # From 7.16.0 nothing is cut: the listing answers, whole, and is not PARTIAL.
     huge_list=$("$here/cs" fields _hugeprobefield --fleet 2>&1); huge_rc=$?
+    huge_all=$(CS_MAX_RESULTS=0 "$here/cs" fields _hugeprobefield --fleet 2>&1)
     # The refusal must also describe its own cause correctly. It used to say
     # "too many sites to list", which sends a reader looking for a volume of
     # sites that is not there -- the constraint is output BYTES, and long
     # snippets overflow it at a few dozen sites.
-    if [[ $huge_rc -eq 1 ]] \
+    if [[ -n "$fld_cuts" ]]; then
+      [[ $huge_rc -eq 1 ]] \
        && printf '%s' "$huge_list" | grep -q 'does not fit' \
        && printf '%s' "$huge_list" | grep -q 'BYTES' \
        && ! printf '%s' "$huge_list" | grep -q 'too many sites' \
-       && printf '%s' "$huge_list" | grep -q '\-\-count'; then
-      ok "a field too large to list refuses, names its real cause and the mode that answers"
+       && printf '%s' "$huge_list" | grep -q '\-\-count'
+    else
+      [[ $huge_rc -eq 0 ]] \
+       && matches "$huge_all" 'write sites: 121 \(shown 121\)' \
+       && matches "$huge_all" 'read sites:  250 \(shown 250\)' \
+       && ! matches "$huge_all" 'PARTIAL'
+    fi
+    if [[ $? -eq 0 ]]; then
+      ok "a field too large for the CLI's reply refuses, names its real cause and the mode that answers (before 7.16.0); from 7.16.0 it is listed whole"
       pass=$((pass + 1))
     else
       err "an unlistable field refused without pointing anywhere (exit $huge_rc)"
@@ -2693,18 +2738,23 @@ PROBE
     fi
 
     # And --count answers it, with TRUE totals. 121 writes (120 setters plus
-    # __init__) and 200 reads -- asserted exactly, because the failure this
+    # __init__) and 250 reads -- asserted exactly, because the failure this
     # guards against is a count that tracks a limit instead of a total.
     # This probe's output overflows, so its sites cannot be derived and the row
     # reports REFERENCES -- labelled as such, and flagged PARTIAL. Asserting the
     # label as well as the numbers is the point: the failure being guarded is a
     # reference count presented as a site count.
     huge_cnt=$("$here/cs" fields _hugeprobefield --fleet --count 2>&1); huge_cnt_rc=$?
+    # From 7.16.0 the sites are all there, so the row counts sites, not PARTIAL.
     if [[ $huge_cnt_rc -eq 0 ]] \
-       && printf '%s' "$huge_cnt" | grep -q 'writes 121, reads 200' \
-       && printf '%s' "$huge_cnt" | grep -q 'references, not sites' \
-       && printf '%s' "$huge_cnt" | grep -q 'PARTIAL'; then
-      ok "--count answers where listing overflows, and says its numbers are references"
+       && printf '%s' "$huge_cnt" | grep -q 'writes 121, reads 250' \
+       && if [[ -n "$fld_cuts" ]]; then
+            printf '%s' "$huge_cnt" | grep -q 'references, not sites' \
+              && printf '%s' "$huge_cnt" | grep -q 'PARTIAL'
+          else
+            ! matches "$huge_cnt" 'references|PARTIAL'
+          fi; then
+      ok "--count answers where listing overflows, and says its numbers are references (before 7.16.0); from 7.16.0 they are sites"
       pass=$((pass + 1))
     else
       err "cs fields --count did not report true totals (exit $huge_cnt_rc)"
@@ -2721,7 +2771,7 @@ PROBE
     # under `set -o pipefail` that non-zero status fails the whole pipeline even
     # though the match succeeded.
     cnt_capped=$(CS_MAX_RESULTS=2 "$here/cs" fields _hugeprobefield --fleet --count --quiet 2>&1)
-    if printf '%s' "$cnt_capped" | grep -q '^fulfillment-worker-python: writes 121, reads 200 '; then
+    if printf '%s' "$cnt_capped" | grep -qE '^fulfillment-worker-python: writes 121, reads 250( |$)'; then
       ok "a count is the graph's total, not the number of rows returned"
       pass=$((pass + 1))
     else

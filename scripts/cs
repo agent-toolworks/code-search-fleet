@@ -5159,12 +5159,20 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
   if [[ "$mode" == impact ]]; then
     field_seeds=$(python3 "$lib_dir/tokensave_call.py" field-seeds "$graph_dir" "$repo" "$sym" 2>/dev/null) || field_seeds=""
     if [[ -n "$field_seeds" ]]; then
-      local field_ver; field_ver=$(tokensave_graph_index_version "$graph_dir" || true)
-      if ! grep -qv $'\t.*\\.cs$' <<< "$field_seeds" && [[ -n "$field_ver" ]] && ! version_lt "$field_ver" "$TS_CSHARP_READS"; then
+      # By the languages present, not all-or-nothing (#118 review): a C#
+      # property can share its name with a front-end field, and the C# rows
+      # are still edges.
+      local field_ver field_cs="" field_other=""
+      field_ver=$(tokensave_graph_index_version "$graph_dir" || true)
+      grep -q $'\t.*\\.cs$' <<< "$field_seeds" && field_cs=1
+      grep -qv $'\t.*\\.cs$' <<< "$field_seeds" && field_other=1
+      if [[ -n "$field_cs" && -n "$field_ver" ]] && ! version_lt "$field_ver" "$TS_CSHARP_READS"; then
         field_note="a read or write of a field or property is an edge only through a receiver of known type: not a bare read inside its own class, nor ?."
+        [[ -n "$field_other" ]] \
+          && field_note="in C#, a read or write of a field or property is an edge only through a receiver of known type (not a bare read inside its own class, nor ?.); in the other languages here it is not an edge"
       else
         field_note="a read or write of a field or property is not an edge in this graph"
-        ! grep -qv $'\t.*\\.cs$' <<< "$field_seeds" \
+        [[ -n "$field_cs" ]] \
           && field_fix=" (tokensave $TS_CSHARP_READS records C# ones through a receiver of known type; this graph was last fully indexed by ${field_ver:-an unknown version} — re-index with: cd $(real_dir_of "$graph_dir") && tokensave sync --force)"
       fi
       extra="$extra; '$sym' is a field or property, and $field_note"

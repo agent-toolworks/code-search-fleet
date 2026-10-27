@@ -1298,11 +1298,15 @@ if have_tokensave; then
   # one said "0 hits" with nothing degraded about a field code plainly reads,
   # and cs callers answered zero about reads that are never calls.
   fz_fleet=$(mktemp -d)/fleet
-  mkdir -p "$fz_fleet/csf" "$fz_fleet/javaf"
+  # mixf: the same C# plus a TypeScript class field of the same name. The
+  # note goes by the languages present (#118 review): the C# rows are edges.
+  mkdir -p "$fz_fleet/csf" "$fz_fleet/javaf" "$fz_fleet/mixf"
   printf 'namespace N {\n  public class Item { public string Label { get; set; } public string Self() { return Label; } }\n  public class Reader { public string Show(Item h) { return h.Label; } }\n}\n' > "$fz_fleet/csf/M.cs"
+  cp "$fz_fleet/csf/M.cs" "$fz_fleet/mixf/M.cs"
+  printf 'export class Widget { Label: string = ""; }\n' > "$fz_fleet/mixf/widget.ts"
   printf 'public class Item { public String label; }\n' > "$fz_fleet/javaf/Item.java"
   printf 'public class Reader { public String show(Item h) { return h.label; } }\n' > "$fz_fleet/javaf/Reader.java"
-  for r in csf javaf; do
+  for r in csf javaf mixf; do
     (cd "$fz_fleet/$r" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm i \
        && tokensave init </dev/null >/dev/null 2>&1)
   done
@@ -1310,6 +1314,7 @@ if have_tokensave; then
   fz_java_env=$(FLEET_ROOT="$fz_fleet" "$here/cs" impact label javaf --porcelain 2>/dev/null)
   fz_cs=$(FLEET_ROOT="$fz_fleet" "$here/cs" impact Label csf 2>&1)
   fz_cs_env=$(FLEET_ROOT="$fz_fleet" "$here/cs" impact Label csf --porcelain 2>/dev/null)
+  fz_mix=$(FLEET_ROOT="$fz_fleet" "$here/cs" impact Label mixf 2>&1)
   fz_call=$(FLEET_ROOT="$fz_fleet" "$here/cs" callers Label csf 2>&1); fz_call_rc=$?
   if [[ $fz_java_rc -eq 2 ]] \
      && matches "$fz_java" "answer:.*'label' is a field or property, and a read or write of a field or property is not an edge in this graph" \
@@ -1317,21 +1322,25 @@ if have_tokensave; then
      && matches "$fz_java" "cs fields 'label' +\\(its read and write sites" \
      && if version_lt "$(tokensave_version)" 7.16.0; then
           matches "$fz_cs_env" '"hits":0,.*"degraded":"an impact zero on a field' \
-            && matches "$fz_cs" 'tokensave 7\.16\.0 records C# ones .*tokensave sync --force'
+            && matches "$fz_cs" 'tokensave 7\.16\.0 records C# ones .*tokensave sync --force' \
+            && matches "$fz_mix" 'tokensave 7\.16\.0 records C# ones .*tokensave sync --force'
         else
           matches "$fz_cs" 'M\.cs:3: \[method\] Show \(depends on Label\)$' \
             && ! matches "$fz_cs" 'Self \(depends' \
             && matches "$fz_cs" 'answer:.*an edge only through a receiver of known type: not a bare read inside its own class, nor \?\.' \
-            && matches "$fz_cs_env" '"hits":1,.*"degraded":null'
+            && matches "$fz_cs_env" '"hits":1,.*"degraded":null' \
+            && matches "$fz_mix" 'M\.cs:3: \[method\] Show \(depends on Label\)$' \
+            && matches "$fz_mix" 'answer:.*in C#, a read or write of a field or property is an edge only through a receiver of known type .*; in the other languages here it is not an edge' \
+            && ! matches "$fz_mix" 'answer:.*is not an edge in this graph'
         fi \
      && [[ $fz_call_rc -eq 1 ]] \
      && matches "$fz_call" "'Label' resolves only to csharp_property node\\(s\\): a read or write of a field or property is not a call" \
      && matches "$fz_call" "cs fields 'Label'"; then
-    ok "cs impact on a field says which reads are edges (C# from 7.16.0, through a typed receiver; none in Java) and a zero is degraded, pointing at cs fields; cs callers on a field refuses"
+    ok "cs impact on a field says which reads are edges (C# from 7.16.0, through a typed receiver; none in Java), per language when a name spans several, and a zero is degraded, pointing at cs fields; cs callers on a field refuses"
     pass=$((pass + 1))
   else
     err "a field's impact zero read as 'unused', or cs callers answered about a field (impact exit $fz_java_rc, callers exit $fz_call_rc):"
-    printf '%s\n' "$fz_java" "$fz_cs" "$fz_call" | grep -E 'answer|degraded|depends|field|✗' | cut -c1-300 | sed 's/^/    /' >&2
+    printf '%s\n' "$fz_java" "$fz_cs" "$fz_mix" "$fz_call" | grep -E 'answer|degraded|depends|field|✗' | cut -c1-300 | sed 's/^/    /' >&2
     fail=$((fail + 1)); failed_ids+=("graph-field-impact")
   fi
   rm -rf "$(dirname "$fz_fleet")"

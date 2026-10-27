@@ -19,7 +19,9 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
   label` on a Java field that code reads answered `0 hit(s)` with
   `degraded: null`, which reads as "nothing depends on it". The answer line
   now says which case holds, a zero is `degraded`, and the hint is
-  `cs fields '<name>'`. A C# graph indexed before 7.16.0 also gets the
+  `cs fields '<name>'`. When the name is a field in more than one language,
+  such as a C# property and a TypeScript field in one repo, the line says
+  what holds for each. A C# graph indexed before 7.16.0 also gets the
   `tokensave sync --force` that adds those edges. Ask `cs fields` about a
   field. Do not report a `cs impact` zero on one as "unused".
 - **New refusal: `cs callers` on a name that is only a field or property**

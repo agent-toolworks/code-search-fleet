@@ -55,6 +55,10 @@ repos rather than guessing.
 (`cs_changes` over MCP) lists everything since, small fixes included, and the
 MCP instructions name the running version. Details are in `docs/install.md`,
 "If you already use cs":
+- For a field or property, ask `cs fields` (since 1.31.0). `cs impact` on one
+  says which reads are graph edges (only C# through a typed receiver, from
+  tokensave 7.16.0), and a zero is `degraded`, not "unused". `cs callers` on
+  a name that is only a field refuses: a read is not a call.
 - With tokensave 7.16.0, a `cs impls` graph answer was always *nothing
   found* before cs 1.30.1: cs read none of tokensave's rows, so it did not
   mean "nothing implements it". Ask again. With 7.16.0, `cs fields` lists a
@@ -249,7 +253,10 @@ answers about one repo at one layer* under **Known blind spots** before
 reporting the result. `cs impact` is the one to reach for when the user is
 deciding whether a change is safe; `cs callers` returning nothing for a resolved
 symbol is the strongest "this looks dead" signal available inside one repo, and
-still says nothing about the other repos.
+still says nothing about the other repos. Neither holds for a **field or
+property**: a read of one is a graph edge only in C# through a typed receiver
+(tokensave 7.16.0+), so `cs impact` on a field is a lower bound, and its zero
+is `degraded`, and `cs callers` refuses. Ask `cs fields` about a field.
 
 ## Read the answer kind before you trust the answer
 

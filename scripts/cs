@@ -2180,6 +2180,9 @@ tokensave_graph_index_version() {  # <dir>
 }
 # The release whose C# edges cs relies on (tokensave #637, #642, #643).
 TS_CSHARP_EDGES=7.15.0
+# The release that files a C# read or write of a field or property, through a
+# receiver of known type, as a `uses` edge (tokensave #637 in 7.16.0, #116).
+TS_CSHARP_READS=7.16.0
 # Success when the graph holds C# and was last fully indexed before those edges
 # existed, or does not say when. A graph whose files were re-extracted one at a
 # time keeps its old full-index version, so it stays caveated: the conservative
@@ -5148,6 +5151,25 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
   # reads, and a zero here is otherwise indistinguishable from "unused".
   gap_lang=$(graph_accessor_gap "$(symbol_language "$sym" "$graph_dir" || repo_language "$graph_dir" || true)" "$graph_dir") \
     && extra="$extra; calls inside $gap_lang property accessors are not in the graph"
+  # A field or property (#116): what impact walks are incoming edges, and a
+  # read or write of a data member is one only in C#, from tokensave 7.16.0,
+  # through a receiver of known type. Elsewhere a zero said "nothing depends
+  # on it" about a field code plainly reads.
+  local field_seeds="" field_note="" field_fix=""
+  if [[ "$mode" == impact ]]; then
+    field_seeds=$(python3 "$lib_dir/tokensave_call.py" field-seeds "$graph_dir" "$repo" "$sym" 2>/dev/null) || field_seeds=""
+    if [[ -n "$field_seeds" ]]; then
+      local field_ver; field_ver=$(tokensave_graph_index_version "$graph_dir" || true)
+      if ! grep -qv $'\t.*\\.cs$' <<< "$field_seeds" && [[ -n "$field_ver" ]] && ! version_lt "$field_ver" "$TS_CSHARP_READS"; then
+        field_note="a read or write of a field or property is an edge only through a receiver of known type: not a bare read inside its own class, nor ?."
+      else
+        field_note="a read or write of a field or property is not an edge in this graph"
+        ! grep -qv $'\t.*\\.cs$' <<< "$field_seeds" \
+          && field_fix=" (tokensave $TS_CSHARP_READS records C# ones through a receiver of known type; this graph was last fully indexed by ${field_ver:-an unknown version} — re-index with: cd $(real_dir_of "$graph_dir") && tokensave sync --force)"
+      fi
+      extra="$extra; '$sym' is a field or property, and $field_note"
+    fi
+  fi
   answer structural "tokensave (graph)" "$(graph_note "$repo" "$graph_dir" "$extra")"
 
   local out rc
@@ -5176,12 +5198,14 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
   fi
 
   graph_caveats "$repo" "$graph_dir" "$substituted"
+  [[ -n "$field_seeds" ]] && warn "'$sym' is a field or property here, and $field_note$field_fix — cs fields '$sym' lists its reads and writes"
   warn "this is a GRAPH answer, not a language server: it cannot see reflection, DI registration, or generated code. cs refs is the only thing here that bridges a DI registration."
   [[ -n "$gap_lang" ]] && warn "tokensave's $gap_lang graph has no edges out of property accessors (get/set/init) or into properties: a call made inside a getter or setter is missing from this answer (cs uses '$sym' --word finds it as text)"
 
   if [[ $rc -ne 0 || -z "$out" ]]; then
     # A zero from a graph with a known hole in it is not "nothing calls this".
     [[ -n "$gap_lang" ]] && CS_DEGRADED="${CS_DEGRADED:+$CS_DEGRADED; }a $mode zero in $gap_lang is not 'unused': calls made inside property accessors are not edges in tokensave's $gap_lang graph — check cs uses '$sym' --word"
+    [[ -n "$field_seeds" ]] && CS_DEGRADED="${CS_DEGRADED:+$CS_DEGRADED; }an impact zero on a field or property is not 'unused': $field_note — check cs fields '$sym'"
     [[ "$n_unwalked" -gt 0 ]] && CS_DEGRADED="${CS_DEGRADED:+$CS_DEGRADED; }an impact zero with $n_unwalked unbound call site(s) to '$sym' is not 'nothing depends on it' — cs callers $sym $repo lists them"
     report_answer 0 0
     case "$mode" in
@@ -5194,8 +5218,12 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
                fi ;;
       callees) hint "cs def $sym $repo       (confirm the symbol is the one you mean)" \
                     "cs calls '<pattern>'    (a call shape the graph did not record)" ;;
-      impact)  hint "cs callers $sym $repo   (impact walks dependents; start with the direct ones)" \
-                    "cs uses '$sym'          (the cross-repo half, which no per-repo graph holds)" ;;
+      impact)  if [[ -n "$field_seeds" ]]; then
+                 hint "cs fields '$sym'        (its read and write sites, which impact does not walk)" \
+                      "cs uses '$sym' --word   (every mention, other repos included)"
+               else hint "cs callers $sym $repo   (impact walks dependents; start with the direct ones)" \
+                    "cs uses '$sym'          (the cross-repo half, which no per-repo graph holds)"
+               fi ;;
     esac
     return $CS_EXIT_NO_HITS
   fi

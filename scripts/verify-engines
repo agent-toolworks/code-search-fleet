@@ -458,6 +458,51 @@ probe_tokensave_accessors() {
   fi
 }
 
+# Reads and writes of a field or property as graph edges (#116), which is what
+# cs impact walks from a field. C# gained them in 7.16.0 (tokensave #637),
+# through a receiver of known type: a capability from that version, a known
+# limitation below it (7.15.0 is still supported, so its absence there is not a
+# regression). Java, TypeScript and Kotlin have none: known limitations, which
+# cs names on every field impact answer and turns a zero into `degraded`. The
+# control is the field's own node: without it the probe proves nothing.
+probe_tokensave_reads() {
+  local lang
+  have tokensave || {
+    for lang in cs java ts kt; do record "ts-reads-$lang" "-" known-limitation SKIP "not installed"; done
+    return
+  }
+  local ver tmp field seeds impact
+  ver=$(tokensave --version 2>/dev/null | awk '{print $2}')
+  tmp=$(mktemp -d)
+  mkdir -p "$tmp/cs" "$tmp/java" "$tmp/ts" "$tmp/kt"
+  printf 'namespace L { public class Item { public string Label { get; set; } }\n public class R { public string Show(Item h) { return h.Label; } } }\n' > "$tmp/cs/P.cs"
+  printf 'public class Item { public String label; }\n' > "$tmp/java/Item.java"
+  printf 'public class R { public String show(Item h) { return h.label; } }\n' > "$tmp/java/R.java"
+  printf 'export class Item { label: string = ""; }\nexport function show(h: Item): string { return h.label; }\n' > "$tmp/ts/p.ts"
+  printf 'class Item { var label: String = "" }\nfun show(h: Item): String = h.label\n' > "$tmp/kt/P.kt"
+  for lang in cs java ts kt; do
+    (cd "$tmp/$lang" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm p \
+       && tokensave init </dev/null >/dev/null 2>&1)
+    field=label; [[ $lang == cs ]] && field=Label
+    seeds=$(python3 "$here/lib/tokensave_call.py" field-seeds "$tmp/$lang" "$lang" "$field" 2>/dev/null)
+    impact=$(python3 "$here/lib/tokensave_call.py" impact "$tmp/$lang" "$lang" "$field" 2>/dev/null)
+    if [[ -z "$seeds" ]]; then
+      record "ts-reads-$lang" "$ver" known-limitation FAIL "the field's own node was not found — the probe cannot tell anything"
+    elif [[ $lang == cs ]] && ! version_lt "$ver" 7.16.0; then
+      if [[ -n "$impact" ]]; then
+        record ts-reads-cs "$ver" capability PASS "a C# property read through a typed receiver is a graph edge"
+      else
+        record ts-reads-cs "$ver" capability FAIL "no edge for a C# property read — cs impact on a C# field would miss its readers while saying it holds them"
+      fi
+    elif [[ -n "$impact" ]]; then
+      record "ts-reads-$lang" "$ver" known-limitation IMPROVED "a read of a field is a graph edge now — revisit the field note in cs impact (TS_CSHARP_READS)"
+    else
+      record "ts-reads-$lang" "$ver" known-limitation CONFIRMED "a read of a field is no graph edge — cs impact says so, and a zero is degraded"
+    fi
+  done
+  rm -rf "$tmp"
+}
+
 info "probing engines against $F"   # unconditional: the cheap self-check that
                                    # catches a scope leak immediately
 probe_text
@@ -466,6 +511,7 @@ probe_ast_grep
 probe_semgrep
 probe_tokensave
 probe_tokensave_accessors
+probe_tokensave_reads
 probe_uv
 probe_serena
 probe_serena_java

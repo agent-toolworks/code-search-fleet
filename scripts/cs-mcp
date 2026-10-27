@@ -320,7 +320,9 @@ TOOLS = [
 
     ("cs_impact", "impact",
      "What depends on this symbol, transitively — the 'what breaks if I change "
-     "it' question, within one repo's graph.",
+     "it' question, within one repo's graph. For a field or property use "
+     "cs_fields: few reads of one are graph edges, so a zero here is not "
+     "'unused'.",
      [arg("symbol", "The symbol whose dependents you want."),
       arg("repo", "The repo directory name holding it."),
       SCOPE_ARG]),

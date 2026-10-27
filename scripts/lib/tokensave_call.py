@@ -38,7 +38,7 @@ Four traps, all reproduced against tokensave 7.9.0 rather than taken on trust:
      and the interface method did not. Every exact-name node is asked, and the
      set is named on stderr so the reader can see what was actually queried.
 
-Usage: tokensave_call.py <impls|def|callers|callees|impact|fields|field-counts|unbound-count>
+Usage: tokensave_call.py <impls|def|callers|callees|impact|fields|field-counts|unbound-count|field-seeds>
                          <repo-dir>
                          <repo-name> <symbol>
 Exit:  0 found, 1 nothing found (an honest negative), 3 the symbol does not
@@ -77,6 +77,16 @@ CALLABLE_KINDS = ("function", "method", "constructor", "abstract_method")
 CONTAINER_KINDS = ("class", "interface", "trait", "struct", "enum", "record",
                    "data_class", "kotlin_object", "namespace", "package",
                    "module", "kotlin_package", "type")
+
+# Data members. A read or write of one is no `calls` edge, so `callers` asked
+# of a name that is only these answers zero about a question the graph does
+# not record (#116). Measured on 7.15.0 and 7.16.0: Java and TypeScript
+# `field`, Kotlin `property` and every 7.15.0 C# member have no incoming edge
+# for a read or write at all; 7.16.0 files a C# read or write through a
+# receiver of known type as `uses` (its #637), but not a bare read inside the
+# member's own class, nor `?.`. A Python attribute is no node.
+FIELD_KINDS = ("field", "property", "csharp_property", "const", "static",
+               "val", "var", "enum_variant")
 
 # How far `impact` walks. Pinned rather than left to the tool's default, because
 # cs states the depth in its provenance line and a claim that tracks a default
@@ -178,6 +188,16 @@ def _seeds(project, symbol, mode):
         callable_nodes = [n for n in nodes if n.get("kind") in CALLABLE_KINDS]
         if callable_nodes:
             nodes = callable_nodes
+        elif (mode == "callers"
+              and any(n.get("kind") in FIELD_KINDS for n in nodes)
+              and all(n.get("kind") in CONTAINER_KINDS + FIELD_KINDS for n in nodes)):
+            kinds = ", ".join(sorted({n.get("kind", "?") for n in nodes}))
+            print(f"tokensave: '{symbol}' resolves only to {kinds} node(s): a "
+                  f"read or write of a field or property is not a call, so "
+                  f"'nothing calls it' would say nothing about who uses it — "
+                  f"ask cs fields '{symbol}' (its reads and writes), or "
+                  f"cs impact {symbol} <repo>", file=sys.stderr)
+            return None, 3
         elif all(n.get("kind") in CONTAINER_KINDS for n in nodes):
             kinds = ", ".join(sorted({n.get("kind", "?") for n in nodes}))
             print(f"tokensave: '{symbol}' resolves only to {kinds} node(s), and "
@@ -1050,6 +1070,16 @@ def main():
         return field_counts(project, repo, symbol)
     if mode in ("callers", "callees", "impact"):
         return graph_edges(project, repo, symbol, mode)
+    if mode == "field-seeds":
+        # The exact-name nodes that are data members, as `kind<TAB>file`, so
+        # cs impact can say what the graph records for them (#116).
+        nodes = _exact_nodes(project, symbol)
+        if nodes is None:
+            return 4
+        fields = [n for n in nodes if n.get("kind") in FIELD_KINDS]
+        for n in fields:
+            print(f"{n.get('kind')}\t{n.get('file') or ''}")
+        return 0 if fields else 1
     if mode == "unbound-count":
         unbound = _unbound_callers(project, symbol)
         if unbound is None:

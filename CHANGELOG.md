@@ -24,7 +24,11 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
   asks for up to 2,000 sites of a kind (tokensave's maximum). Up to that
   many, a listing is whole and a count is in sites. Past it, the reads are a
   sample, the count row says it counts references, and both are PARTIAL.
-  With 7.16.0, a large field that cs refused to list before is now listed.
+  With 7.16.0, a large field that cs refused to list before is now listed,
+  up to 2,000 writes. A field with more writes is still refused, since a
+  partial write list would understate the blast radius. The refusal now gives
+  the right cause for the version: the 15,000-character cut before 7.16.0,
+  the 2,000-site limit from 7.16.0. `--count` answers it either way.
 - **Tested with tokensave 7.16.0** (was 7.15.0). The minimum stays 7.15.0.
   After `brew upgrade aovestdipaperino/tap/tokensave`, run `tokensave sync
   --force` in each repo with a graph to get 7.16.0's new edges. A C# read or

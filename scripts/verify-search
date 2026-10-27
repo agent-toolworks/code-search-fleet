@@ -2724,13 +2724,33 @@ PROBE
        && ! printf '%s' "$huge_list" | grep -q 'too many sites' \
        && printf '%s' "$huge_list" | grep -q '\-\-count'
     else
+      # Past 2000 writes 7.16.0 still cannot list them all, and the refusal
+      # must name THAT cause, not the cut 7.16.0 removed (#117 review).
+      python3 - "$fld_repo/fulfillment/writeprobe.py" <<'PROBE'
+import sys
+L = ["class Writes:"]
+for i in range(2100):
+    L += [f"    def w{i}(self):", f"        self._writeprobefield = {i}"]
+open(sys.argv[1], "w").write("\n".join(L) + "\n")
+PROBE
+      (cd "$fld_repo" && tokensave sync </dev/null >/dev/null 2>&1) || true
+      wp_list=$("$here/cs" fields _writeprobefield --fleet 2>&1); wp_rc=$?
+      wp_cnt=$("$here/cs" fields _writeprobefield --fleet --count 2>&1)
+      rm -f "$fld_repo/fulfillment/writeprobe.py"
+      (cd "$fld_repo" && tokensave sync </dev/null >/dev/null 2>&1) || true
       [[ $huge_rc -eq 0 ]] \
        && matches "$huge_all" 'write sites: 121 \(shown 121\)' \
        && matches "$huge_all" 'read sites:  250 \(shown 250\)' \
-       && ! matches "$huge_all" 'PARTIAL'
+       && ! matches "$huge_all" 'PARTIAL' \
+       && [[ $wp_rc -eq 1 ]] \
+       && matches "$wp_list" 'does not fit' \
+       && matches "$wp_list" 'lists at most 2000 sites of a kind' \
+       && ! matches "$wp_list" 'BYTES|15000' \
+       && matches "$wp_list" '\-\-count' \
+       && matches "$wp_cnt" 'writes 2100, reads 0 \(references, not sites'
     fi
     if [[ $? -eq 0 ]]; then
-      ok "a field too large for the CLI's reply refuses, names its real cause and the mode that answers (before 7.16.0); from 7.16.0 it is listed whole"
+      ok "a field too large for tokensave to list refuses, names its real cause (the 15000-character cut before 7.16.0, 2000 sites of a kind from 7.16.0) and the mode that answers; from 7.16.0 a field under that is listed whole"
       pass=$((pass + 1))
     else
       err "an unlistable field refused without pointing anywhere (exit $huge_rc)"

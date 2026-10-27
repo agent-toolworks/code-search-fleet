@@ -382,7 +382,9 @@ before 1.16. Update anything that says otherwise:
   implements it". Rerun any `cs impls` that came back empty from the graph
   with tokensave 7.16.0. 7.16.0 no longer cuts the CLI's reply at 15,000
   characters, so `cs fields` lists a large field whole where it refused
-  before. Its `--count` gives sites, not references, up to 2,000 of a kind;
-  past that the row says it counts references and is PARTIAL. From 7.16.0 a
+  before, up to 2,000 writes. Past that it still refuses, naming
+  tokensave's 2,000-site limit, and `--count` answers. Its `--count` gives
+  sites, not references, up to 2,000 of a kind; past that the row says it
+  counts references and is PARTIAL. From 7.16.0 a
   C# `cs impact` on a property or field lists the members that read or write
   it, after `tokensave sync --force`. Before 7.16.0 it listed none.

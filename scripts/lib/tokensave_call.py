@@ -750,7 +750,8 @@ def _field_doc(project, field):
     if wdoc is None:
         return None, why, head
     if not _writes_complete(wdoc):
-        return None, "truncated", head
+        # Parsed, so not cut: the engine listed fewer writes than it counted.
+        return None, "capped", head
     for limit in READ_LIMITS:
         rdoc, why = _field_json(base + ["--limit", str(limit)])
         if rdoc is None:
@@ -823,6 +824,13 @@ def field_sites(project, repo, field):
                   "for the write list alone, so no complete list can be read "
                   "from this graph. The limit is bytes, not a number of sites: "
                   "a few dozen long lines are enough." + _totals(head),
+                  file=sys.stderr)
+            return 6
+        if read_limit == "capped":
+            # From 7.16.0 nothing is cut; the limit is a number of sites.
+            print(f"tokensave lists at most {FIELD_LIMIT_MAX} sites of a kind, "
+                  f"and this field has more writes than that, so no complete "
+                  f"write list can be read from this graph." + _totals(head),
                   file=sys.stderr)
             # 6, not 4: the graph answered fine and the SITE LIST is what does
             # not fit. Counting still works, because the counts precede the

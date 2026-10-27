@@ -5412,16 +5412,24 @@ fields_via_tokensave() {  # <field> [only-repo]
   nothing was read there, so nothing was ruled out
   check: cs doctor   (graph coverage and age, and the fix)" ;;
       6) # Not a failure to answer -- a failure to LIST. The graph holds so many
-         # sites for this field in $name that tokensave's own 15000-character
-         # output overflows on the write list alone, so no complete listing can
-         # be read. The blast-radius question still has an answer, and refusing
-         # without naming it would leave the fleet-wide case with none at all.
-         die "cs fields: the site list for '$field' in $name does not fit in tokensave's output, and a partial list would understate the blast radius
-  the limit is output BYTES (15000 chars), not a number of sites — long
+         # sites for this field in $name that tokensave cannot return the write
+         # list whole: before 7.16.0 its 15000-character output overflows, and
+         # from 7.16.0 it lists at most 2000 sites of a kind. The blast-radius
+         # question still has an answer, and refusing without naming it would
+         # leave the fleet-wide case with none at all.
+         local why_cut
+         if version_lt "$(tokensave_version)" 7.16.0; then
+           why_cut="  the limit is output BYTES (15000 chars), not a number of sites — long
   snippets overflow it at a few dozen sites, so a small site count here is
-  expected rather than surprising
+  expected rather than surprising"
+         else
+           why_cut="  the limit is a number of sites: tokensave $(tokensave_version) lists at most
+  2000 sites of a kind, and this field has more writes than that"
+         fi
+         die "cs fields: the site list for '$field' in $name does not fit in tokensave's output, and a partial list would understate the blast radius
+$why_cut
   the COUNTS are unaffected -- they precede the sites in the graph's output and
-  survive the cut that destroys the arrays:
+  are totals however many sites are listed:
     cs fields '$field' --count     per-repo writes and reads, fleet-wide
   narrowing to $name does NOT help: it is the repo that overflows" ;;
       5) # Sites came back, but the engine cut its own output and the reads

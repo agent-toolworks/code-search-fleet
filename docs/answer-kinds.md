@@ -314,7 +314,10 @@ tokensave 7.9.0 and re-measured on 7.11.0 and 7.13.0:
   invalid JSON — so above roughly 75 sites the reads are re-requested with a
   limit and become a sample of an unknown total. From 7.16.0 nothing is cut,
   but tokensave lists at most 2000 sites of a kind: cs asks for that many, so
-  a field with more is a sample, and its `--count` row counts references. That is reported as `PARTIAL` with the read count
+  a field with more reads is a sample, and its `--count` row counts
+  references. A field with more than 2000 *writes* is refused, as an
+  overflowing write list was before 7.16.0, and the refusal points at
+  `--count`. That is reported as `PARTIAL` with the read count
   spelled `≥N`, never as a complete answer.
 
 ## Who can even OBSERVE an error contract

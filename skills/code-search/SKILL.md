@@ -57,8 +57,10 @@ MCP instructions name the running version. Details are in `docs/install.md`,
 "If you already use cs":
 - With tokensave 7.16.0, a `cs impls` graph answer was always *nothing
   found* before cs 1.30.1: cs read none of tokensave's rows, so it did not
-  mean "nothing implements it". Ask again. With 7.16.0, `cs fields` lists a large field whole where it
-  refused before, and a C# `cs impact` on a property or field lists its
+  mean "nothing implements it". Ask again. With 7.16.0, `cs fields` lists a
+  large field whole where it refused before (up to 2,000 writes; past that it
+  refuses, and `--count` answers), and a C# `cs impact` on a property or
+  field lists its
   readers and writers once the graph is re-indexed (`tokensave sync --force`).
 - `cs_text` takes `literal` (since 1.28.0): pass it for a pasted `foo(` instead
   of escaping it. `cs_text` / `cs_uses` take `in_repo` to search one repo; it

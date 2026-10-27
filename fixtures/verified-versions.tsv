@@ -1,5 +1,5 @@
 # engine	version	kind	outcome	note
-# verified 2026-10-27T13:09:29Z
+# verified 2026-10-27T16:43:05Z
 ripgrep	15.2.0	capability	PASS	literal text across repos
 ctags	6.2.1	capability	PASS	fleet-wide symbol index
 ast-grep	0.50.0	capability	PASS	literal in argument position
@@ -7,6 +7,10 @@ semgrep	1.180.0	capability	PASS	structural fallback for ast-grep
 tokensave	7.16.0	capability	PASS	C# interface impls in the graph (3: 3 implements + 0 extends→interface, of 1 extends) — cs impls queries both kinds
 ts-getters-cs	7.16.0	capability	PASS	calls inside C# property accessors are graph edges
 ts-getters-kt	7.16.0	known-limitation	CONFIRMED	no edges out of Kotlin property accessors — cs names it on Kotlin graph answers
+ts-reads-cs	7.16.0	capability	PASS	a C# property read through a typed receiver is a graph edge
+ts-reads-java	7.16.0	known-limitation	CONFIRMED	a read of a field is no graph edge — cs impact says so, and a zero is degraded
+ts-reads-ts	7.16.0	known-limitation	CONFIRMED	a read of a field is no graph edge — cs impact says so, and a zero is degraded
+ts-reads-kt	7.16.0	known-limitation	CONFIRMED	a read of a field is no graph edge — cs impact says so, and a zero is degraded
 uv	0.13.0	capability	PASS	runs the pinned Serena (uvx)
 serena	2.0.0.dev0@1de556f	capability	PASS	C# interface to implementation
 serena-java	2.0.0.dev0@1de556f	capability	PASS	Java interface to implementation, with or without a system JDK

@@ -8,6 +8,33 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.31.0 — 2026-10-27
+
+- **Changed: `cs impact` on a field or property says what the graph holds
+  for it, and a zero is `degraded`** (#116). It walks graph edges, and a read
+  or write of a field is an edge only in C#, from tokensave 7.16.0, through a
+  receiver of known type. A bare read inside its own class is not an edge,
+  and neither is `?.`. In Java, TypeScript, Kotlin, and C# graphs indexed
+  before 7.16.0, a field read is not an edge at all. Until now, `cs impact
+  label` on a Java field that code reads answered `0 hit(s)` with
+  `degraded: null`, which reads as "nothing depends on it". The answer line
+  now says which case holds, a zero is `degraded`, and the hint is
+  `cs fields '<name>'`. When the name is a field in more than one language,
+  such as a C# property and a TypeScript field in one repo, the line says
+  what holds for each. A C# graph indexed before 7.16.0 also gets the
+  `tokensave sync --force` that adds those edges. Ask `cs fields` about a
+  field. Do not report a `cs impact` zero on one as "unused".
+- **New refusal: `cs callers` on a name that is only a field or property**
+  (#116). A read or write is never a `calls` edge, so the zero this gave
+  could say nothing about the field. It now exits 1 with *'X' resolves only
+  to field node(s): a read or write of a field or property is not a call*,
+  and names `cs fields 'X'` and `cs impact`. A name that is also a method is
+  asked about the method, as before. `cs callees` on a property still
+  answers, since calls made inside a C# accessor are edges.
+- **verify-engines** probes whether a field read is a graph edge: in C#, a
+  capability from tokensave 7.16.0 (a known limitation on 7.15.0); in Java,
+  TypeScript and Kotlin, a known limitation.
+
 ## 1.30.1 — 2026-10-27
 
 - **Fixed: `cs impls` from the graph found nothing with tokensave 7.16.0.**

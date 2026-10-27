@@ -260,6 +260,15 @@ per-repo, so the union is assembled across them and the repos with no graph are
 named — a field read in an unindexed repo looks exactly like a field nobody
 reads.
 
+**For a field, ask `cs fields`, not `cs impact` or `cs callers`.** Those two
+walk graph edges, and a read or write of a field is an edge only in C#, from
+tokensave 7.16.0, through a receiver of known type (`h.Label`, not a bare
+`Label` inside its own class, nor `h?.Label`). In Java, TypeScript, Kotlin and
+every graph indexed before 7.16.0 it is no edge at all. So `cs impact` on a
+field states which of those holds, and a zero is `degraded`, pointing here.
+`cs callers` on a name that is only a field or property refuses: a read is
+never a call, so "nothing calls it" would say nothing about who uses it.
+
 Three things it refuses or discloses rather than guessing, measured against
 tokensave 7.9.0 and re-measured on 7.11.0 and 7.13.0:
 

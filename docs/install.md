@@ -388,3 +388,10 @@ before 1.16. Update anything that says otherwise:
   counts references and is PARTIAL. From 7.16.0 a
   C# `cs impact` on a property or field lists the members that read or write
   it, after `tokensave sync --force`. Before 7.16.0 it listed none.
+- **A `cs impact` zero on a field is `degraded`, and `cs callers` on a field
+  refuses** (1.31.0, #116). A field read is a graph edge only in C# from
+  tokensave 7.16.0, through a receiver of known type. Elsewhere, a `cs impact`
+  zero on a field said "nothing depends on it" with `degraded: null`. Ask
+  `cs fields <name>` about a field. A `cs callers` refusal saying *resolves
+  only to field node(s) … is not a call* is not "nothing calls it": ask
+  `cs fields`.

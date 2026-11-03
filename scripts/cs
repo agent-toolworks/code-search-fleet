@@ -50,6 +50,8 @@
 #   cs strictness [repo]           which repos REJECT unknown fields on
 #                                  deserialization -- the other half of an
 #                                  API-impact review (declared)
+#   cs event <name> [repo]         who PUBLISHES an event and who CONSUMES it
+#   cs route <METHOD> <path> [repo]  where a route is DEFINED and who CALLS it
 #   cs values <KEY> [repo]         which repos SET a config key and with what
 #                                  literals, and which repos READ it -- the
 #                                  same split cs fields makes, across a repo
@@ -4071,6 +4073,8 @@ Which repos depend on which?                     cs deps [repo]
 Which version does each repo pin?                cs versions [coordinate]
 Who owns this repo, or this file?                cs owns [repo|repo/path]
 Who CRASHES if I add a field to a response?      cs strictness [repo]
+Who PUBLISHES / CONSUMES this event?             cs event <name> [repo]
+Where is this route DEFINED, who CALLS it?       cs route <METHOD> <path> [repo]
 Who SETS this config key, and who READS it?      cs values <KEY> [repo]
 Who even READS an error body, and who retries?   cs resilience [repo]
 What does the fleet NOT hold that the org does?  cs gaps <query>
@@ -6073,6 +6077,89 @@ cmd_values() {
   report_answer "$(n_hits_in "$out")" "$(n_repos_in "$out")"
 }
 
+# The two sides of a seam (#122). cs uses lists every file that names an event or
+# a route path; for a seam that mixes the two sides it exists to tell apart --
+# publisher with consumer, definition with caller, GET with POST. These classify
+# each hit by the code around it (scripts/lib/seams.py) and say what they could
+# not decide rather than guessing it.
+seam_run() {  # <label> <regex> <seams.py args...>
+  local label="$1" regex="$2"; shift 2
+  local hits out err_f rc
+  answer heuristic "$(text_engine)" "$label"
+  hits=$(grep_fleet regex "$regex" | normalize)
+  [[ -n "${seam_only:-}" ]] && hits=$(printf '%s\n' "$hits" | grep "^$seam_only/" || true)
+  if [[ -z "$hits" ]]; then
+    engines_ok_or_die "$CS_SUB"
+    report_answer 0 0
+    return $CS_EXIT_NO_HITS
+  fi
+  err_f=$(cs_tmp cs-seams)
+  out=$(printf '%s\n' "$hits" | python3 "$lib_dir/seams.py" "$view" "$@" 2>"$err_f"); rc=$?
+  if [[ "$rc" -gt 1 ]]; then
+    rm -f "$err_f"
+    die "cs $CS_SUB: seams.py exited $rc, so nothing was classified
+  the hits were found and then not read -- this is a refusal, not an empty answer
+  weaker but available now: cs uses"
+  fi
+  [[ -n "$out" ]] && emit_capped "$out"
+  cat "$err_f" >&2
+  rm -f "$err_f"
+  if [[ "$rc" -eq 1 ]]; then
+    engines_ok_or_die "$CS_SUB"
+    report_answer 0 0
+    return $CS_EXIT_NO_HITS
+  fi
+  report_answer "$(n_hits_in "$out")" "$(n_repos_in "$out")"
+}
+
+cmd_event() {
+  [[ $# -ge 1 ]] || die "cs event <name> [repo]
+  who PUBLISHES an event and who CONSUMES it, every spelling of its name searched"
+  require_python3 event "classifying each hit as publish, consume or declaration"
+  local name="$1" re_spell
+  seam_only="${2:-}"
+  [[ -n "$seam_only" && ! -d "$view/$seam_only" ]] && die "no such repo: $seam_only"
+  # Every spelling one name takes across languages: order.paid in a schema,
+  # ORDER_PAID in Kotlin/Python/TypeScript, OrderPaid in C#, orderPaid in JS.
+  re_spell=$(python3 - "$name" <<'PY'
+import re, sys
+n = sys.argv[1]
+w = [x for x in re.split(r"[._\-\s]+", n) if x]
+s = [n] + (["_".join(x.upper() for x in w), "".join(x[:1].upper() + x[1:] for x in w),
+            w[0].lower() + "".join(x[:1].upper() + x[1:] for x in w[1:])] if len(w) > 1 else [])
+print("(^|[^A-Za-z0-9_$])(" + "|".join(re.escape(x) for x in dict.fromkeys(s)) + ")($|[^A-Za-z0-9_$])")
+PY
+)
+  seam_run "publish/consume told apart by the surrounding call" "$re_spell" event "$name"
+}
+
+cmd_route() {
+  [[ $# -ge 2 ]] || die "cs route <METHOD> <path> [repo]
+  where an HTTP route is DEFINED (its path assembled from prefixes) and who CALLS it,
+  method-aware: e.g. cs route GET '/coffees/{sku}/price'"
+  require_python3 route "assembling route definitions and matching call sites"
+  local method path re_seg
+  method=$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]'); path="$2"
+  seam_only="${3:-}"
+  [[ -n "$seam_only" && ! -d "$view/$seam_only" ]] && die "no such repo: $seam_only"
+  # The query is the path: the corpus hint (cs gaps) and the line cut centre on it.
+  CS_QUERY="$path"
+  # The sweep is for the path's two most distinctive literal segments, the last
+  # one always: a split definition (`[HttpPost("reserve")]` under a class
+  # [Route]) holds only its own piece of the path.
+  re_seg=$(python3 - "$path" <<'PY'
+import re, sys
+segs = [s for s in sys.argv[1].split("?")[0].strip("/").split("/")
+        if s and not re.match(r"^(\{.*\}|:\w+|<.*>|\*)$", s)]
+if not segs:
+    sys.exit(1)
+pick = [segs[-1]] + sorted(segs[:-1], key=len, reverse=True)[:1]
+print("|".join(re.escape(s) for s in dict.fromkeys(pick)))
+PY
+) || die "cs route: '$path' has no literal segment to search for"
+  seam_run "definition and callers told apart; method read near each call" "$re_seg" route "$method" "$path"
+}
+
 cmd_refs() {
   [[ $# -ge 3 ]] || die "cs refs <symbol> <repo> <file-relative-to-repo>"
   require_python3 refs "driving the language server and formatting its answer"
@@ -6503,6 +6590,8 @@ case "$sub" in
   constructs) cmd_constructs "$@" ;;
   strictness) cmd_strictness "$@" ;;
   values)  cmd_values "$@" ;;
+  event)   cmd_event "$@" ;;
+  route)   cmd_route "$@" ;;
   resilience) cmd_resilience "$@" ;;
   gaps)    cmd_gaps "$@" ;;
   refs)    cmd_refs "$@" ;;

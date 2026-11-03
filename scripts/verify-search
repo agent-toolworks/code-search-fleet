@@ -3911,6 +3911,71 @@ rm -rf "$nohash"
 # The constant-path index the old code wrote, in case this machine has one.
 rm -f "${TMPDIR:-/tmp}/cs-tags-.tags"
 
+# ---- cs route / cs event: the two sides of a seam (#122) -------------------
+# The fixture's own seams, asserted on BOTH sides each time: a definition with no
+# caller would pass a "callers" check just as an empty answer would.
+info "${C_BOLD}cs route / cs event${C_OFF}"
+rt_out=$("$here/cs" route POST /api/v1/inventory/reserve --fleet 2>&1); rt_rc=$?
+if [[ $rt_rc -eq 0 ]] \
+   && matches "$rt_out" 'ReservationController\.cs:[0-9]+: \[defines\] POST /api/v1/inventory/reserve via ASP\.NET \[HttpPost\] \+ \[Route' \
+   && matches "$rt_out" 'InventoryClient\.kt:[0-9]+: \[calls\] POST via RESERVE_PATH' \
+   && matches "$rt_out" 'restockTool\.ts:[0-9]+: \[calls\] POST via RESERVE_ENDPOINT' \
+   && ! matches "$rt_out" 'consumer\.py:[0-9]+: \[calls'; then
+  ok "cs route: a split [Route]+[HttpPost] definition, both callers through their constants, not the docstring"
+  pass=$((pass + 1))
+else
+  err "cs route did not assemble the reserve route, or missed or invented a caller (exit $rt_rc):"
+  printf '%s\n' "$rt_out" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("route-reserve")
+fi
+
+rl_out=$("$here/cs" route POST /api/v1/inventory/release --fleet 2>&1)
+if matches "$rl_out" '\[defines\] POST /api/v1/inventory/release' \
+   && matches "$rl_out" 'defined, and no caller found' \
+   && ! matches "$rl_out" '\[calls\]'; then
+  ok "cs route: the dead release endpoint is defined and has no caller"
+  pass=$((pass + 1))
+else
+  err "cs route invented a caller for the dead release endpoint, or missed its definition:"
+  printf '%s\n' "$rl_out" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("route-dead")
+fi
+
+# Same path, other method: a GET probe beside the fixture's POST caller.
+gm_out=$("$here/cs" route GET /api/v1/inventory/reserve --fleet 2>&1)
+if matches "$gm_out" ': \[calls-other-method\] POST' && ! matches "$gm_out" ': \[calls\] '; then
+  ok "cs route: a POST caller is not a caller of GET on the same path"
+  pass=$((pass + 1))
+else
+  err "cs route counted a POST call as a GET caller:"
+  printf '%s\n' "$gm_out" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("route-method")
+fi
+
+ev_out=$("$here/cs" event orders.reserved.v1 --fleet 2>&1); ev_rc=$?
+if [[ $ev_rc -eq 0 ]] \
+   && matches "$ev_out" 'EventPublisher\.kt:[0-9]+: \[publishes\].*ORDERS_RESERVED_TOPIC' \
+   && matches "$ev_out" 'consumer\.py:[0-9]+: \[consumes\].*ORDERS_RESERVED_TOPIC' \
+   && ! matches "$ev_out" 'eventStream\.ts:[0-9]+: \[(publishes|consumes)\]'; then
+  ok "cs event: v1's publisher and consumer, through their constants; v2's consumer not mixed in"
+  pass=$((pass + 1))
+else
+  err "cs event mixed up orders.reserved.v1's sides or matched the v2 decoy (exit $ev_rc):"
+  printf '%s\n' "$ev_out" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("event-sides")
+fi
+
+ev2_out=$("$here/cs" event orders.reserved.v2 --fleet 2>&1)
+if matches "$ev2_out" 'eventStream\.ts:[0-9]+: \[consumes\]' \
+   && matches "$ev2_out" 'nothing in view publishes orders\.reserved\.v2'; then
+  ok "cs event: a consumer of a topic nothing publishes is reported as such"
+  pass=$((pass + 1))
+else
+  err "cs event did not report the orphaned v2 consumer:"
+  printf '%s\n' "$ev2_out" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("event-orphan")
+fi
+
 # ---- cs values: the two sides of a config key ------------------------------
 # cs fields split a field into writes and reads, and that split was the whole
 # value. A config key has the same two sides -- except they sit across a REPO

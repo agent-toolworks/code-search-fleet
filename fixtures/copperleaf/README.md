@@ -26,12 +26,17 @@ gh repo clone copperleaf-coffee/answer-key ~/git/home/copperleaf-answer-key
 fixtures/copperleaf/score                 # as first asked
 fixtures/copperleaf/score --source-only   # following cs's own --source-only hint
 fixtures/copperleaf/score --only price-callers -v
+fixtures/copperleaf/score --queries-file fixtures/copperleaf/queries-1.32.json   # with cs route / cs event
 ```
 
 `queries.json` is how cs is asked each question: the verb from the skill's
 "Which subcommand" table and the literal an agent would type, fixed before the
 first run. Change it only to follow a change in that table, never to make a
-question pass. `BASELINE.md` is the last measured run and what it found.
+question pass. `queries-1.32.json` asks the route and event questions with
+`cs route` / `cs event`, the verbs the table names for them since 1.32.0; for
+those, the scorer reads only the lines labelled with the side asked about
+(`[publishes]`, `[consumes]`, `[calls]`, `[defines]`), as an agent would.
+`BASELINE.md` is the last measured run and what it found.
 
 Decoys come from the fleet itself, not from planting: a docs page that mentions
 a route in prose, `POST /charges` beside the dead `GET /charges`,
@@ -41,5 +46,5 @@ a route in prose, `POST /charges` beside the dead `GET /charges`,
 The five-repo fleet stays for `verify-search`, which builds it in seconds and
 asserts its exact content. This fleet now has its seam shapes too (a route split
 across a prefix and a method, in Kotlin and in a .NET route group; an interface
-resolved only by DI registration; a repo with no CODEOWNERS), all but one: a
-consumer of a versioned topic nobody produces.
+resolved only by DI registration; a repo with no CODEOWNERS; a consumer of an
+event nothing publishes).

@@ -407,6 +407,37 @@ TOOLS = [
       SCOPE_ARG,
       arg("repo", "Limit to this repo directory name.", required=False)]),
 
+    # The two sides of a seam (#122). cs_uses lists every file that names an event
+    # or a route path, publisher beside consumer, definition beside caller, GET
+    # beside POST; these classify each hit by the code around it.
+    ("cs_event", "event",
+     "Who PUBLISHES an event and who CONSUMES it, fleet-wide. Every spelling of "
+     "the name is searched (order.paid, ORDER_PAID, OrderPaid, orderPaid) and a "
+     "constant holding it is followed in its file; each hit is labelled by the "
+     "call it sits in (publish/send/outbox vs consume/subscribe/listener/handler "
+     "map/queue binding), or declares / wiring / mention. Says when consumers "
+     "wait for an event nothing in view publishes. Prefer this over cs_uses for "
+     "a topic or event: a text search names both sides alike.",
+     [arg("name", "The event or topic name as published, e.g. order.paid or "
+                  "orders.reserved.v1."),
+      SCOPE_ARG,
+      arg("repo", "Limit to this repo directory name.", required=False)]),
+    ("cs_route", "route",
+     "Where an HTTP route is DEFINED and who CALLS it, method-aware. The "
+     "definition's path is assembled from the pieces frameworks split it into "
+     "(Spring class @RequestMapping + method mapping, .NET MapGroup or "
+     "[Route] + [HttpX], FastAPI router prefix, Express, route tables). Callers "
+     "are string literals matching segment by segment, a route parameter "
+     "matching any one segment, with the method read near the call; same path "
+     "with another method, tail-only matches and calls whose method is not "
+     "visible are listed apart. A call's base URL is not resolved. Prefer this "
+     "over cs_uses to ask whether an endpoint is used.",
+     [arg("method", "The HTTP method.", enum=["GET", "POST", "PUT", "PATCH", "DELETE"]),
+      arg("path", "The route path as the service defines it, parameters in any "
+                  "spelling: /coffees/{sku}/price, /orders/:id."),
+      SCOPE_ARG,
+      arg("repo", "Limit to this repo directory name.", required=False)]),
+
     # The CORPUS bound, not a search result. The only tool here that needs
     # network, and the only one whose absence leaves a question unanswerable
     # rather than answered worse.

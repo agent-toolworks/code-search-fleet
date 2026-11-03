@@ -214,6 +214,8 @@ Tool names, argument names per tool, and why `scope` is required:
 | Who to ask about this repo or file | `cs owns [repo\|repo/path]` |
 | Who crashes if I add a field to a response | `cs strictness [repo]` |
 | Who even reads an error body, and who retries | `cs resilience [repo]` |
+| Who publishes an event, and who consumes it | `cs event <name> [repo]` |
+| Where a route is defined, and who calls it | `cs route <METHOD> <path> [repo]` |
 | Who sets this config key, and who reads it | `cs values <KEY> [repo]` |
 | What the org has that the fleet does not | `cs gaps <query>` |
 | When a seam appeared, or last changed | `cs history <string> [repo]` |

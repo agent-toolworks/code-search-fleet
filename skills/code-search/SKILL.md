@@ -55,6 +55,12 @@ repos rather than guessing.
 (`cs_changes` over MCP) lists everything since, small fixes included, and the
 MCP instructions name the running version. Details are in `docs/install.md`,
 "If you already use cs":
+- New in 1.32.0: `cs event <name>` and `cs route <METHOD> <path>` (`cs_event`,
+  `cs_route`). For "who publishes / consumes this event" and "is this endpoint
+  used, and by whom", prefer them over `cs uses`, which lists both sides of a
+  seam alike. They label each hit (`[publishes]`, `[consumes]`, `[defines]`,
+  `[calls]`, `[calls-other-method]`, ...) and are `heuristic`: a call's base URL
+  is not resolved, and a constant is followed only within its own file.
 - Since 1.31.2, `cs values <KEY>` counts only the key as a whole name (a
   longer name such as `RENEWAL_<KEY>` is listed as `not this key:`), gives a
   `${KEY:default}` its default instead of `default}`, and counts a comment as a
@@ -195,6 +201,8 @@ Run `cs which` for this table at any time.
 
 | What you want to know | Use |
 |---|---|
+| Who PUBLISHES / CONSUMES this event or topic | `cs event <name> [repo]` |
+| Where is this route DEFINED, who CALLS it (method-aware) | `cs route <METHOD> <path> [repo]` |
 | Who calls/uses this endpoint, topic, config key | `cs uses <string>` |
 | Which repos share this string | `cs seam <string>` |
 | Any text or regex, comments included | `cs text <pattern>` (`--literal` to search it as written) |

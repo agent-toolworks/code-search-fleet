@@ -243,6 +243,16 @@ something new. See [updating.md](updating.md).
 For people, and for agents whose notes, `CLAUDE.md` or memory describe cs from
 before 1.16. Update anything that says otherwise:
 
+- **`cs event` and `cs route`** (1.32.0, #122). Two verbs for the two sides of a
+  seam. `cs event <name>` labels each site `[publishes]` / `[consumes]` /
+  `[declares]` / `[wiring]` by the call it sits in, searching every spelling of
+  the name (`order.paid`, `ORDER_PAID`, `OrderPaid`, `orderPaid`) and following
+  a constant within its file. `cs route <METHOD> <path>` finds the definition
+  with its path assembled from prefixes (Spring class `@RequestMapping`, .NET
+  `MapGroup` / `[Route]`, FastAPI routers) and the callers, method-aware. Notes
+  that say "use `cs uses` to find who publishes X" or "a literal search cannot
+  find a split route" are out of date.
+
 - **`cs values` answers changed** (1.31.2, #120). A hit counts only where the
   key is a whole name: `RENEWAL_MAX_ATTEMPTS` is no longer a site of
   `MAX_ATTEMPTS`, and the answer names such longer keys on a `not this key:`

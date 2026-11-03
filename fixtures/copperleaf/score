@@ -58,6 +58,8 @@ def main():
     ap.add_argument("--key", default=os.path.expanduser(os.environ.get("COPPERLEAF_KEY", "~/git/home/copperleaf-answer-key")),
                     help="the answer-key repo (copperleaf-coffee/answer-key)")
     ap.add_argument("--questions", default=None, help="default: <key>/model/cs-questions.json")
+    ap.add_argument("--queries-file", default=None,
+                    help="how cs is asked; default queries.json (queries-1.32.json uses cs route / cs event)")
     ap.add_argument("--only", default="")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--source-only", action="store_true",
@@ -66,7 +68,7 @@ def main():
     args = ap.parse_args()
     qpath = args.questions or os.path.join(args.key, "model", "cs-questions.json")
     questions = json.load(open(qpath))["queries"]
-    queries = json.load(open(os.path.join(HERE, "queries.json")))["queries"]
+    queries = json.load(open(args.queries_file or os.path.join(HERE, "queries.json")))["queries"]
     only = set(filter(None, args.only.split(",")))
     results = []
     for q in questions:
@@ -86,6 +88,14 @@ def main():
             secs += t
             codes.append(code)
         lines = out.split("\n")
+        # cs route / cs event label every line with its side; their answer to "who
+        # publishes" is the [publishes] lines, not every file they list. Read the
+        # side the question asks about, as an agent reading the labels would.
+        SIDE = {"publishers": "publishes", "consumers": "consumes", "callers": "calls",
+                "dead": "calls", "definition": "defines"}
+        if all(c[0] in ("route", "event") for c in cmds) and q["kind"] in SIDE:
+            out = "\n".join(ln for ln in lines if ": [%s] " % SIDE[q["kind"]] in ln)
+            lines = out.split("\n")
         if q["kind"] == "incident-fix":
             want = [c.split()[1] for c in q["answer"]["fix_commits"]]
             missing = [w for w in want if w not in out]

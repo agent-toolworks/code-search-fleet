@@ -26,14 +26,25 @@ in `Program.cs`), and a repo with no CODEOWNERS (docs). Three questions were add
 | Run | Passed |
 | --- | --- |
 | 1.31.2, as first asked | 21/45 |
-| 1.31.2, `--source-only` | **31/45** |
+| 1.31.2, `--source-only` | 31/45 |
 
-By kind, last run: owner 5/5, config 5/5, impls 1/1, pins 1/1, pins-behind 1/1,
-table-definition 2/2, latent 1/1, callers 6/7, dead 4/6, table-writers 2/3,
-incident-fix 1/2, publishers 1/4, consumers 1/4, definition 0/3. The 14 left are
-#122 (no verb tells publish from consume, GET from POST, or a route's definition
-from its callers, and none assembles a split path: 12) and the two scorer limits
-below.
+Then a consumer of an event nothing publishes (`stock.low`, contracts 1.3.0) and
+its question (46), and cs 1.32.0's `cs route` / `cs event` (#122), asked as the
+skill's table now says (`queries-1.32.json`) and read by the side each line is
+labelled with:
+
+| Run | Passed |
+| --- | --- |
+| 1.32.0, `queries-1.32.json` | **42/46** |
+
+By kind, last run: publishers 5/5, consumers 4/4, dead 6/6, definition 3/3,
+callers 5/7, owner 5/5, config 5/5, impls 1/1, pins 1/1, pins-behind 1/1,
+table-definition 2/2, latent 1/1, table-writers 2/3, incident-fix 1/2. Of the four
+left, two are the scorer limits below. The other two are callers that reach the
+gateway through a helper adding the base path (`admin('/orders/...')` prepends
+`/api/admin`, the shop's `call('/subscriptions/...')` prepends `/api`): cs route
+lists them as `[calls-tail]`, a literal matching the route's tail, and does not
+follow the prefix across functions.
 
 As in the five-repo baseline, a FAIL is trustworthy and a PASS still needs
 reading: the scorer checks which files an answer names, not what it says about
@@ -81,6 +92,16 @@ them.
    `Program.cs`; neither alone answers "which class charges cards, and where is it
    chosen". A repo with no CODEOWNERS is reported as the gap ("docs declares no
    CODEOWNERS"), not filled in.
+
+9. **The seam verbs (1.32.0).** `cs event` found every publisher and consumer,
+   the C# ones through their PascalCase spelling, the Kotlin consumer through
+   its `CONSUMED` list and `@RabbitListener`, the Python one through
+   `queue_bind`; it named `stock.low` as consumed with nothing publishing it.
+   `cs route` assembled both split definitions and the .NET group, kept
+   `POST /charges` apart from `GET /charges`, and called the five dead routes
+   dead. Its first run labelled a template function named like an event
+   (`t.subscriptionPaymentFailed(...)` inside `send(...)`) a publisher; a
+   spelling followed by `(` is now a function, not the event.
 
 ## Hollow and harsh verdicts
 

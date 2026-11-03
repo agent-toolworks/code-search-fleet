@@ -91,8 +91,12 @@ def main():
             missing = [w for w in want if w not in out]
             bad = []
         elif q["kind"] == "owner":
-            # cs owns names the team; the CODEOWNERS path in `expect` is where the answer comes from
-            missing = [] if q["answer"] in out else [q["answer"]]
+            # cs owns names the team; the CODEOWNERS path in `expect` is where the answer comes from.
+            # A repo with no CODEOWNERS: the right answer is the gap, said as such.
+            if q["answer"] is None:
+                missing = [] if "no codeowners" in out.lower() else ["(the gap: no CODEOWNERS)"]
+            else:
+                missing = [] if q["answer"] in out else [q["answer"]]
             bad = []
         elif q["kind"] in ("pins", "pins-behind"):
             # a pin is a line naming the repo and its version (cs versions prints columns, not paths)

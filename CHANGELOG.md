@@ -8,6 +8,29 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.31.2 — 2026-11-03
+
+- **Fixed: `cs values` counted a longer key, a `${KEY:default}` and comments
+  wrongly** (#120). Three misreads in one answer. `cs values MAX_ATTEMPTS`
+  listed `${RENEWAL_MAX_ATTEMPTS:3}` as a **set** of `MAX_ATTEMPTS`, to the
+  literal `"3}"`, and listed a Python `#` comment and a SQL `--` comment that
+  mention the key as **reads**. Now a hit counts only where the key stands as a
+  whole name (no word character, or `-`/`.` the key itself uses, touching it);
+  the longer names are counted on a `not this key:` line instead. A
+  `${KEY:default}` (also `${KEY:-default}`, `${KEY-default}`) supplies its
+  default, labelled `(default of ${KEY})`, and a bare `${KEY}` says it has no
+  default. A comment in a code file is a `[doc]`, by the same comment table
+  `cs uses` filters with. If a `cs values` answer showed a set-site whose literal
+  ended in `}`, or a mismatch finding from one, ask again.
+- **Fixed: `cs versions` and `cs deps` now read pip `requirements*.txt`**
+  (#121), including `requirements/*.txt`. They were named as *not read*, so the
+  pins of a Python service that declares its dependencies there were missing
+  from every version table, which hid exactly the repos left behind by an
+  upgrade. Options (`-r`, `-c`, `--find-links`, `-e`), paths, URLs and comments
+  are not packages; a `\` continuation is joined; each requirement is split as
+  PEP 508, the same as `pyproject.toml`. `setup.py`, `setup.cfg` and `Pipfile`
+  are still named as not read.
+
 ## 1.31.1 — 2026-11-03
 
 - **Fixed: `cs uses` counted code as comments after a `/*` inside a line

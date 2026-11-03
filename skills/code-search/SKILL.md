@@ -55,6 +55,11 @@ repos rather than guessing.
 (`cs_changes` over MCP) lists everything since, small fixes included, and the
 MCP instructions name the running version. Details are in `docs/install.md`,
 "If you already use cs":
+- Since 1.31.2, `cs values <KEY>` counts only the key as a whole name (a
+  longer name such as `RENEWAL_<KEY>` is listed as `not this key:`), gives a
+  `${KEY:default}` its default instead of `default}`, and counts a comment as a
+  `[doc]`, not a read. `cs versions` / `cs deps` read pip `requirements*.txt`,
+  which they named as *not read* before.
 - Before 1.31.1, a `/*` inside a `//` comment or a string (`// routes under
   /api/*`, `"/api/*"`) made `cs uses` treat the rest of the file, up to the
   next `*/`, as comments. A *no code uses it*, or a call site listed under

@@ -46,6 +46,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from filter_code import comment_lines  # noqa: E402
+
 # The set side: files whose job is to STATE a value. A match in one of these is
 # a value being supplied, not a value being consumed.
 SET_EXTS = {
@@ -69,6 +72,26 @@ DOC_EXTS = {".md", ".markdown", ".rst", ".txt", ".adoc"}
 # A value that cannot be known statically. Naming these is the point: they are
 # exactly the sites a human has to open.
 TEMPLATE_RE = re.compile(r"\{\{|\$\{|\$\(|%\(|<%")
+
+def key_re(key):
+    """The key as a whole name. A word character, or a `-` or `.` the key itself
+    uses, may not touch it on either side: `RENEWAL_MAX_ATTEMPTS` is another
+    setting, not a site of `MAX_ATTEMPTS` (#120). The text sweep finds both, so
+    each hit is checked here."""
+    edge = "A-Za-z0-9_" + "".join(re.escape(c) for c in "-." if c in key)
+    return re.compile(r"(?<![%s])%s(?![%s])" % (edge, re.escape(key), edge))
+
+
+# `${KEY}` / `${KEY:default}`: Spring, shell and compose read the key here and
+# fall back to the default. The default is the value this line supplies, not
+# `default}` (#120).
+def placeholder_default(key, text):
+    """(True, default-or-None) when the key appears as a `${KEY...}` placeholder."""
+    m = re.search(r"\$\{\s*" + re.escape(key) + r"\s*(?:(?::-?|-)([^}]*))?\}", text)
+    if not m:
+        return False, None
+    return True, (m.group(1).strip() if m.group(1) is not None else None)
+
 
 # `KEY: value`, `KEY = value`, `KEY=value`, `"KEY": "value"`, `ENV KEY value`.
 def assigned_value(key, text):
@@ -263,6 +286,8 @@ def main():
     root, key = sys.argv[1], sys.argv[2]
 
     sets, reads, docs, others = [], [], [], []
+    longer = {}          # a longer name the sweep matched inside, -> hit count
+    whole = key_re(key)
     accepted, accept_sites = [], []
     test_tokens, test_sites, key_names = set(), [], set()
     file_cache = {}
@@ -274,11 +299,28 @@ def main():
         if not parsed:
             continue
         path, lineno, text = parsed
+        if not whole.search(text):
+            for m in re.finditer(r"[A-Za-z0-9_.-]*%s[A-Za-z0-9_.-]*" % re.escape(key), text):
+                if m.group(0) != key:
+                    longer[m.group(0)] = longer.get(m.group(0), 0) + 1
+                    break
+            continue
         kind = kind_of(path)
+        if kind == "read":
+            # A comment in a code file names the key; it does not read it (#120).
+            # The same comment table `cs uses` filters with.
+            marked = comment_lines(os.path.join(root, path))
+            if marked and lineno in marked:
+                kind = "doc"
 
         if kind == "set":
-            val = assigned_value(key, text)
-            if val is None:
+            is_ph, default = placeholder_default(key, text)
+            val = default if is_ph else assigned_value(key, text)
+            if is_ph and default is None:
+                label = "(reads ${%s}, no default)" % key
+            elif is_ph:
+                label = '"%s" (default of ${%s})' % (default, key)
+            elif val is None:
                 label = "(names the key, supplies no literal here)"
             elif TEMPLATE_RE.search(val):
                 label = "(templated) " + val
@@ -319,6 +361,9 @@ def main():
             others.append((path, lineno, text.strip()))
 
     if not (sets or reads or docs or others):
+        if longer:
+            print("not this key: %d hit(s), all inside a longer name — %s"
+                  % (sum(longer.values()), ", ".join(sorted(longer)[:8])), file=sys.stderr)
         return 1
 
     # The accepted set has to be known before the set-sites are printed, because
@@ -409,6 +454,9 @@ def main():
                 print('    %s:%d   "%s"' % (p, l, v), file=e)
             print("  the read side accepts: " + " | ".join(acc), file=e)
             rc = 0
+    if longer:
+        print("not this key: %d hit(s) inside a longer name — %s"
+              % (sum(longer.values()), ", ".join(sorted(longer)[:8])), file=e)
     if docs or others:
         print("not counted on either side: %d doc mention(s), %d file(s) of a "
               "kind this does not classify — a README naming a key neither "

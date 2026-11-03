@@ -243,6 +243,13 @@ something new. See [updating.md](updating.md).
 For people, and for agents whose notes, `CLAUDE.md` or memory describe cs from
 before 1.16. Update anything that says otherwise:
 
+- **A `cs uses` negative from before 1.31.1 may be wrong** (1.31.1). The prose
+  filter took a `/*` anywhere on a line as the start of a block comment, even
+  inside a `//` comment or a string, and counted every line up to the next `*/`
+  as prose. A header such as `// routes under /api/*` hid a whole route table:
+  `cs uses` answered *no code uses it*, or listed real call sites under
+  *mentioned only in comments/docs*. Ask again before relying on such an answer.
+
 - **A scope is a path** (1.16.0, #59). Over MCP, and with `--ticket=`, the scope
   is the absolute path of the workspace you are working in, or of any directory
   inside it. A bare folder name still works when it is unique. Workspaces can

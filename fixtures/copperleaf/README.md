@@ -38,7 +38,8 @@ a route in prose, `POST /charges` beside the dead `GET /charges`,
 `/coffees/{sku}/price` beside `/coffees/{sku}`, `RENEWAL_MAX_ATTEMPTS` beside
 `MAX_ATTEMPTS`, `RABBITMQ_URI` beside `RABBITMQ_URL`.
 
-The five-repo fleet stays for `verify-search`: its seams that this fleet does
-not have (a route split across two C# attributes, a DI-resolved
-implementation, a versioned topic nobody produces, a repo with no CODEOWNERS)
-are still tested there.
+The five-repo fleet stays for `verify-search`, which builds it in seconds and
+asserts its exact content. This fleet now has its seam shapes too (a route split
+across a prefix and a method, in Kotlin and in a .NET route group; an interface
+resolved only by DI registration; a repo with no CODEOWNERS), all but one: a
+consumer of a versioned topic nobody produces.

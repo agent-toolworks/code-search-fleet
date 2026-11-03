@@ -14,13 +14,26 @@ a graph verb.
 | with the 1.31.1 prose-filter fix, as first asked | 16/42 |
 | with the 1.31.1 prose-filter fix, `--source-only` | 26/42 |
 | 1.31.2 (`cs values` #120, `requirements.txt` #121), as first asked | 19/42 |
-| 1.31.2, `--source-only` | **29/42** |
+| 1.31.2, `--source-only` | 29/42 |
 
-By kind, last run: owner 4/4, config 5/5, pins 1/1, pins-behind 1/1,
+Then the fleet gained three seams the five-repo fixture already had: a route split
+across a class prefix and a method (`@RequestMapping("/wholesale")` +
+`@GetMapping("/accounts")`) and across a .NET `MapGroup("/green-lots")`, an
+interface resolved only by DI registration (`ICardProvider` -> `FakeCardProvider`
+in `Program.cs`), and a repo with no CODEOWNERS (docs). Three questions were added
+(45):
+
+| Run | Passed |
+| --- | --- |
+| 1.31.2, as first asked | 21/45 |
+| 1.31.2, `--source-only` | **31/45** |
+
+By kind, last run: owner 5/5, config 5/5, impls 1/1, pins 1/1, pins-behind 1/1,
 table-definition 2/2, latent 1/1, callers 6/7, dead 4/6, table-writers 2/3,
-incident-fix 1/2, publishers 1/4, consumers 1/4, definition 0/2. The 13 left are
-#122 (no verb tells publish from consume or GET from POST: 11) and the two
-scorer limits below.
+incident-fix 1/2, publishers 1/4, consumers 1/4, definition 0/3. The 14 left are
+#122 (no verb tells publish from consume, GET from POST, or a route's definition
+from its callers, and none assembles a split path: 12) and the two scorer limits
+below.
 
 As in the five-repo baseline, a FAIL is trustworthy and a PASS still needs
 reading: the scorer checks which files an answer names, not what it says about
@@ -56,6 +69,18 @@ them.
    search names both sides. `cs uses '/charges'` cannot tell `GET` from `POST`,
    and `/coffees/` also matches `/coffees/{sku}/price`. These are the shape of a
    missing feature (an event or route seam verb), not a bug.
+
+7. **A split route has no literal to find.** `uses "/wholesale/accounts"` finds
+   the gateway and the back office, never `WholesaleController.kt`, where the path
+   is `@RequestMapping("/wholesale")` plus `@GetMapping("/accounts")`; the same
+   for inventory's `MapGroup("/green-lots")` + `MapPost("/allocate")`. The
+   five-repo fixture's split C# attributes show the same, and tokensave found
+   that one by symbol; no verb here assembles the path.
+8. **DI is answered, in two verbs.** `cs impls ICardProvider` resolves
+   `FakeCardProvider` (LSP) and `cs refs` reaches the `AddSingleton` line in
+   `Program.cs`; neither alone answers "which class charges cards, and where is it
+   chosen". A repo with no CODEOWNERS is reported as the gap ("docs declares no
+   CODEOWNERS"), not filled in.
 
 ## Hollow and harsh verdicts
 

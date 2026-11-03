@@ -8,6 +8,32 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.32.0 — 2026-11-03
+
+- **New: `cs event <name> [repo]` and `cs route <METHOD> <path> [repo]`**
+  (#122), with MCP tools `cs_event` and `cs_route`. `cs uses` lists every file
+  that names an event or a route path, so the two sides of a seam came back
+  mixed: publisher with consumer, definition with caller, `GET /charges` with
+  `POST /charges`. Scored on the Copperleaf fleet, that was 12 of the 14
+  remaining failures. `cs event` searches every spelling of the name and labels
+  each site by the call it sits in: `[publishes]` (publish, send, emit, outbox),
+  `[consumes]` (consume, subscribe, a listener annotation, a handler-map key, a
+  queue binding), `[declares]`, `[wiring]`, `[import]`, or `[mention]` when the
+  surroundings decide nothing. A constant holding the name is followed to its
+  uses in the same file. It warns when consumers wait for an event nothing in
+  view publishes. `cs route` finds the definition with its path assembled from
+  the pieces frameworks split it into (Spring class `@RequestMapping` + method
+  mapping, .NET `MapGroup` and `[Route]` + `[HttpX]`, FastAPI `APIRouter`
+  prefix, Flask, Express, route tables), and the callers: string literals that
+  match segment by segment, a route parameter matching any one segment, with
+  the method read near the call and constants followed in their file. Same path
+  with another method (`[calls-other-method]`), literals that match only the
+  path's tail (`[calls-tail]`) and calls whose method is not visible
+  (`[calls-method-unseen]`) are listed apart, not counted. Both answer
+  `heuristic`: a call's base URL is not resolved, and a constant in another
+  file is not followed. Ask these instead of `cs uses` for "who publishes X"
+  and "is this endpoint used".
+
 ## 1.31.2 — 2026-11-03
 
 - **Fixed: `cs values` counted a longer key, a `${KEY:default}` and comments

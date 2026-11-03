@@ -1,0 +1,306 @@
+{
+ "_comment": "cs 1.32.0's way to ask: the same as queries.json, except that route and event questions use the verbs the skill's table now names for them (cs route, cs event). Chosen by question kind from that table, before running.",
+ "queries": {
+  "price-callers": [
+   [
+    "route",
+    "GET",
+    "/coffees/{sku}/price"
+   ]
+  ],
+  "coffee-by-sku-callers": [
+   [
+    "route",
+    "GET",
+    "/coffees/{sku}"
+   ]
+  ],
+  "gateway-coffee-by-sku-dead": [
+   [
+    "route",
+    "GET",
+    "/api/coffees/{sku}"
+   ]
+  ],
+  "charges-get-dead": [
+   [
+    "route",
+    "GET",
+    "/charges"
+   ]
+  ],
+  "invoices-get-dead": [
+   [
+    "route",
+    "GET",
+    "/invoices"
+   ]
+  ],
+  "admin-order-dead": [
+   [
+    "route",
+    "GET",
+    "/api/admin/orders/{id}"
+   ]
+  ],
+  "outbox-route-dead": [
+   [
+    "route",
+    "GET",
+    "/outbox"
+   ]
+  ],
+  "reservations-test-only": [
+   [
+    "route",
+    "GET",
+    "/reservations"
+   ]
+  ],
+  "allocate-callers": [
+   [
+    "route",
+    "POST",
+    "/green-lots/allocate"
+   ]
+  ],
+  "charge-callers": [
+   [
+    "route",
+    "POST",
+    "/charges"
+   ]
+  ],
+  "refund-service-callers": [
+   [
+    "route",
+    "POST",
+    "/orders/{id}/refund"
+   ]
+  ],
+  "refund-gateway-callers": [
+   [
+    "route",
+    "POST",
+    "/api/admin/orders/{id}/refund"
+   ]
+  ],
+  "subscription-action-callers": [
+   [
+    "route",
+    "POST",
+    "/api/subscriptions/{id}/{action}"
+   ]
+  ],
+  "price-definition": [
+   [
+    "route",
+    "GET",
+    "/coffees/{sku}/price"
+   ]
+  ],
+  "allocate-definition": [
+   [
+    "route",
+    "POST",
+    "/green-lots/allocate"
+   ]
+  ],
+  "wholesale-accounts-definition": [
+   [
+    "route",
+    "GET",
+    "/wholesale/accounts"
+   ]
+  ],
+  "order-paid-publishers": [
+   [
+    "event",
+    "order.paid"
+   ]
+  ],
+  "roast-completed-publishers": [
+   [
+    "event",
+    "roast.completed"
+   ]
+  ],
+  "stock-reserved-publishers": [
+   [
+    "event",
+    "stock.reserved"
+   ]
+  ],
+  "payment-failed-publishers": [
+   [
+    "event",
+    "subscription.payment_failed"
+   ]
+  ],
+  "payment-refunded-consumers": [
+   [
+    "event",
+    "payment.refunded"
+   ]
+  ],
+  "roast-requested-consumers": [
+   [
+    "event",
+    "roast.requested"
+   ]
+  ],
+  "shipment-created-consumers": [
+   [
+    "event",
+    "shipment.created"
+   ]
+  ],
+  "roast-blocked-consumers": [
+   [
+    "event",
+    "roast.blocked"
+   ]
+  ],
+  "stock-low-publishers": [
+   [
+    "event",
+    "stock.low"
+   ]
+  ],
+  "payments-owner": [
+   [
+    "owns",
+    "payments-service"
+   ]
+  ],
+  "refund-schema-owner": [
+   [
+    "owns",
+    "shared-contracts/events/payment.refunded.json"
+   ]
+  ],
+  "order-paid-schema-owner": [
+   [
+    "owns",
+    "shared-contracts/events/order.paid.json"
+   ]
+  ],
+  "backoffice-owner": [
+   [
+    "owns",
+    "backoffice-web"
+   ]
+  ],
+  "docs-owner": [
+   [
+    "owns",
+    "docs"
+   ]
+  ],
+  "contract-pins": [
+   [
+    "versions"
+   ]
+  ],
+  "contract-pins-behind": [
+   [
+    "versions"
+   ]
+  ],
+  "max-attempts-readers": [
+   [
+    "values",
+    "MAX_ATTEMPTS"
+   ]
+  ],
+  "rabbitmq-url-readers": [
+   [
+    "values",
+    "RABBITMQ_URL"
+   ]
+  ],
+  "fresh-days-readers": [
+   [
+    "values",
+    "FRESH_DAYS"
+   ]
+  ],
+  "inventory-url-readers": [
+   [
+    "values",
+    "INVENTORY_URL"
+   ]
+  ],
+  "backoffice-token-readers": [
+   [
+    "values",
+    "BACKOFFICE_TOKEN"
+   ]
+  ],
+  "waiting-orders-writers": [
+   [
+    "uses",
+    "waiting_orders"
+   ]
+  ],
+  "wholesale-accounts-writers": [
+   [
+    "uses",
+    "wholesale_accounts"
+   ]
+  ],
+  "roast-batches-writers": [
+   [
+    "uses",
+    "roast_batches"
+   ]
+  ],
+  "subscriptions-definition": [
+   [
+    "text",
+    "TABLE subscriptions"
+   ],
+   [
+    "text",
+    "claimed_by"
+   ]
+  ],
+  "outbox-definition": [
+   [
+    "text",
+    "CREATE TABLE outbox"
+   ]
+  ],
+  "inc-002-fix": [
+   [
+    "history",
+    "carton-l"
+   ]
+  ],
+  "inc-004-fix": [
+   [
+    "history",
+    "claimed_by"
+   ]
+  ],
+  "batch-cap": [
+   [
+    "uses",
+    "MAX_BATCH_GRAMS"
+   ]
+  ],
+  "card-provider-impls": [
+   [
+    "impls",
+    "ICardProvider",
+    "payments-service"
+   ],
+   [
+    "refs",
+    "ICardProvider",
+    "payments-service",
+    "src/Payments.Api/FakeCardProvider.cs"
+   ]
+  ]
+ }
+}

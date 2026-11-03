@@ -55,6 +55,10 @@ repos rather than guessing.
 (`cs_changes` over MCP) lists everything since, small fixes included, and the
 MCP instructions name the running version. Details are in `docs/install.md`,
 "If you already use cs":
+- Before 1.31.1, a `/*` inside a `//` comment or a string (`// routes under
+  /api/*`, `"/api/*"`) made `cs uses` treat the rest of the file, up to the
+  next `*/`, as comments. A *no code uses it*, or a call site listed under
+  *mentioned only in comments/docs*, from an older cs may be wrong: ask again.
 - For a field or property, ask `cs fields` (since 1.31.0). `cs impact` on one
   says which reads are graph edges (only C# through a typed receiver, from
   tokensave 7.16.0), and a zero is `degraded`, not "unused". `cs callers` on

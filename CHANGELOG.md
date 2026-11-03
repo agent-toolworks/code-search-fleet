@@ -8,6 +8,31 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.31.1 — 2026-11-03
+
+- **Fixed: `cs uses` counted code as comments after a `/*` inside a line
+  comment or a string.** The prose filter looked for a block-comment opener
+  anywhere on a line, so `// routes under /api/*`, `"/api/admin/*"` or
+  `/// applies Migrations/*.sql` opened a "block comment" that ran to the next
+  `*/` in the file, often its last doc comment. Every line in between, call
+  sites included, was treated as prose: `cs uses '/refund'` answered *no code
+  uses it* for a TypeScript route table whose header comment mentioned
+  `/api/*`. The same hid code in generated files headed `// Generated from
+  events/*.json`. An opener now counts only in code, not after `//` or inside
+  quotes. If `cs uses` once told you a route, topic or key was unused, or
+  listed a call site under *mentioned only in comments/docs*, ask again. Found
+  by scoring cs against the Copperleaf Coffee fleet;
+  `fixtures/prose-probes/probe.ts` is the regression probe.
+- **New: a second benchmark, the Copperleaf Coffee fleet**
+  (`fixtures/copperleaf/`). A made-up shop that runs: 13 repos in six
+  languages, a docs repo, events, contract drift, five replayed incidents.
+  42 questions built from a description file checked against its code, with
+  decoys taken from the fleet itself. `fixtures/copperleaf/score` asks cs each
+  one and scores it like `scripts/score-seams`. First run: 16/42 as first
+  asked, 26/42 following cs's own `--source-only` hint. `BASELINE.md` lists
+  what it found. Nothing shipped changes; the five-repo fleet still backs
+  `verify-search`.
+
 ## 1.31.0 — 2026-10-27
 
 - **Changed: `cs impact` on a field or property says what the graph holds

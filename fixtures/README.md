@@ -14,6 +14,12 @@ on it. That question needs real queries against a real repo, drawn from your
 own tickets; see "Honest limits" in the top-level `README.md`, and
 `fixtures/BASELINE.md` for how the scored queries here were measured.
 
+For a fleet closer to real, with answers nobody chose with cs, score against the
+Copperleaf Coffee fleet: 13 repos of a made-up shop that runs, a docs repo, and
+42 questions built from a description file checked against its code. See
+[`copperleaf/README.md`](copperleaf/README.md) and
+[`copperleaf/BASELINE.md`](copperleaf/BASELINE.md).
+
 The exception is accuracy. The fixture carries **decoys** — a prose-only
 mention of an endpoint, a consumer of a topic version nobody produces, a
 same-named but unrelated class, a dead endpoint, a retired flag key that is a

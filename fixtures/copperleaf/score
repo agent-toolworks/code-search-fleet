@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Score cs against the Copperleaf Coffee fleet's question set.
+
+The Copperleaf fleet (github.com/copperleaf-coffee, cloned to ~/git/fixture-company)
+is a made-up company that really runs: 13 repos in six languages, events over
+RabbitMQ, five replayed incidents. Its answer key is a separate repo kept outside
+the fleet (copperleaf-coffee/answer-key, ~/git/home/copperleaf-answer-key): a
+description file checked against the code (model/company.json) and a question
+set built from it (model/cs-questions.json), giving for each question the files a
+correct answer must name (`expect`) and the decoys it must not (`forbid`).
+Nobody chose those answers with cs, so they can score it, and nothing cs
+searches in the fleet holds them.
+
+This runs the cs command(s) in queries.json for each question, with FLEET_ROOT
+set to the Copperleaf folder, and scores the output the way scripts/score-seams
+does: a PASS names every expected file and no forbidden one. For an incident
+question it scores the fix commits named instead.
+
+Usage:
+  fixtures/copperleaf/score [--fleet DIR] [--key DIR] [--source-only] [--only ID[,ID]] [--json] [-v]
+
+  --fleet defaults to $COPPERLEAF_FLEET or ~/git/fixture-company,
+  --key   to $COPPERLEAF_KEY or ~/git/home/copperleaf-answer-key.
+
+Exit 0 always (this is a measurement, not a gate); see BASELINE.md for the last run.
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+CS = os.path.normpath(os.path.join(HERE, "..", "..", "scripts", "cs"))
+
+
+def mentions(text: str, path: str) -> bool:
+    """scripts/score-seams' rule: the repo/path, or a distinctive basename."""
+    text = text.replace("\\", "/")
+    if path in text:
+        return True
+    base = path.rsplit("/", 1)[-1]
+    return len(base) > 12 and base in text
+
+
+def run(fleet: str, args: list) -> tuple:
+    env = dict(os.environ, FLEET_ROOT=fleet, TICKETS_ROOT=os.path.join(fleet, ".no-tickets"))
+    env.pop("WORKSPACE_ROOTS", None)
+    t = time.time()
+    p = subprocess.run([CS] + args, cwd=fleet, env=env, capture_output=True, text=True, timeout=600)
+    return p.returncode, p.stdout + p.stderr, time.time() - t
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--fleet", default=os.path.expanduser(os.environ.get("COPPERLEAF_FLEET", "~/git/fixture-company")))
+    ap.add_argument("--key", default=os.path.expanduser(os.environ.get("COPPERLEAF_KEY", "~/git/home/copperleaf-answer-key")),
+                    help="the answer-key repo (copperleaf-coffee/answer-key)")
+    ap.add_argument("--questions", default=None, help="default: <key>/model/cs-questions.json")
+    ap.add_argument("--only", default="")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--source-only", action="store_true",
+                    help="add --source-only to cs uses/seam, as cs's own hint suggests when most hits are docs or data")
+    ap.add_argument("-v", "--verbose", action="store_true", help="print each command's output")
+    args = ap.parse_args()
+    qpath = args.questions or os.path.join(args.key, "model", "cs-questions.json")
+    questions = json.load(open(qpath))["queries"]
+    queries = json.load(open(os.path.join(HERE, "queries.json")))["queries"]
+    only = set(filter(None, args.only.split(",")))
+    results = []
+    for q in questions:
+        if only and q["id"] not in only:
+            continue
+        cmds = queries.get(q["id"])
+        if not cmds:
+            results.append({"id": q["id"], "kind": q["kind"], "verdict": "NO QUERY", "missing": [], "forbidden": []})
+            print("NO QUERY %s" % q["id"])
+            continue
+        out, secs, codes = "", 0.0, []
+        if args.source_only:
+            cmds = [c + ["--source-only"] if c[0] in ("uses", "seam") else c for c in cmds]
+        for c in cmds:
+            code, text, t = run(args.fleet, c)
+            out += "\n$ cs %s\n%s" % (" ".join(c), text)
+            secs += t
+            codes.append(code)
+        lines = out.split("\n")
+        if q["kind"] == "incident-fix":
+            want = [c.split()[1] for c in q["answer"]["fix_commits"]]
+            missing = [w for w in want if w not in out]
+            bad = []
+        elif q["kind"] == "owner":
+            # cs owns names the team; the CODEOWNERS path in `expect` is where the answer comes from
+            missing = [] if q["answer"] in out else [q["answer"]]
+            bad = []
+        elif q["kind"] in ("pins", "pins-behind"):
+            # a pin is a line naming the repo and its version (cs versions prints columns, not paths)
+            want = {r: v for r, v in q["answer"].items() if isinstance(v, str) and r != "current"}
+            missing = ["%s %s" % (r, v) for r, v in want.items()
+                       if not any(r in ln and v in ln for ln in lines)]
+            bad = []
+        else:
+            missing = [f for f in q["expect"] if not mentions(out, f)]
+            bad = [f for f in q["forbid"] if mentions(out, f)]
+        verdict = "PASS" if not missing and not bad else "FAIL"
+        results.append({"id": q["id"], "kind": q["kind"], "verdict": verdict, "missing": missing, "forbidden": bad,
+                        "commands": [" ".join(c) for c in cmds], "exit": codes, "seconds": round(secs, 1),
+                        "output_lines": out.count("\n")})
+        if args.verbose:
+            print(out)
+        if not args.json:
+            r = results[-1]
+            print("%-4s %-28s %-17s %5.1fs%s%s" % (verdict, q["id"], q["kind"], secs,
+                  ("  missing " + ", ".join(missing)) if missing else "",
+                  ("  forbidden " + ", ".join(bad)) if bad else ""), flush=True)
+    passed = sum(r["verdict"] == "PASS" for r in results)
+    if args.json:
+        json.dump({"fleet": args.fleet, "passed": passed, "total": len(results), "results": results}, sys.stdout, indent=1)
+        print()
+    else:
+        kinds = {}
+        for r in results:
+            k = kinds.setdefault(r["kind"], [0, 0])
+            k[0] += r["verdict"] == "PASS"
+            k[1] += 1
+        print("\n%d/%d passed  " % (passed, len(results)) + "  ".join("%s %d/%d" % (k, a, b) for k, (a, b) in sorted(kinds.items())))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

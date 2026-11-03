@@ -112,6 +112,45 @@ def markers_for(path):
     return None
 
 
+def _block_opener(raw, start, line_markers):
+    """Where a block comment opens on this line, or -1.
+
+    Only an opener in code counts: not one inside a string ("/api/*", `/x/*`),
+    and not one after a line-comment marker (`// routes under /api/*`). Matching
+    the opener anywhere on the line made such a line open a block comment that
+    ran to the next `*/` in the file, so every call site in between was counted
+    as a comment and `cs uses` answered "no code uses it".
+
+    A quote that never closes on the line (a Rust lifetime, an apostrophe in a
+    string the scan misreads) hides any opener after it, so the line counts as
+    code: the safe direction, since a call site missed is worse than a comment
+    counted. Block markers made of quotes (Python's triple quotes) are matched
+    without string tracking, as before.
+    """
+    quotes = "" if start[0] in "\"'" else "\"'`"
+    i, n, q = 0, len(raw), None
+    while i < n:
+        ch = raw[i]
+        if q:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == q:
+                q = None
+            i += 1
+            continue
+        if ch in quotes:
+            q = ch
+            i += 1
+            continue
+        if raw.startswith(start, i):
+            return i
+        if any(m and raw.startswith(m, i) for m in line_markers):
+            return -1
+        i += 1
+    return -1
+
+
 @lru_cache(maxsize=512)
 def comment_lines(path_str):
     """1-based line numbers that are comment or docstring.
@@ -141,10 +180,9 @@ def comment_lines(path_str):
             continue
 
         for start, end in blocks:
-            pos = raw.find(start)
+            pos = _block_opener(raw, start, line_markers)
             if pos == -1:
                 continue
-            # Ignore a delimiter that is itself inside a normal string on the line.
             out.add(idx)
             rest = raw[pos + len(start):]
             if end not in rest:

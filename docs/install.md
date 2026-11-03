@@ -243,6 +243,16 @@ something new. See [updating.md](updating.md).
 For people, and for agents whose notes, `CLAUDE.md` or memory describe cs from
 before 1.16. Update anything that says otherwise:
 
+- **`cs values` answers changed** (1.31.2, #120). A hit counts only where the
+  key is a whole name: `RENEWAL_MAX_ATTEMPTS` is no longer a site of
+  `MAX_ATTEMPTS`, and the answer names such longer keys on a `not this key:`
+  line. `${KEY:default}` reports the default (`"3" (default of ${KEY})`), not
+  `"3}"`. A comment in a code file is `[doc]`, not `[read]`. Notes that treat a
+  `cs values` set-site ending in `}` as a real value are out of date.
+- **`cs versions` / `cs deps` read `requirements*.txt`** (1.31.2, #121). Before,
+  they named those files as *not read*, so a Python service pinning there was
+  missing from the version table.
+
 - **A `cs uses` negative from before 1.31.1 may be wrong** (1.31.1). The prose
   filter took a `/*` anywhere on a line as the start of a block comment, even
   inside a `//` comment or a string, and counted every line up to the next `*/`

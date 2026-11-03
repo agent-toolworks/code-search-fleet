@@ -1,6 +1,6 @@
 # Baseline: cs on the Copperleaf Coffee fleet
 
-Run 2026-11-03, cs 1.31.0 (and the 1.31.1 prose-filter fix), against
+Run 2026-11-03, cs 1.31.0 to 1.31.2, against
 `~/git/fixture-company` (13 repos: Java, Kotlin, C#, Python, TypeScript, JSON
 Schema, Markdown). 42 questions from the fleet's question set
 (`model/cs-questions.json` in copperleaf-coffee/answer-key), asked with the commands in `queries.json`,
@@ -12,11 +12,15 @@ a graph verb.
 | cs 1.31.0, as first asked | 16/42 |
 | cs 1.31.0, `--source-only` added to `uses`/`seam` (cs's own hint) | 25/42 |
 | with the 1.31.1 prose-filter fix, as first asked | 16/42 |
-| with the 1.31.1 prose-filter fix, `--source-only` | **26/42** |
+| with the 1.31.1 prose-filter fix, `--source-only` | 26/42 |
+| 1.31.2 (`cs values` #120, `requirements.txt` #121), as first asked | 19/42 |
+| 1.31.2, `--source-only` | **29/42** |
 
-By kind, last run: owner 4/4, table-definition 2/2, latent 1/1, config 4/5,
-callers 6/7, dead 4/6, table-writers 2/3, incident-fix 1/2, publishers 1/4,
-consumers 1/4, definition 0/2, pins 0/1, pins-behind 0/1.
+By kind, last run: owner 4/4, config 5/5, pins 1/1, pins-behind 1/1,
+table-definition 2/2, latent 1/1, callers 6/7, dead 4/6, table-writers 2/3,
+incident-fix 1/2, publishers 1/4, consumers 1/4, definition 0/2. The 13 left are
+#122 (no verb tells publish from consume or GET from POST: 11) and the two
+scorer limits below.
 
 As in the five-repo baseline, a FAIL is trustworthy and a PASS still needs
 reading: the scorer checks which files an answer names, not what it says about
@@ -35,13 +39,14 @@ them.
    prose, so `cs uses '/refund'` said nobody calls the refund route. The same
    hid generated contract code (`// Generated from ... events/*.json`) and both
    C# migrators (`/// ... Migrations/*.sql`).
-3. **`cs versions` does not read `requirements.txt`.** Both Python services pin
-   the contracts there; cs says "2 manifest(s) in a format this does not parse"
-   and the drift question (which repos are behind 1.2.0) cannot be answered.
-4. **`cs values` matches a key inside a longer key, and parses a Spring default
-   wrongly.** `cs values MAX_ATTEMPTS` reports orders-service's
+3. **`cs versions` did not read `requirements.txt` (fixed in 1.31.2, #121).** Both
+   Python services pin the contracts there; cs said "2 manifest(s) in a format
+   this does not parse" and the drift question (which repos are behind 1.2.0)
+   could not be answered.
+4. **`cs values` matched a key inside a longer key, and parsed a Spring default
+   wrongly (fixed in 1.31.2, #120).** `cs values MAX_ATTEMPTS` reports orders-service's
    `${RENEWAL_MAX_ATTEMPTS:3}` as a **set** of `MAX_ATTEMPTS` to the literal
-   `"3}"`. It also counts comments (a Python `#` line, a SQL `--` line) as
+   `"3}"`. It also counted comments (a Python `#` line, a SQL `--` line) as
    **reads**.
 5. **Events have three spellings.** `order.paid` in JSON, `ORDER_PAID` in Kotlin,
    Python and TypeScript, `OrderPaid` in C#. Searching the constant misses the C#

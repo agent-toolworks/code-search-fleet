@@ -799,7 +799,7 @@ fi
 # manifest cs cannot read was not mentioned, so its repo looked like one that
 # declares nothing.
 man_fleet=$(mktemp -d)/fleet
-mkdir -p "$man_fleet"/{android-app/gradle,android-app/app,legacy-dotnet/Web,py-a,py-b,go-svc}
+mkdir -p "$man_fleet"/{android-app/gradle,android-app/app,legacy-dotnet/Web,py-a,py-b,py-c,go-svc}
 cat > "$man_fleet/android-app/gradle/libs.versions.toml" <<'TOML'
 [versions]
 okhttp = "4.12.0"
@@ -832,6 +832,9 @@ TOML
 printf '[project]\nname = "py-b"\ndependencies = ["some-lib[extra-a]>=0.24.0,<1.0.0"]\n' \
   > "$man_fleet/py-b/pyproject.toml"
 printf 'module example.com/go-svc\n' > "$man_fleet/go-svc/go.mod"
+# pip's format (#121): options, comments, a continuation and a path are not packages.
+printf -- '--find-links vendor/wheels\n-r requirements-dev.txt\nsome-lib==0.26.0  # pinned # "quoted"\nother-lib \\\n  >=2.0\n-e ./local\n./wheels/x-1.0-py3-none-any.whl\n' \
+  > "$man_fleet/py-c/requirements.txt"
 for _r in "$man_fleet"/*/; do git -C "$_r" init -q 2>/dev/null; done
 man_out=$(cd "$man_fleet" && FLEET_ROOT="$man_fleet" "$here/cs" versions --fleet 2>&1)
 
@@ -868,6 +871,17 @@ if matches "$man_out" 'legacy-dotnet[[:space:]]+12\.0\.3[[:space:]]+Web/packages
 else
   err "cs versions did not read packages.config"
   fail=$((fail + 1)); failed_ids+=("versions-packages-config")
+fi
+
+if matches "$man_out" 'py-c[[:space:]]+==0\.26\.0[[:space:]]+requirements\.txt' \
+   && matches "$man_out" 'py-c[[:space:]]+>=2\.0[[:space:]]+requirements\.txt' \
+   && ! matches "$man_out" 'find-links|x-1\.0-py3|quoted|\./local'; then
+  ok "a pip requirements.txt is read: pins and continuations, not options, paths or comments"
+  pass=$((pass + 1))
+else
+  err "cs versions misread requirements.txt:"
+  printf '%s\n' "$man_out" | grep -i 'py-c\|requirements' | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("versions-requirements-txt")
 fi
 
 if matches "$man_out" 'not read: 1 manifest' && matches "$man_out" 'go-svc/go\.mod'; then
@@ -4045,6 +4059,32 @@ fi
 rm -rf "$FLEET_ROOT/fulfillment-worker-python/deploy" \
        "$FLEET_ROOT/fulfillment-worker-python/fulfillment/valprobe.py" \
        "$FLEET_ROOT/fulfillment-worker-python/tests/test_valprobe.py"
+
+# #120: three misreads in one answer. A longer key containing this one is
+# another setting; a Spring `${KEY:default}` supplies the default, not
+# `default}`; and a comment in a code file names the key without reading it.
+mkdir -p "$FLEET_ROOT/fulfillment-worker-python/deploy"
+printf 'retries:\n  limit: ${VALPROBE_LIMIT:7}\n  other: ${RENEWAL_VALPROBE_LIMIT:3}\n' \
+  > "$FLEET_ROOT/fulfillment-worker-python/deploy/application.yml"
+printf 'import os\n# after VALPROBE_LIMIT attempts a message is parked\nVALPROBE_LIMIT = int(os.environ.get("VALPROBE_LIMIT", "7"))\n' \
+  > "$FLEET_ROOT/fulfillment-worker-python/fulfillment/valprobe.py"
+lim_out=$("$here/cs" values VALPROBE_LIMIT --fleet 2>&1); lim_rc=$?
+if [[ $lim_rc -eq 0 ]] \
+   && matches "$lim_out" 'application\.yml:2: \[set\] "7" \(default of \$\{VALPROBE_LIMIT\}\)' \
+   && ! matches "$lim_out" 'application\.yml:3:' \
+   && matches "$lim_out" 'not this key: 1 hit.*RENEWAL_VALPROBE_LIMIT' \
+   && matches "$lim_out" 'valprobe\.py:3: \[read\]' \
+   && matches "$lim_out" 'valprobe\.py:2: \[doc\]' \
+   && ! matches "$lim_out" '"7\}"|"3\}"'; then
+  ok "cs values: a longer key is not this one, \${KEY:default} gives the default, a comment is not a read"
+  pass=$((pass + 1))
+else
+  err "cs values misread a longer key, a \${KEY:default}, or a comment (exit $lim_rc):"
+  printf '%s\n' "$lim_out" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("values-key-boundary")
+fi
+rm -rf "$FLEET_ROOT/fulfillment-worker-python/deploy" \
+       "$FLEET_ROOT/fulfillment-worker-python/fulfillment/valprobe.py"
 
 rm -f "$FLEET_ROOT/inventory-api-dotnet/deploy/valprobe-dev.yaml" \
       "$FLEET_ROOT/inventory-api-dotnet/deploy/valprobe-prod.yaml" \

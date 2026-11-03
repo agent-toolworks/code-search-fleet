@@ -101,6 +101,43 @@ def split_requirement(req):
     return m.group(1), spec or "(unpinned)"
 
 
+# ---- requirements.txt -------------------------------------------------------
+# pip's own format: one requirement per line, `\` joins lines, a comment starts
+# at `#` at the line's start or after whitespace, and lines starting with `-`
+# are options (`-r other.txt`, `-c`, `--find-links`, `--index-url`, `-e path`),
+# not packages. A line that is a path or URL (`./wheels/x.whl`,
+# `git+https://...`) names no coordinate. Everything else is PEP 508, so it goes
+# through the same split as pyproject.toml.
+REQUIREMENTS_GLOBS = ("requirements*.txt", "requirements/*.txt")
+
+
+def requirements_files(repo):
+    out = []
+    for pattern in REQUIREMENTS_GLOBS:
+        out += [p for p in repo.glob(pattern) if p.is_file()]
+    return sorted(set(out))
+
+
+def requirements_txt(path):
+    """[(name, version-or-placeholder)] from a pip requirements file."""
+    out, buf = [], ""
+    for raw in _read(path).splitlines():
+        line = re.sub(r"(^|\s)#.*$", "", raw).rstrip()
+        if line.endswith("\\"):
+            buf += line[:-1] + " "
+            continue
+        line = (buf + line).strip()
+        buf = ""
+        if not line or line.startswith("-"):
+            continue
+        if "://" in line.split("@")[0] or line.startswith((".", "/", "~")):
+            continue
+        req = split_requirement(line)
+        if req:
+            out.append(req)
+    return out
+
+
 def _toml_arrays_scanned(text, keys):
     """String items of each top-level `key = [ ... ]` array, without TOML.
 
@@ -306,7 +343,7 @@ def central_package_versions(repo):
 # indistinguishable from a repo that declares nothing. Naming the file is the
 # same fail-closed rule as naming the corpus bound on a zero-hit text answer.
 UNREAD_MANIFESTS = (
-    "requirements.txt", "requirements-dev.txt", "setup.py", "setup.cfg", "Pipfile",
+    "setup.py", "setup.cfg", "Pipfile",
     "go.mod", "Cargo.toml", "Gemfile", "build.sbt", "composer.json", "pubspec.yaml",
     "Package.swift", "mix.exs", "deps.edn", "project.clj", "*.fsproj", "*.vbproj",
 )
@@ -417,6 +454,10 @@ def consumes_versioned(repo, problems=None):
     for pyproject in repo.glob("pyproject.toml"):
         for name, ver in pyproject_requirements(pyproject, problems):
             out.append((name, ver, rel(pyproject)))
+
+    for reqs in requirements_files(repo):
+        for name, ver in requirements_txt(reqs):
+            out.append((name, ver, rel(reqs)))
 
     for catalog in catalogs(repo):
         libraries, bundles = catalog_libraries(catalog, problems)

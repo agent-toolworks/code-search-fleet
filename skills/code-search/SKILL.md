@@ -61,6 +61,9 @@ MCP instructions name the running version. Details are in `docs/install.md`,
   seam alike. They label each hit (`[publishes]`, `[consumes]`, `[defines]`,
   `[calls]`, `[calls-other-method]`, ...) and are `heuristic`: a call's base URL
   is not resolved, and a constant is followed only within its own file.
+  Since 1.33.0, `cs route` reads a base path a helper in the same repo adds
+  (`admin('/orders/1/refund')` with `"/api/admin" + path`), so such callers are
+  `[calls]`, and a helper adding another base is named as another route.
 - Since 1.31.2, `cs values <KEY>` counts only the key as a whole name (a
   longer name such as `RENEWAL_<KEY>` is listed as `not this key:`), gives a
   `${KEY:default}` its default instead of `default}`, and counts a comment as a

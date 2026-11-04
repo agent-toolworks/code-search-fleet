@@ -3952,6 +3952,55 @@ else
   fail=$((fail + 1)); failed_ids+=("route-method")
 fi
 
+# A helper that adds the base path: admin("/orders/1/refund") calls
+# "/api/admin" + path. Five small repos, fed straight to seams.py: the helper in
+# another file of the repo (a caller), a Python method with self (a caller), a
+# helper adding a DIFFERENT base (named, not a caller), two same-named helpers
+# that disagree (nothing assumed) and a function adding nothing (still a tail).
+hp=$(mktemp -d)
+mkdir -p "$hp/web/src" "$hp/ops" "$hp/other/src" "$hp/plain/src" "$hp/v2/src"
+cat > "$hp/web/src/api.ts" <<'EOF'
+export async function admin<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  const res = await fetch("/api/admin" + path, { method, body: JSON.stringify(body) });
+  return (await res.json()) as T;
+}
+EOF
+cat > "$hp/web/src/main.tsx" <<'EOF'
+import { admin } from "./api";
+export const refund = (id: string) => admin(`/orders/${id}/refund`, "POST", { reason: "torn" });
+EOF
+cat > "$hp/ops/client.py" <<'EOF'
+class Client:
+    def admin(self, method, path, body=None):
+        return self.call(method, self.gateway + "/api/admin" + path, body)
+
+    def refund(self, order_id):
+        return self.admin("POST", "/orders/%s/refund" % order_id)
+EOF
+cat > "$hp/v2/src/api.ts" <<'EOF'
+const call = async (path: string, init?: RequestInit) => fetch(`/api/v2${path}`, init);
+export const refundV2 = (id: string) => call(`/orders/${id}/refund`, { method: "POST" });
+EOF
+printf 'export function post(p: string) { return fetch("/api/v1" + p, { method: "POST" }); }\n' > "$hp/other/src/a.ts"
+printf 'export function post(p: string) { return fetch("/api/admin" + p, { method: "POST" }); }\n' > "$hp/other/src/b.ts"
+printf 'export const r = (id: string) => post(`/orders/${id}/refund`, { method: "POST" });\n' > "$hp/other/src/c.ts"
+printf 'function send(p: string, m: string) { return fetch(p, { method: m }); }\nexport const r = (id: string) => send(`/orders/${id}/refund`, "POST");\n' > "$hp/plain/src/c.ts"
+hp_out=$(cd "$hp" && grep -rn 'refund' --include='*.ts' --include='*.tsx' --include='*.py' . | sed 's|^\./||' \
+  | python3 "$here/lib/seams.py" "$hp" route POST '/api/admin/orders/{id}/refund' 2>&1)
+if matches "$hp_out" 'web/src/main\.tsx:2: \[calls\] POST .* via admin\(\), which adds /api/admin \(web/src/api\.ts:1\)' \
+   && matches "$hp_out" 'ops/client\.py:6: \[calls\] POST .* via admin\(\), which adds /api/admin' \
+   && matches "$hp_out" 'v2/src/api\.ts:2: \[calls-tail\] .*call\(\) adds /api/v2, so this is /api/v2/orders/\{\}/refund, not the route asked for' \
+   && matches "$hp_out" 'other/src/c\.ts:1: \[calls-tail\] POST /orders/\{\}/refund   ' \
+   && matches "$hp_out" 'plain/src/c\.ts:2: \[calls-tail\] POST /orders/\{\}/refund   '; then
+  ok "cs route: a base path added by a helper is followed; a different base, two disagreeing helpers and a pass-through are not"
+  pass=$((pass + 1))
+else
+  err "cs route followed a helper's base path wrongly, or not at all:"
+  printf '%s\n' "$hp_out" | sed 's/^/    /' >&2
+  fail=$((fail + 1)); failed_ids+=("route-helper-base")
+fi
+rm -rf "$hp"
+
 ev_out=$("$here/cs" event orders.reserved.v1 --fleet 2>&1); ev_rc=$?
 if [[ $ev_rc -eq 0 ]] \
    && matches "$ev_out" 'EventPublisher\.kt:[0-9]+: \[publishes\].*ORDERS_RESERVED_TOPIC' \

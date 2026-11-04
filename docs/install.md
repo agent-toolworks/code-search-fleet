@@ -243,6 +243,12 @@ something new. See [updating.md](updating.md).
 For people, and for agents whose notes, `CLAUDE.md` or memory describe cs from
 before 1.16. Update anything that says otherwise:
 
+- **`cs route` follows a helper's base path** (1.33.0). A call such as
+  `admin('/orders/1/refund')`, where `admin` joins `"/api/admin" + path` in the
+  same repo, is a `[calls]` site of `POST /api/admin/orders/{id}/refund`, no
+  longer `[calls-tail]`; the answer names the helper and the line that adds the
+  base. A helper adding a different base is named as that other route. Notes
+  that say "cs route cannot see through a request helper" are out of date.
 - **`cs event` and `cs route`** (1.32.0, #122). Two verbs for the two sides of a
   seam. `cs event <name>` labels each site `[publishes]` / `[consumes]` /
   `[declares]` / `[wiring]` by the call it sits in, searching every spelling of

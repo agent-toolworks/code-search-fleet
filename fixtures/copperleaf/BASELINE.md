@@ -35,16 +35,18 @@ labelled with:
 
 | Run | Passed |
 | --- | --- |
-| 1.32.0, `queries-1.32.json` | **42/46** |
+| 1.32.0, `queries-1.32.json` | 42/46 |
+| 1.33.0, `queries-1.32.json` | **44/46** |
 
 By kind, last run: publishers 5/5, consumers 4/4, dead 6/6, definition 3/3,
-callers 5/7, owner 5/5, config 5/5, impls 1/1, pins 1/1, pins-behind 1/1,
-table-definition 2/2, latent 1/1, table-writers 2/3, incident-fix 1/2. Of the four
-left, two are the scorer limits below. The other two are callers that reach the
+callers 7/7, owner 5/5, config 5/5, impls 1/1, pins 1/1, pins-behind 1/1,
+table-definition 2/2, latent 1/1, table-writers 2/3, incident-fix 1/2. The two
+left are the scorer limits below. 1.33.0 added the two callers that reach the
 gateway through a helper adding the base path (`admin('/orders/...')` prepends
 `/api/admin`, the shop's `call('/subscriptions/...')` prepends `/api`): cs route
-lists them as `[calls-tail]`, a literal matching the route's tail, and does not
-follow the prefix across functions.
+now reads the helper's base and lists them as `[calls]`; the back office's
+`admin('/subscriptions/{id}/renew-now')`, which shares only the tail of the
+customer route, is named as `/api/admin/...`, another route.
 
 As in the five-repo baseline, a FAIL is trustworthy and a PASS still needs
 reading: the scorer checks which files an answer names, not what it says about

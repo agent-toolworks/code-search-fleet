@@ -430,7 +430,8 @@ TOOLS = [
      "are string literals matching segment by segment, a route parameter "
      "matching any one segment, with the method read near the call; same path "
      "with another method, tail-only matches and calls whose method is not "
-     "visible are listed apart. A call's base URL is not resolved. Prefer this "
+     "visible are listed apart. A fixed base path a helper in the same repo "
+     "joins in front of the path is followed; a base URL is not resolved. Prefer this "
      "over cs_uses to ask whether an endpoint is used.",
      [arg("method", "The HTTP method.", enum=["GET", "POST", "PUT", "PATCH", "DELETE"]),
       arg("path", "The route path as the service defines it, parameters in any "

@@ -26,12 +26,19 @@ This classifies each hit by the CODE AROUND IT, not by its text:
           parameter matching any one segment, with the HTTP method read near
           the call. Same path, other method; a path matching only the route's
           tail; and a call whose method is not visible are listed apart.
+          A literal matching only the tail, passed to a function defined in
+          the same repo that joins a fixed base path in front of that argument
+          ("/api/admin" + path, `/api${path}`, f"/api{path}"), is read with
+          that base: a caller when the two make the route, named as another
+          route when they do not. Two definitions that disagree: nothing is
+          assumed.
 
 WHAT THIS DELIBERATELY WILL NOT DO
 ----------------------------------
 * Resolve a base URL. A caller of `/orders/{id}/refund` may be calling the
   gateway or the service; a path match says which ROUTE SHAPE is called, not
-  which deployment. The answer says so.
+  which deployment. The answer says so. Only a fixed base PATH joined inside a
+  helper of the same repo is followed, never a host or a value set at runtime.
 * Follow a constant into another file, or a name built at runtime. Both are
   named as limits, not papered over.
 * Guess. A hit whose surroundings decide nothing is a `mention`, counted on
@@ -454,6 +461,147 @@ def path_literals(line):
     return out
 
 
+# ---------------------------------------------------------------- base paths added by a helper
+
+_SKIP_DIRS = {"node_modules", "vendor", "dist", "build", "target", "bin", "obj", ".git", "__pycache__", ".venv"}
+_repo_files = {}
+_helpers = {}
+
+
+def call_position(line, pos):
+    """(callee, argument index) of the call whose arguments hold position `pos` on this
+    line, or None. Strings and nested brackets are skipped."""
+    depth, quote, commas = 0, None, 0
+    i = pos - 1
+    while i >= 0:
+        ch = line[i]
+        if quote:
+            if ch == quote and (i == 0 or line[i - 1] != "\\"):
+                quote = None
+        elif ch in "\"'`":
+            quote = ch
+        elif ch in ")]}":
+            depth += 1
+        elif ch in "([{":
+            if depth:
+                depth -= 1
+            elif ch == "(":
+                m = re.search(r"([A-Za-z_$][\w$]*)\s*(?:<[^<>()]*>)?\s*$", line[:i])
+                return (m.group(1), commas) if m else None
+            else:
+                return None
+        elif ch == "," and not depth:
+            commas += 1
+        i -= 1
+    return None
+
+
+def _code_files(root, repo):
+    if repo not in _repo_files:
+        out = []
+        for dirpath, dirs, files in os.walk(os.path.join(root, repo)):
+            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".")]
+            for f in files:
+                rel = os.path.relpath(os.path.join(dirpath, f), root)
+                if file_kind(rel) == "code":
+                    out.append(rel)
+        _repo_files[repo] = sorted(out)
+    return _repo_files[repo]
+
+
+def _params(text):
+    """Parameter names of the first parenthesised list in text."""
+    start = text.find("(")
+    if start < 0:
+        return []
+    depth, end = 0, None
+    for i in range(start, len(text)):
+        if text[i] in "([{<":
+            depth += 1
+        elif text[i] in ")]}>":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    if end is None:
+        return []
+    inner, parts, cur, d = text[start + 1:end], [], "", 0
+    for ch in inner:
+        if ch in "([{<":
+            d += 1
+        elif ch in ")]}>":
+            d -= 1
+        if ch == "," and d == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+    names = []
+    for part in parts:
+        m = re.match(r"\s*(?:\.\.\.|\*{1,2}|val\s+|var\s+)?([A-Za-z_$][\w$]*)", part)
+        if m:
+            names.append(m.group(1))
+    if names and names[0] in ("self", "cls"):
+        names = names[1:]
+    return names
+
+
+def _base_in_body(body, param):
+    """The string a function joins in front of its parameter: "/api" + path,
+    `/api${path}`, f"/api{path}", "/api$path"."""
+    p = re.escape(param)
+    for rx in (r'["\']([^"\'\n]*)["\']\s*\+\s*%s\b' % p,
+               r'`([^`]*?)\$\{\s*%s\s*\}' % p,
+               r'\bf["\']([^"\'\n]*?)\{\s*%s\s*\}' % p,
+               r'"([^"\n]*?)\$\{?%s\b' % p):
+        m = re.search(rx, body)
+        if m:
+            base = re.sub(r"^(?:\$\{[^}]*\}|\{[^}]*\}|\$[A-Za-z_]\w*)+", "", m.group(1))
+            base = re.sub(r"^[a-z][a-z0-9+.-]*://[^/]*", "", base)
+            if base.startswith("/") and not re.search(r"\s", base):
+                return base.rstrip("/")
+    return None
+
+
+def helper_base(root, path, name, arg):
+    """(base path, where) when the function `name`, defined in this repo, joins a
+    fixed base path in front of the argument at index `arg`; else None. Its
+    definition in the same file wins; otherwise every definition in the repo
+    must agree, or nothing is assumed."""
+    key = (path.split("/", 1)[0], path, name, arg)
+    if key in _helpers:
+        return _helpers[key]
+    rx = re.compile(r"(?:\bfunction\s*\*?\s*%(n)s\s*(?:<[^>]*>)?\s*\(|\b(?:const|let|var)\s+%(n)s\s*(?::[^=]+)?=\s*"
+                    r"(?:async\s*)?(?:function\b[^(]*)?(?=\()|\bdef\s+%(n)s\s*\(|\bfun\s+%(n)s\s*\()" % {"n": re.escape(name)})
+    found = {}
+    files = [path] + [f for f in _code_files(root, key[0]) if f != path]
+    for f in files:
+        lines = lines_of(root, f)
+        for i, line in enumerate(lines):
+            m = rx.search(line)
+            if not m:
+                continue
+            head = "\n".join(lines[i:i + 4])[m.start():]
+            params = _params(head)
+            if arg >= len(params):
+                continue
+            base = _base_in_body("\n".join(lines[i:i + 15]), params[arg])
+            if base is not None:
+                found.setdefault(f, []).append((base, "%s:%d" % (f, i + 1)))
+        if f == path and found:
+            break
+    answer = None
+    if path in found:
+        answer = found[path][0]
+    elif found:
+        bases = {b for entries in found.values() for b, _ in entries}
+        if len(bases) == 1:
+            answer = next(iter(found.values()))[0]
+    _helpers[key] = answer
+    return answer
+
+
 def classify_route(root, method, path, hits):
     want = norm_segments(path)
     rows, aliases, seen = [], {}, set()
@@ -510,10 +658,23 @@ def classify_route(root, method, path, hits):
             if cd and cd.group(2) == s:
                 aliases.setdefault(p, {})[cd.group(1)] = (lineno, exact)
                 continue
+            via = ""
+            if tail and not exact:
+                # A helper may add the base: admin("/orders/1/refund") -> "/api/admin" + path.
+                cp = call_position(lines[idx], pos)
+                hb = helper_base(root, p, cp[0], cp[1]) if cp else None
+                if hb:
+                    base, where = hb
+                    if seg_match(want, norm_segments(join_path(base, s)) or []):
+                        exact = True
+                        via = " via %s(), which adds %s (%s)" % (cp[0], base, where)
+                    else:
+                        via = " (%s() adds %s, so this is %s, not the route asked for)" % (
+                            cp[0], base, join_path(base, s))
             meth = method_near(lines, idx)
             side = ("calls" if meth == method else "calls-other-method" if meth else "calls-method-unseen") \
                 if exact else "calls-tail"
-            rows.append((p, lineno, side, "%s %s" % (meth or "?", s), text))
+            rows.append((p, lineno, side, "%s %s%s" % (meth or "?", s, via), text))
             break
     # A definition whose own line holds no searched segment -- `@GetMapping("/{sku}")`
     # under `@RequestMapping("/coffees")` -- is found by reading every code file
@@ -607,6 +768,12 @@ def main():
         if n("calls-other-method"):
             print("  %d call(s) to the same path with ANOTHER method, not counted: %s"
                   % (n("calls-other-method"), ", ".join(repos("calls-other-method"))), file=e)
+        helped = sorted({re.search(r" via (\w+)\(\), which adds", r[3]).group(1) for r in rows
+                         if r[2] == "calls" and ", which adds " in r[3]})
+        if helped:
+            print("  %d call(s) found through a helper that adds the base path: %s"
+                  % (sum(1 for r in rows if r[2] == "calls" and ", which adds " in r[3]),
+                     ", ".join(h + "()" for h in helped)), file=e)
         if n("calls-tail"):
             print("  %d literal(s) match only the END of the path (a base URL may add the rest): listed as [calls-tail]"
                   % n("calls-tail"), file=e)

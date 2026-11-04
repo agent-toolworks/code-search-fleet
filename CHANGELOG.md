@@ -8,6 +8,21 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.33.0 — 2026-11-03
+
+- **`cs route` follows a base path a helper adds.** A literal matching only the
+  route's tail (`` admin(`/orders/${id}/refund`, "POST") ``) is read with the base
+  path the called function joins in front of that argument, when the function
+  is defined in the same repo (`"/api/admin" + path`, `` `/api${path}` ``,
+  `f"/api{path}"`, Kotlin `"/api$path"`), the argument matched by position
+  (`self` skipped). Base plus literal making the route: `[calls]`, with the
+  helper and its line named (`via admin(), which adds /api/admin
+  (backoffice-web/src/api.ts:13)`). Another route: still `[calls-tail]`, named
+  as that route. A definition in the caller's file wins; otherwise every
+  definition in the repo must agree, or nothing is assumed. Copperleaf: 42/46
+  to 44/46, every caller question passing; the two left are scorer limits. New
+  verify-search check `route-helper-base` (five cases).
+
 ## 1.32.0 — 2026-11-03
 
 - **New: `cs event <name> [repo]` and `cs route <METHOD> <path> [repo]`**

@@ -1578,6 +1578,77 @@ else
   fail=$((fail + 1)); failed_ids+=("doctor-kotlin-jdk")
 fi
 
+# The Kotlin server itself, started (#130). The row above judges the runtime and
+# never started the server, so an expired JetBrains build left it green while
+# every Kotlin query refused. Stand-in launchers, one per outcome, so this runs
+# without a real kotlin-server: an expired one (its real message, exit 7), one
+# that answers `initialize` and stays up, and one that crashes. HOME is a
+# throwaway, so ~/.serena/serena_config.yml is the one written here.
+kls=$(mktemp -d)
+kls_server() {  # <name> <build> <body of the launcher>
+  mkdir -p "$kls/$1/kotlin-server-$2/bin"
+  printf '{"name": "kotlin-server", "buildNumber": "%s", "majorVersionReleaseDate": "20261014"}\n' "$2" \
+    > "$kls/$1/kotlin-server-$2/product-info.json"
+  printf '#!/bin/bash\n%s\n' "$3" > "$kls/$1/kotlin-server-$2/bin/intellij-server"
+  chmod +x "$kls/$1/kotlin-server-$2/bin/intellij-server"
+  printf '%s' "$kls/$1/kotlin-server-$2/bin/intellij-server"
+}
+kls_home() {  # <name> <serena_config.yml text>
+  mkdir -p "$kls/home-$1/.serena"; printf '%s\n' "$2" > "$kls/home-$1/.serena/serena_config.yml"
+  printf '%s' "$kls/home-$1"
+}
+kls_exp=$(kls_server exp 263.6379.0 'printf "This build of kotlin-server has expired.\nThe IDE will now close.\n"; exit 7')
+kls_ok=$(kls_server ok 999.1.0 'printf "Content-Length: 36\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"; exec sleep 30')
+kls_bad=$(kls_server bad 999.2.0 'echo "Error: could not reserve enough space for object heap" >&2; exit 1')
+kls_bad_lib=()
+for kls_case in "exp:$kls_exp:expired" "ok:$kls_ok:starts" "bad:$kls_bad:exits"; do
+  IFS=: read -r kls_n kls_l kls_want <<< "$kls_case"
+  kls_got=$(python3 "$here/lib/kotlin_server.py" start "$kls_l" 20 2>/dev/null | cut -f1)
+  [[ "$kls_got" == "$kls_want" ]] || kls_bad_lib+=("$kls_n:$kls_got")
+done
+# ls_path wrapped onto its own line is valid YAML (the maintainer's own config);
+# with no space after the colon it is one string, which Serena ignores.
+kls_which=$(HOME="$(kls_home wrap "$(printf 'ls_specific_settings:\n  kotlin:\n    ls_path: \n      %s\n' "$kls_exp")")" \
+            python3 "$here/lib/kotlin_server.py" which 2>/dev/null)
+[[ "$(cut -f1-4 <<< "$kls_which")" == "ls_path"$'\t'"$kls_exp"$'\t'"263.6379.0"$'\t'"2026-10-14" ]] || kls_bad_lib+=("which-wrapped:$kls_which")
+kls_which=$(HOME="$(kls_home nospace "$(printf 'ls_specific_settings:\n  kotlin:\n    ls_path:%s\n' "$kls_exp")")" \
+            python3 "$here/lib/kotlin_server.py" which 2>/dev/null)
+[[ "$(cut -f1 <<< "$kls_which")" != ls_path && "$(cut -f5 <<< "$kls_which")" == *"no space after the colon"* ]] || kls_bad_lib+=("which-nospace:$kls_which")
+if [[ ${#kls_bad_lib[@]} -eq 0 ]]; then
+  ok "the Kotlin server probe tells an expired build, a working one and a crash apart, and reads ls_path as Serena does"
+  pass=$((pass + 1))
+else
+  err "the Kotlin server probe misread: ${kls_bad_lib[*]}"
+  fail=$((fail + 1)); failed_ids+=("kotlin-server-probe")
+fi
+# And the doctor row. A stand-in uvx, since the row is skipped without uv (no
+# language server runs then, and the uv row says so).
+mkdir -p "$kls/bin"; printf '#!/bin/sh\nexit 1\n' > "$kls/bin/uvx"; chmod +x "$kls/bin/uvx"
+kls_doc() {  # <home> -> the doctor's Kotlin LS rows and their fix lines
+  HOME="$1" PATH="$kls/bin:$PATH" FLEET_ROOT="$doc_fleet" "$here/cs" doctor 2>&1 \
+    | sed -n '/Kotlin LS/,/^  [^ ]/p'
+}
+kls_bad_doc=()
+kls_out=$(kls_doc "$(kls_home dexp "$(printf 'ls_specific_settings:\n  kotlin:\n    ls_path: %s\n' "$kls_exp")")")
+matches "$kls_out" '✗ Kotlin LS +263\.6379\.0 \(built 2026-10-14\), the ls_path build: has EXPIRED' \
+  && matches "$kls_out" 'fix: .*/install-kotlin-server' || kls_bad_doc+=("expired")
+kls_out=$(kls_doc "$(kls_home dok "$(printf 'ls_specific_settings:\n  kotlin:\n    ls_path: %s\n' "$kls_ok")")")
+matches "$kls_out" '✓ Kotlin LS +999\.1\.0 .*starts, and answers initialize' || kls_bad_doc+=("starts")
+kls_out=$(kls_doc "$(kls_home dbad "$(printf 'ls_specific_settings:\n  kotlin:\n    ls_path: %s\n' "$kls_bad")")")
+matches "$kls_out" '✗ Kotlin LS .*exits at start-up \(exit 1: Error: could not reserve' || kls_bad_doc+=("crash")
+kls_out=$(kls_doc "$(kls_home dgone "$(printf 'ls_specific_settings:\n  kotlin:\n    ls_path: %s\n' "$kls/nowhere/bin/intellij-server")")")
+matches "$kls_out" '✗ Kotlin LS .*which is not there' || kls_bad_doc+=("missing")
+kls_out=$(kls_doc "$(kls_home dnone 'ls_specific_settings: {}')")
+matches "$kls_out" '! Kotlin LS +none' || kls_bad_doc+=("none")
+if [[ ${#kls_bad_doc[@]} -eq 0 ]]; then
+  ok "cs doctor starts the Kotlin server Serena runs, and fails the row on an expired or broken build"
+  pass=$((pass + 1))
+else
+  err "cs doctor's Kotlin LS row was wrong for: ${kls_bad_doc[*]}"
+  fail=$((fail + 1)); failed_ids+=("doctor-kotlin-server")
+fi
+rm -rf "$kls"
+
 # A repo kept without a graph ON PURPOSE must not keep the doctor from coming
 # clean, and a refusal there must name the setting rather than prescribe
 # `tokensave init` (#72).

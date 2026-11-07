@@ -210,6 +210,33 @@ probe_uv() {
   record uv "$(uv --version 2>/dev/null | awk '{print $2}')" capability PASS "runs the pinned Serena (uvx)"
 }
 
+# The Kotlin language server Serena runs, started on its own (#130), apart from
+# serena-kt: that probe fails the same way for an expired build as for a broken
+# import, and the cause then has to be dug out of Serena's log. JetBrains' builds
+# stop starting about a month after they are built, so this one is expected to
+# go FAIL on a schedule; the fix is scripts/install-kotlin-server.
+probe_kotlin_server() {
+  local source launcher build built note res
+  IFS=$'\t' read -r source launcher build built note \
+    <<< "$(python3 "$here/lib/kotlin_server.py" which 2>/dev/null)"
+  if [[ "$source" != ls_path && "$source" != serena ]]; then
+    record kotlin-server "-" capability MISSING "no Kotlin language server: Serena has none, and its download host answers 404 — scripts/install-kotlin-server"
+    return
+  fi
+  local what="the ls_path build"; [[ "$source" == serena ]] && what="Serena's own copy"
+  if [[ ! -x "$launcher" ]]; then
+    record kotlin-server "${build:--}" capability FAIL "$what, $launcher, is not there"
+    return
+  fi
+  res=$(python3 "$here/lib/kotlin_server.py" start "$launcher" 60 2>/dev/null)
+  case "$res" in
+    starts)  record kotlin-server "$build" capability PASS "$what${built:+ (built $built)} starts and answers initialize" ;;
+    expired) record kotlin-server "$build" capability FAIL "EXPIRED: $what${built:+ (built $built)} exits at start-up — scripts/install-kotlin-server installs the newest" ;;
+    exits*)  record kotlin-server "$build" capability FAIL "$what exits at start-up (exit $(cut -f2 <<< "$res"): $(cut -f3 <<< "$res"))" ;;
+    *)       record kotlin-server "$build" capability FAIL "$what did not answer initialize within 60s" ;;
+  esac
+}
+
 probe_serena() {
   have uvx || { record serena "-" capability MISSING "uv not installed"; return; }
   toolchain_runs dotnet || {
@@ -551,6 +578,7 @@ probe_tokensave_accessors
 probe_tokensave_reads
 probe_tokensave_sync
 probe_uv
+probe_kotlin_server
 probe_serena
 probe_serena_java
 probe_serena_kotlin_floor

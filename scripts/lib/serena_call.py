@@ -57,10 +57,12 @@ REF_LINE = re.compile(r"^\s*>\s*(\d+):", re.MULTILINE)
 # CDN refuses the unsigned download URL Serena builds, so Serena can neither run
 # the build it has nor fetch another.
 NOT_STARTED = "language server manager is not initialized"
-KOTLIN_FIX = ("install a current kotlin-server from "
-              "https://github.com/Kotlin/kotlin-lsp/releases and point Serena at it: "
-              "ls_specific_settings: {kotlin: {ls_path: <unpacked>/bin/intellij-server}} "
-              "in ~/.serena/serena_config.yml (docs/install.md, \"Kotlin language server\")")
+KOTLIN_FIX = ("install the newest kotlin-server with {} (it checks the SHA-256) "
+              "and point Serena at it: "
+              "ls_specific_settings: {{kotlin: {{ls_path: <unpacked>/bin/intellij-server}}}} "
+              "in ~/.serena/serena_config.yml (docs/install.md, \"Kotlin language server\")"
+              .format(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                   "install-kotlin-server")))
 
 
 def why_not_started(log):

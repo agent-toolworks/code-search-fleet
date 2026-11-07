@@ -20,7 +20,7 @@ tested=$(awk -F'\t' '
   FNR == NR { if ($0 !~ /^#/ && NF >= 2) min[$1] = $2; next }
   /^# verified / { when = substr($0, 12); next }
   /^#/ { next }
-  $1 ~ /^(ripgrep|ctags|ast-grep|semgrep|tokensave|uv|serena|dotnet|java|node)$/ && $2 != "-" && $2 != "?" {
+  $1 ~ /^(ripgrep|ctags|ast-grep|semgrep|tokensave|uv|serena|kotlin-server|dotnet|java|node)$/ && $2 != "-" && $2 != "?" {
     printf "| %s | %s | %s |\n", $1, $2, ($1 in min ? min[$1] : "—")
   }
   END { if (when != "") printf "\nVerified %s with `scripts/verify-engines` and `scripts/verify-search`.\n", when }

@@ -3183,6 +3183,116 @@ assert not env["degraded"], env["degraded"]
         err "the ticket workspace's own graph was not used, or was flagged anyway"
         fail=$((fail + 1)); failed_ids+=("symbol-ticket-layer")
       fi
+
+      # ---- a workspace graph is synced before it answers (#127) -----------
+      # A caller planted in the workspace AFTER its graph was built, with no
+      # manual sync: before 1.34.0 the answer could not include it, because a
+      # graph answers about the code as of its last sync. Release has no
+      # callers in the fixture, so the planted one is the only possible hit.
+      # The sleep puts the edit in an earlier second than the sync: the graph
+      # records whole seconds, and an edit in the sync's own second counts as
+      # changed again on the next call (one extra sync, never a missed one).
+      as_file="$sym_tick/SYM-1/inventory-api-dotnet/src/Controllers/ReservationController.cs"
+      as_plant() {  # <method name>: a new caller of Release, inside the controller
+        python3 - "$as_file" "$1" <<'PY'
+import sys
+p, name = sys.argv[1], sys.argv[2]
+s = open(p).read()
+end = s.rindex("}", 0, s.index("public record ReserveRequest"))
+open(p, "w").write(s[:end] + f"    public Task<IActionResult> {name}(ReleaseRequest r) => Release(r);\n" + s[end:])
+PY
+      }
+      as_env() {  # <porcelain> <python assertions over env, hits>
+        printf '%s' "$1" | python3 -c '
+import json, sys
+env = json.load(sys.stdin)
+hits = " ".join(json.dumps(h) for h in env.get("results") or [])
+exec(sys.argv[1])
+' "$2" 2>/dev/null
+      }
+      as_ask() { TICKETS_ROOT="$sym_tick" "$here/cs" callers Release inventory-api-dotnet --ticket=SYM-1 --porcelain 2>/dev/null; }
+      as_plant PlantedAfterIndex; sleep 1.1
+      as_out=$(as_ask)
+      if as_env "$as_out" '
+assert "PlantedAfterIndex" in hits, hits
+assert "auto-synced before answering" in env["note"], env["note"]
+assert not env["degraded"], env["degraded"]'; then
+        ok "a caller added to a workspace after its graph was built is answered, with no manual sync"
+        pass=$((pass + 1))
+      else
+        err "cs callers did not see a call site added in the workspace since the graph's sync"
+        fail=$((fail + 1)); failed_ids+=("graph-autosync-sees-edit")
+      fi
+      # Nothing changed since: the check is what makes the common case free,
+      # and the note says the graph was checked rather than just old.
+      as_out=$(as_ask)
+      if as_env "$as_out" '
+assert "PlantedAfterIndex" in hits, hits
+assert "no file changed since" in env["note"], env["note"]'; then
+        ok "an unchanged workspace graph is not re-synced, and the note says it was checked"
+        pass=$((pass + 1))
+      else
+        err "an unchanged workspace graph was synced again, or the note did not say it was checked"
+        fail=$((fail + 1)); failed_ids+=("graph-autosync-unchanged")
+      fi
+      # The opt-out, for a caller that syncs graphs itself: no sync, and the
+      # note says so rather than reading like a graph cs vouches for.
+      as_plant PlantedWhileOff
+      as_out=$(CS_GRAPH_AUTOSYNC=0 as_ask)
+      if as_env "$as_out" '
+assert "PlantedWhileOff" not in hits, hits
+assert "auto-sync off" in env["note"], env["note"]'; then
+        ok "CS_GRAPH_AUTOSYNC=0 leaves the workspace graph alone, and says so"
+        pass=$((pass + 1))
+      else
+        err "CS_GRAPH_AUTOSYNC=0 did not stop the sync, or the note did not say it was off"
+        fail=$((fail + 1)); failed_ids+=("graph-autosync-opt-out")
+      fi
+      # A sync that fails, or outlives its timeout, never fails the answer: the
+      # graph as it was answers, the note says why the sync did not complete,
+      # and the answer is degraded, since files are known to have changed. The
+      # hanging sync's child must die with it (a sleeping child once held the
+      # pipe and kept cs waiting the full 20s).
+      as_shim=$(mktemp -d)
+      as_real=$(command -v tokensave)
+      printf '#!/bin/bash\n[[ "$1" == sync ]] && { echo "Error: planted sync failure" >&2; exit 1; }\nexec "%s" "$@"\n' "$as_real" > "$as_shim/fail"
+      printf '#!/bin/bash\n[[ "$1" == sync ]] && { sleep 30; exit 0; }\nexec "%s" "$@"\n' "$as_real" > "$as_shim/hang"
+      chmod +x "$as_shim/fail" "$as_shim/hang"
+      as_bad=()
+      mkdir "$as_shim/bin"
+      for as_kind in fail hang; do
+        cp "$as_shim/$as_kind" "$as_shim/bin/tokensave"
+        as_t0=$(date +%s)
+        as_out=$(PATH="$as_shim/bin:$PATH" CS_GRAPH_SYNC_TIMEOUT=2 as_ask)
+        as_t=$(( $(date +%s) - as_t0 ))
+        as_env "$as_out" '
+assert "PlantedAfterIndex" in hits, hits
+assert "auto-sync failed" in env["note"], env["note"]
+assert "behind the files on disk" in (env["degraded"] or ""), env["degraded"]' || as_bad+=("$as_kind:answer")
+        [[ "$as_kind" == hang && "$as_t" -gt 10 ]] && as_bad+=("hang:took-${as_t}s")
+      done
+      if [[ ${#as_bad[@]} -eq 0 ]]; then
+        ok "a workspace sync that fails or times out still answers, degraded, and says why"
+        pass=$((pass + 1))
+      else
+        err "a failed or hung workspace sync was mishandled: ${as_bad[*]}"
+        fail=$((fail + 1)); failed_ids+=("graph-autosync-failure")
+      fi
+      rm -rf "$as_shim"
+      # A fleet graph is never synced by cs: it describes main by design.
+      as_before=$(tokensave status "$sym_repo" --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["last_sync_at"])' 2>/dev/null)
+      touch "$sym_repo/src/Controllers/ReservationController.cs"
+      as_out=$("$here/cs" callers Release inventory-api-dotnet --porcelain 2>/dev/null)
+      as_after=$(tokensave status "$sym_repo" --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["last_sync_at"])' 2>/dev/null)
+      if [[ -n "$as_before" && "$as_before" == "$as_after" ]] && as_env "$as_out" '
+assert "fleet layer" in env["note"], env["note"]
+assert "auto-sync" not in env["note"], env["note"]'; then
+        ok "a fleet-layer graph is not synced, and its note says nothing about syncing"
+        pass=$((pass + 1))
+      else
+        err "cs synced a fleet graph, or labelled it as auto-synced (last_sync_at $as_before -> $as_after)"
+        fail=$((fail + 1)); failed_ids+=("graph-autosync-fleet")
+      fi
       git -C "$sym_repo" worktree remove --force "$sym_tick/SYM-1/inventory-api-dotnet" >/dev/null 2>&1
       git -C "$sym_repo" branch -D verify/symbol-mode >/dev/null 2>&1
     else

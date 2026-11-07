@@ -8,6 +8,29 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.34.0 — 2026-11-06
+
+- **A workspace graph is synced before it answers** (#127). In a ticket or
+  review workspace, `cs callers` / `callees` / `impact` / `fields`, and `cs impls`
+  or `cs def` through a graph, answered from the clone's tokensave graph as of
+  its last sync, so an edit made since was missing from the answer (a caller you
+  had just added was not listed). cs now runs `tokensave sync` on a workspace
+  repo's graph first. It skips the sync when no file tokensave indexes changed
+  since the last one (about 0.15 s to check 20,000 files; the sync itself costs
+  about 0.5 s with nothing to do), and serialises its own syncs of one graph, so
+  parallel calls do not hit tokensave's sync lock. The answer line says which
+  happened: `ticket layer, synced 0s ago (auto-synced before answering)`, or
+  `(no file changed since: auto-sync had nothing to do)`. A sync that fails or
+  runs past `CS_GRAPH_SYNC_TIMEOUT` (default 30 s) never fails the answer. The
+  graph as it was answers, the note says `(auto-sync failed: <reason>)`, and
+  the answer is `degraded`, since files are known to have changed. Fleet graphs
+  are never synced, as they describe main. `CS_GRAPH_AUTOSYNC=0` turns this off
+  for callers that sync graphs themselves. You no longer need to run
+  `tokensave sync` in a workspace before asking. Treat an answer marked
+  `auto-sync failed` as possibly missing your edits. New verify-search checks
+  `graph-autosync-*`, and a verify-engines probe `ts-sync` (passes on tokensave
+  7.15.0 and 7.16.0).
+
 ## 1.33.0 — 2026-11-03
 
 - **`cs route` follows a base path a helper adds.** A literal matching only the

@@ -1,5 +1,5 @@
 # engine	version	kind	outcome	note
-# verified 2026-10-27T16:43:05Z
+# verified 2026-11-07T03:16:52Z
 ripgrep	15.2.0	capability	PASS	literal text across repos
 ctags	6.2.1	capability	PASS	fleet-wide symbol index
 ast-grep	0.50.0	capability	PASS	literal in argument position
@@ -11,11 +11,12 @@ ts-reads-cs	7.16.0	capability	PASS	a C# property read through a typed receiver i
 ts-reads-java	7.16.0	known-limitation	CONFIRMED	a read of a field is no graph edge — cs impact says so, and a zero is degraded
 ts-reads-ts	7.16.0	known-limitation	CONFIRMED	a read of a field is no graph edge — cs impact says so, and a zero is degraded
 ts-reads-kt	7.16.0	known-limitation	CONFIRMED	a read of a field is no graph edge — cs impact says so, and a zero is degraded
+ts-sync	7.16.0	capability	PASS	an incremental sync picks up a file added since the graph was built, and last_sync_at says when
 uv	0.13.0	capability	PASS	runs the pinned Serena (uvx)
 serena	2.0.0.dev0@1de556f	capability	PASS	C# interface to implementation
 serena-java	2.0.0.dev0@1de556f	capability	PASS	Java interface to implementation, with or without a system JDK
-serena-kt	2.0.0.dev0@1de556f	capability	PASS	Kotlin with no Gradle toolchain request, on the server's own runtime (no JAVA_HOME)
+serena-kt	2.0.0.dev0@1de556f	capability	FAIL	the Kotlin server did not start: the Kotlin language server Serena runs (kotlin-server 263.6379.0) is a pre-release build that has expired, and it exits at start-up
 serena-netfx	2.0.0.dev0@1de556f	capability	PASS	.NET Framework projects load with the .NET SDK, across a ProjectReference
 dotnet	10.0.401	capability	PASS	Serena can analyse C#
 java	21.0.12.1	capability	PASS	Serena can analyse Kotlin builds that request a Gradle toolchain
-node	v22.23.1	capability	PASS	Serena can analyse TypeScript/JavaScript
+node	v26.11.1	capability	PASS	Serena can analyse TypeScript/JavaScript

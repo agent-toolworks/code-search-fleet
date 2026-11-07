@@ -55,6 +55,13 @@ repos rather than guessing.
 (`cs_changes` over MCP) lists everything since, small fixes included, and the
 MCP instructions name the running version. Details are in `docs/install.md`,
 "If you already use cs":
+- Since 1.34.0, a workspace repo's tokensave graph is synced before a
+  graph-backed answer (`cs callers` / `callees` / `impact` / `fields`, and
+  `impls` / `def` through a graph), so the answer includes edits made since the
+  last sync. You do not need to run `tokensave sync` first. The answer line says
+  `auto-synced before answering` or `no file changed since`. An answer marked
+  `auto-sync failed: …` is `degraded` and may lack the edits: pass that on.
+  Fleet graphs are not synced, as they describe main.
 - New in 1.32.0: `cs event <name>` and `cs route <METHOD> <path>` (`cs_event`,
   `cs_route`). For "who publishes / consumes this event" and "is this endpoint
   used, and by whom", prefer them over `cs uses`, which lists both sides of a
@@ -669,7 +676,10 @@ installed.
   graph has no edges out of Kotlin property accessors, so a method called only
   from a getter shows no callers. `cs` names that on every such answer and marks
   a zero `degraded`; `cs uses '<symbol>' --word` finds those calls. The answer line names **which** index answered and how
-  old it is (`scoped to <repo>; ticket layer, synced 2d ago`); when the scope was
+  old it is (`scoped to <repo>; ticket layer, synced 2d ago`). A workspace
+  graph is synced before it answers, and the line says so (`auto-synced before
+  answering`, `no file changed since`, or `auto-sync failed: …`, which is
+  `degraded`). When the scope was
   a ticket workspace and the fleet index answered instead, `cs` reports that as
   `degraded` — the answer then describes `main`, not the branch being edited, and
   must be passed on with that caveat rather than as the state of the code.

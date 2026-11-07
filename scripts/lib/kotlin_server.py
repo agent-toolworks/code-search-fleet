@@ -152,10 +152,18 @@ def start(launcher, timeout=60.0):
 
     An answer is the proof it starts. The expiry message, or an exit before
     answering, is the proof it does not. Neither within the timeout is said as
-    such, not guessed at."""
+    such, not guessed at. Measured on macOS arm64: 263.7084.0 answered in about
+    5 s; the expired 263.6379.0 and 263.4702.0 exited in under 2 s."""
     tmp = tempfile.mkdtemp(prefix="cs-kotlin-probe.")
+    # The server makes an idea-system<N> directory in java.io.tmpdir for each
+    # start, and a server stopped by a signal leaves it there: five in $TMPDIR
+    # after one suite run. Pointed into this probe's own directory, which goes.
+    # (On macOS the JVM takes its temp dir from the OS, not from $TMPDIR, so the
+    # property is the lever; the launcher appends IJ_JAVA_OPTIONS to its own.)
+    env = dict(os.environ, TMPDIR=tmp)
+    env["IJ_JAVA_OPTIONS"] = (env.get("IJ_JAVA_OPTIONS", "") + f" -Djava.io.tmpdir={tmp}").strip()
     try:
-        proc = subprocess.Popen([launcher, "--stdio"], cwd=tmp,
+        proc = subprocess.Popen([launcher, "--stdio"], cwd=tmp, env=env,
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, start_new_session=True)
     except OSError as e:

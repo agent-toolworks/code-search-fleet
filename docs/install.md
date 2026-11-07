@@ -239,7 +239,7 @@ ditto -x -k "$a" . && ls "$PWD/kotlin-server-$v/bin/intellij-server"
 When a newer build is out, `cs doctor` says so on a **Kotlin LS** note: the
 one you run is next to expire. Run the script again then, and update the path.
 `verify-engines` probes the same thing on its `kotlin-server` line, apart from
-`serena-kt`. Checked on macOS arm64; the Linux archives are named as Serena's
+`serena-kt`. Checked on macOS arm64 with 263.7084.0; the Linux archives are named as Serena's
 own installer names them, and not tried.
 
 ## Updating later

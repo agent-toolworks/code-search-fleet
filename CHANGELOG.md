@@ -8,6 +8,8 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.35.0 — 2026-11-07
+
 - **`cs doctor` starts the Kotlin language server** (#130). JetBrains ships
   kotlin-server as pre-release builds that stop starting about a month after
   they are built. 263.6379.0, the build `docs/install.md` named, had expired, and

@@ -243,6 +243,17 @@ something new. See [updating.md](updating.md).
 For people, and for agents whose notes, `CLAUDE.md` or memory describe cs from
 before 1.16. Update anything that says otherwise:
 
+- **A workspace graph is synced before it answers** (1.34.0, #127). In a
+  workspace, the graph-backed verbs (`cs callers`, `callees`, `impact`,
+  `fields`, and `impls` / `def` through a graph) run `tokensave sync` on the
+  workspace repo's graph first, unless no file changed since its last sync.
+  The answer line says `(auto-synced before answering)`, `(no file changed
+  since: auto-sync had nothing to do)`, or `(auto-sync failed: <reason>)`. The
+  last of those is also `degraded`, because the answer may lack your edits.
+  Fleet graphs are not synced. `CS_GRAPH_AUTOSYNC=0` turns it off, and
+  `CS_GRAPH_SYNC_TIMEOUT` bounds it (30 s). Notes that say "run `tokensave
+  sync` in the workspace before asking cs callers" are out of date.
+
 - **`cs route` follows a helper's base path** (1.33.0). A call such as
   `admin('/orders/1/refund')`, where `admin` joins `"/api/admin" + path` in the
   same repo, is a `[calls]` site of `POST /api/admin/orders/{id}/refund`, no

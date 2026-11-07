@@ -18,6 +18,8 @@
 | `CS_EXCLUDE_REMOVE` | directories to **stop** skipping |
 | `CS_JSON` | `1` for one JSON object on stdout instead of result lines (same as `--porcelain`) |
 | `CS_CTAGS_BIN` | use exactly this universal-ctags; if it does not validate, ctags counts as absent |
+| `CS_GRAPH_AUTOSYNC` | `0` stops cs syncing a workspace repo's tokensave graph before a graph-backed answer (`callers`, `callees`, `impact`, `fields`, and `impls` / `def` through a graph). On by default. The sync is skipped when no file changed since the last one, and fleet graphs are never synced |
+| `CS_GRAPH_SYNC_TIMEOUT` | seconds that sync may take, default 30. A sync that does not finish, or fails, leaves the graph as it was: the answer says `auto-sync failed: <reason>` and is `degraded` |
 | `CS_NO_GRAPH` | repos kept without a tokensave graph on purpose, space-separated, usually in `fleet.env`. `cs doctor` names them instead of flagging them, and a graph refusal there says why instead of prescribing `tokensave init` |
 | `CS_DISCONNECT_GUARD` | `1` turns on the optional hook that stops the agent when the MCP server disconnects mid-session; with it, `CS_DISCONNECT_ACK` and `CS_DISCONNECT_FILES_ARE_READS`. See [mcp.md](mcp.md#when-the-tools-disappear-mid-session) |
 

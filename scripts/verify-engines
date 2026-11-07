@@ -503,6 +503,43 @@ probe_tokensave_reads() {
   rm -rf "$tmp"
 }
 
+# What cs's workspace auto-sync relies on (#127): `tokensave sync <path>` brings
+# an existing graph up to the tree incrementally -- a file added since, untracked
+# by git, becomes edges -- and advances `last_sync_at`, which graph_sync.py
+# compares file mtimes against to skip a sync with nothing to do. Driven through
+# graph_sync.py itself, so a change in either half shows here. The control is the
+# call already in the graph at init: without it the probe proves nothing.
+probe_tokensave_sync() {
+  have tokensave || { record ts-sync "-" capability MISSING "not installed"; return; }
+  local ver tmp first second found
+  ver=$(tokensave --version 2>/dev/null | awk '{print $2}')
+  tmp=$(mktemp -d)
+  printf 'def g():\n    return 1\n\ndef f():\n    return g()\n' > "$tmp/a.py"
+  (cd "$tmp" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm p \
+     && tokensave init </dev/null >/dev/null 2>&1)
+  # last_sync_at is whole seconds, so anything written in the sync's own second
+  # counts as changed -- here, the .tokensave/ entry init adds to the root -- and
+  # the first call after a fast init syncs once more. Settled before the check.
+  python3 -c 'import time; time.sleep(1.1)'
+  python3 "$here/lib/graph_sync.py" "$tmp" 30 >/dev/null 2>&1
+  python3 -c 'import time; time.sleep(1.1)'
+  first=$(python3 "$here/lib/graph_sync.py" "$tmp" 30 2>/dev/null | cut -f1)
+  printf 'from a import g\n\ndef h():\n    return g()\n' > "$tmp/b.py"
+  python3 -c 'import time; time.sleep(1.1)'
+  second=$(python3 "$here/lib/graph_sync.py" "$tmp" 30 2>/dev/null | cut -f1)
+  found=$(python3 "$here/lib/tokensave_call.py" callers "$tmp" probe g 2>/dev/null)
+  rm -rf "$tmp"
+  if ! grep -q 'a.py' <<< "$found"; then
+    record ts-sync "$ver" capability FAIL "the control call (in the graph since init) was not found — the probe cannot tell anything"
+  elif [[ "$first" != unchanged ]]; then
+    record ts-sync "$ver" capability FAIL "an untouched workspace graph was not seen as current (graph_sync.py said '${first:-nothing}') — every workspace graph answer would pay a sync"
+  elif [[ "$second" == synced ]] && grep -q 'b.py' <<< "$found"; then
+    record ts-sync "$ver" capability PASS "an incremental sync picks up a file added since the graph was built, and last_sync_at says when"
+  else
+    record ts-sync "$ver" capability FAIL "a file added since the graph was built is not in it after cs's auto-sync (graph_sync.py said '${second:-nothing}') — workspace answers would miss new code while saying they were synced"
+  fi
+}
+
 info "probing engines against $F"   # unconditional: the cheap self-check that
                                    # catches a scope leak immediately
 probe_text
@@ -512,6 +549,7 @@ probe_semgrep
 probe_tokensave
 probe_tokensave_accessors
 probe_tokensave_reads
+probe_tokensave_sync
 probe_uv
 probe_serena
 probe_serena_java

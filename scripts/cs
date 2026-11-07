@@ -132,6 +132,13 @@
 #   CS_EXCLUDE_REMOVE directories to STOP skipping, e.g. "bin vendor" when a
 #                    repo keeps hand-written source there (`cs engines` prints
 #                    the effective list)
+#   CS_GRAPH_AUTOSYNC 0 stops cs syncing a WORKSPACE repo's tokensave graph
+#                    before a graph-backed answer (callers, callees, impact,
+#                    fields, and impls or def through a graph). On by default:
+#                    the sync is skipped when no file changed since the last
+#                    one, and never fails the answer. Fleet graphs are not synced.
+#   CS_GRAPH_SYNC_TIMEOUT seconds that sync may take, default 30; one that does
+#                    not finish leaves the graph as it was, and the answer says so
 #   CS_NO_GRAPH      repos kept without a tokensave graph on purpose, space-
 #                    separated (usually in fleet.env): cs doctor names them
 #                    rather than flagging them, and a graph refusal says why
@@ -2272,6 +2279,101 @@ real_dir_of() {  # <dir> -> the path it resolves to
   printf '%s' "$d"
 }
 
+# A workspace graph is synced before it answers (#127). The files in a workspace
+# are the ones being edited, and a graph answers about the code as of its last
+# sync -- so cs printed the age and told the reader to run `tokensave sync`
+# themselves, when cs is the one component that knows which graph a call reads.
+# Only the ticket layer: a fleet graph describes main by design, and its refresh
+# is owned elsewhere. The sync is skipped when no file changed since the last one
+# (the common case, then free), bounded by CS_GRAPH_SYNC_TIMEOUT, and never fails
+# the answer: a sync that does not complete leaves the graph as it was, and the
+# answer says so. Why and how it decides, measured: scripts/lib/graph_sync.py.
+#
+# The outcome is kept per graph for the rest of the run, as rows of
+# <real dir> TAB <unchanged|synced|failed|off> TAB <detail>, because the note
+# and the caveats are read in subshells after the sync ran.
+_graph_sync_rows=""
+graph_autosync() {  # <graph-dir>
+  local dir line status detail
+  [[ "$(graph_layer_of "$1")" == ticket ]] || return 0
+  dir=$(real_dir_of "$1")
+  graph_sync_row "$dir" >/dev/null && return 0
+  if [[ "${CS_GRAPH_AUTOSYNC:-1}" == 0 ]]; then
+    status=off; detail="CS_GRAPH_AUTOSYNC=0"
+  else
+    line=$(python3 "$lib_dir/graph_sync.py" "$dir" "${CS_GRAPH_SYNC_TIMEOUT:-30}" 2>/dev/null) || line=""
+    status=${line%%$'\t'*}; detail=${line#*$'\t'}
+    case "$status" in
+      unchanged|synced|failed) ;;
+      *) status=failed; detail="the sync helper did not report (python3 $lib_dir/graph_sync.py)" ;;
+    esac
+  fi
+  _graph_sync_rows="$_graph_sync_rows$dir"$'\t'"$status"$'\t'"$detail"$'\n'
+}
+graph_sync_row() {  # <graph-dir> -> "<status> TAB <detail>", or fails if never checked
+  [[ -n "$_graph_sync_rows" ]] || return 1
+  awk -F'\t' -v d="$(real_dir_of "$1")" \
+    '$1 == d { print $2 "\t" $3; found = 1; exit } END { exit !found }' <<< "$_graph_sync_rows"
+}
+# Synced, or checked and found current: the graph matches the files on disk, so
+# its age is no longer a reason to discount the answer.
+graph_current() {  # <graph-dir>
+  case "$(graph_sync_row "$1" | cut -f1)" in synced|unchanged) return 0 ;; esac
+  return 1
+}
+# What a note says about it, after the age: nothing for a graph cs does not sync.
+graph_sync_note() {  # <graph-dir>
+  local row
+  row=$(graph_sync_row "$1") || return 0
+  case "${row%%$'\t'*}" in
+    synced)    printf ' (auto-synced before answering)' ;;
+    unchanged) printf ' (no file changed since: auto-sync had nothing to do)' ;;
+    failed)    printf ' (auto-sync failed: %s)' "${row#*$'\t'}" ;;
+    off)       printf ' (auto-sync off: CS_GRAPH_AUTOSYNC=0)' ;;
+  esac
+}
+# The same, for a verb that reads several repos' graphs: the workspace ones,
+# named by outcome.
+graph_sync_summary() {
+  local synced="" unchanged="" failed="" off="" dir status detail out=""
+  while IFS=$'\t' read -r dir status detail; do
+    [[ -n "$dir" ]] || continue
+    case "$status" in
+      synced)    synced="$synced ${dir##*/}" ;;
+      unchanged) unchanged="$unchanged ${dir##*/}" ;;
+      failed)    failed="$failed ${dir##*/} ($detail)" ;;
+      off)       off="$off ${dir##*/}" ;;
+    esac
+  done <<< "$_graph_sync_rows"
+  [[ -n "$synced" ]]    && out="$out; workspace graph(s) auto-synced before answering:$synced"
+  [[ -n "$unchanged" ]] && out="$out; workspace graph(s) with no file changed since their sync:$unchanged"
+  [[ -n "$failed" ]]    && out="$out; workspace graph auto-sync failed:$failed"
+  [[ -n "$off" ]]       && out="$out; workspace graph auto-sync off (CS_GRAPH_AUTOSYNC=0):$off"
+  printf '%s' "$out"
+}
+# And the warnings to go with it. A failed sync after files changed means the
+# graph is KNOWN to be behind the files on disk, which is the substituted-layer
+# hazard by another route, so it is degraded rather than only warned about.
+graph_sync_caveats() {  # <repo> <graph-dir>
+  local row
+  row=$(graph_sync_row "$2") || return 0
+  case "${row%%$'\t'*}" in
+    synced)    warn "cs synced the workspace graph of $1 before answering, so it reflects the files on disk, uncommitted edits included (CS_GRAPH_AUTOSYNC=0 turns this off)" ;;
+    unchanged) warn "no file in the workspace copy of $1 changed since its graph's last sync, so the graph reflects the files on disk" ;;
+    failed)
+      warn "cs tried to sync the workspace graph of $1 before answering, and the sync did not complete: ${row#*$'\t'} — this answer is from the graph as it was"
+      CS_DEGRADED="${CS_DEGRADED:+$CS_DEGRADED; }the workspace graph of $1 is behind the files on disk: files changed since its last sync and the auto-sync failed (${row#*$'\t'}), so edits since are invisible in this answer — cd $(real_dir_of "$2") && tokensave sync" ;;
+  esac
+}
+
+graph_sync_caveats_all() {
+  local dir status detail
+  while IFS=$'\t' read -r dir status detail; do
+    [[ -n "$dir" ]] || continue
+    graph_sync_caveats "${dir##*/}" "$dir"
+  done <<< "$_graph_sync_rows"
+}
+
 # The provenance note for a graph answer: which index answered, and how old it
 # is. Always both -- the age half is what separates a graph from every other
 # engine here, and the layer half is what separates this repo's branch state
@@ -2284,6 +2386,7 @@ graph_note() {  # <repo> <graph-dir> [extra] -> the note for answer()
   else
     note="$note, sync age unknown"
   fi
+  note="$note$(graph_sync_note "$dir")"
   [[ -n "$extra" ]] && note="$note; $extra"
   printf '%s' "$note"
 }
@@ -2295,11 +2398,14 @@ graph_note() {  # <repo> <graph-dir> [extra] -> the note for answer()
 # caller reading the envelope has no stderr to read.
 graph_caveats() {  # <repo> <graph-dir> <substituted:0|1>
   local repo="$1" dir="$2" substituted="$3" age
-  if age=$(tokensave_graph_age_secs "$dir") && [[ -n "$age" ]]; then
+  # A current graph's age is said by graph_sync_caveats, as what was checked.
+  if graph_current "$dir"; then :
+  elif age=$(tokensave_graph_age_secs "$dir") && [[ -n "$age" ]]; then
     warn "answered from a tokensave graph last synced $(format_age "$age") ago — it cannot see changes made since (cd $(real_dir_of "$dir") && tokensave sync)"
   else
     warn "could not read this graph's sync age — a graph answers about the code as of its last sync, and this one will not say when that was"
   fi
+  graph_sync_caveats "$repo" "$dir"
   if [[ "$substituted" -eq 1 ]]; then
     CS_DEGRADED="answered from $repo's FLEET index (main) although the scope is $CS_SCOPE — graph indexes are per-project and there is no union of the two, so your branch's edits to $repo are invisible in this answer"
     warn "the $CS_SCOPE workspace copy of $repo has no graph, so its FLEET copy answered — this describes main, not your branch (build one with: cd ${ticket_root:-<workspace>}/$repo && tokensave init)"
@@ -4289,7 +4395,8 @@ def_via_tokensave() {  # <symbol> [only-repo]
     [[ -n "$only" && "$name" != "$only" ]] && continue
     if ! tokensave_graph_at "$d"; then no_graph="$no_graph $name"; continue; fi
     n_graph=$((n_graph + 1))
-    age=$(tokensave_graph_age_secs "$d") || age=""
+    graph_autosync "$d"
+    age=""; graph_current "$d" || age=$(tokensave_graph_age_secs "$d") || age=""
     if [[ -n "$age" && ( -z "$oldest" || "$age" -gt "$oldest" ) ]]; then oldest="$age"; fi
     local one
     one=$(python3 "$lib_dir/tokensave_call.py" def "$d" "$name" "$sym"); rc=$?
@@ -4302,8 +4409,9 @@ def_via_tokensave() {  # <symbol> [only-repo]
   [[ $n_graph -gt 0 ]] || die "cs def: no repo in view has a tokensave graph
   build one with: cd <repo> && tokensave init
   or install universal-ctags, which indexes the whole view in one pass"
-  answer structural "tokensave (graph)" "$n_graph repo graph(s), no ctags index"
+  answer structural "tokensave (graph)" "$n_graph repo graph(s), no ctags index$(graph_sync_summary)"
   [[ -n "$oldest" ]] && warn "answered from graph(s) last synced up to $(format_age "$oldest") ago — changes made since are invisible (tokensave sync)"
+  graph_sync_caveats_all
   # The uncovered repos, named. A symbol defined in one of them looks exactly
   # like a symbol that does not exist.
   [[ -n "$no_graph" ]] && warn "no tokensave graph, so NOT searched:$no_graph — a definition in those repos cannot be found this way"
@@ -4857,6 +4965,7 @@ impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|fo
   # is on the same terms as symbol mode. The age was already warned about on
   # stderr; putting it in the note is what gets it into the porcelain envelope,
   # which is the only channel a non-human caller reads.
+  graph_autosync "$dir"
   answer structural "tokensave (graph)" "$(graph_note "$repo" "$dir" "$note")"
   out=$(python3 "$lib_dir/tokensave_call.py" impls "$dir" "$repo" "$sym"); rc=$?
   case "$rc" in
@@ -4869,9 +4978,12 @@ impls_via_tokensave() {  # <symbol> <repo-name> <repo-dir> <toolchain-missing|fo
   check: cs doctor   (graph coverage and age, and the fix)" ;;
   esac
   # A graph answers about the code as of its last sync, which makes staleness a
-  # correctness problem rather than a tidiness one. Always stated.
-  age=$(tokensave_graph_age_secs "$dir") && [[ -n "$age" ]] && \
+  # correctness problem rather than a tidiness one. Always stated -- as the
+  # workspace sync's outcome where cs synced it first (#127).
+  if ! graph_current "$dir" && age=$(tokensave_graph_age_secs "$dir") && [[ -n "$age" ]]; then
     warn "answered from a tokensave graph last synced $(format_age "$age") ago — it cannot see changes made since (cd $(real_dir_of "$dir") && tokensave sync)"
+  fi
+  graph_sync_caveats "$repo" "$dir"
   # Names the real prerequisite, or says nothing specific rather than something
   # untrue: the reader cannot learn what cs refs needs from anywhere else here.
   if [[ "$lang" == kotlin ]]; then
@@ -5144,6 +5256,7 @@ symbol_graph_query() {  # <callers|callees|impact> <symbol> <repo>
   $(graph_hint "$repo" "$dir")
   weaker but available now: cs uses '$sym', cs def $sym $repo"
   fi
+  graph_autosync "$graph_dir"
 
   local extra gap_lang=""
   case "$mode" in
@@ -5365,7 +5478,8 @@ fields_count_via_tokensave() {  # <field> [only-repo]
     [[ -n "$only" && "$name" != "$only" ]] && continue
     if ! tokensave_graph_at "$d"; then no_graph="$no_graph $name"; continue; fi
     n_graph=$((n_graph + 1))
-    age=$(tokensave_graph_age_secs "$d") || age=""
+    graph_autosync "$d"
+    age=""; graph_current "$d" || age=$(tokensave_graph_age_secs "$d") || age=""
     if [[ -n "$age" && ( -z "$oldest" || "$age" -gt "$oldest" ) ]]; then oldest="$age"; fi
     local one
     one=$(python3 "$lib_dir/tokensave_call.py" field-counts "$d" "$name" "$field"); rc=$?
@@ -5393,8 +5507,9 @@ fields_count_via_tokensave() {  # <field> [only-repo]
   [[ $n_graph -gt 0 ]] || die "cs fields: no repo in view has a tokensave graph
   build one with: cd <repo> && tokensave init"
 
-  answer structural "tokensave (graph)" "$n_graph repo graph(s), per-repo counts"
+  answer structural "tokensave (graph)" "$n_graph repo graph(s), per-repo counts$(graph_sync_summary)"
   [[ -n "$oldest" ]] && warn "answered from graph(s) last synced up to $(format_age "$oldest") ago — changes made since are invisible (tokensave sync)"
+  graph_sync_caveats_all
   [[ -n "$no_graph" ]] && warn "no tokensave graph, so NOT counted:$no_graph — a read or write in those repos is missing from these totals"
 
   # Same refusal as the listing route, for the same reason: tokensave returns
@@ -5437,7 +5552,8 @@ fields_via_tokensave() {  # <field> [only-repo]
     [[ -n "$only" && "$name" != "$only" ]] && continue
     if ! tokensave_graph_at "$d"; then no_graph="$no_graph $name"; continue; fi
     n_graph=$((n_graph + 1))
-    age=$(tokensave_graph_age_secs "$d") || age=""
+    graph_autosync "$d"
+    age=""; graph_current "$d" || age=$(tokensave_graph_age_secs "$d") || age=""
     if [[ -n "$age" && ( -z "$oldest" || "$age" -gt "$oldest" ) ]]; then oldest="$age"; fi
     local one
     one=$(python3 "$lib_dir/tokensave_call.py" fields "$d" "$name" "$field"); rc=$?
@@ -5491,8 +5607,9 @@ $why_cut
   build one with: cd <repo> && tokensave init
   weaker but available now: cs uses '$field'"
 
-  answer structural "tokensave (graph)" "$n_graph repo graph(s), read/write split"
+  answer structural "tokensave (graph)" "$n_graph repo graph(s), read/write split$(graph_sync_summary)"
   [[ -n "$oldest" ]] && warn "answered from graph(s) last synced up to $(format_age "$oldest") ago — changes made since are invisible (tokensave sync)"
+  graph_sync_caveats_all
   [[ -n "$no_graph" ]] && warn "no tokensave graph, so NOT searched:$no_graph — a read or write in those repos cannot be found this way"
   warn "this is a GRAPH answer, not a language server: it cannot see reflection, DI registration, serialization by name, or generated code — all of which touch fields without a site the graph records."
   # Named per repo, because the sampling happened per graph and the read counts

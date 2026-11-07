@@ -208,6 +208,20 @@ last_sync_at        ->  0h  2m ago
 last_updated        -> 87h 46m ago
 ```
 
+In a workspace, cs syncs the repo's graph before a graph-backed answer, unless
+no file changed since its last sync (1.34.0, #127). The answer line then says
+which of the two happened, and the age warning above is not printed:
+
+```
+answer: structural via tokensave (graph) (scoped to inventory-api-dotnet; ticket layer, synced 0s ago (auto-synced before answering); direct callers, a row per call site) · 2 hit(s) · 1 repo(s)
+```
+
+A sync that fails or times out (`CS_GRAPH_SYNC_TIMEOUT`, 30 s) leaves the
+graph as it was. The line says `(auto-sync failed: <reason>)`, and the answer is
+`degraded`, because files are known to have changed since the graph was built.
+Fleet graphs are never synced: they describe main, and their refresh belongs to
+fleet-workspace.
+
 Reading the second made every graph answer tell the reader their graph was days
 stale and prescribe `tokensave sync` — minutes after a scheduled job had run it.
 It never self-corrected either: a repo whose commits touch only file types with

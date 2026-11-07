@@ -1829,13 +1829,21 @@ kotlin_jvm_floor() {  # <repo-dir>
     | grep -oE '[0-9][0-9._]*$' | sed -e 's/^1[._]//' -e 's/[._].*//' | sort -n | tail -1
 }
 
-# The Java major the Kotlin server's bundled runtime provides, once Serena has
-# downloaded it; nothing before that.
+# The Java major the Kotlin server's bundled runtime provides: the build Serena
+# runs (an ls_path one, when set -- #130), else the newest it has downloaded;
+# nothing before there is one.
 kotlin_server_runtime() {
-  local r best=""
-  for r in "$HOME"/.serena/language_servers/static/KotlinLanguageServer/*/kotlin-server-*/jbr; do
+  local r best="" launcher
+  launcher=$(python3 "$lib_dir/kotlin_server.py" which 2>/dev/null | cut -f2)
+  if [[ -n "$launcher" ]]; then
+    r="$(dirname "$(dirname "$launcher")")/jbr"
     [[ -d "$r" ]] && best=$(jdk_major_at "$r")
-  done
+  fi
+  if [[ -z "$best" ]]; then
+    for r in "$HOME"/.serena/language_servers/static/KotlinLanguageServer/*/kotlin-server-*/jbr; do
+      [[ -d "$r" ]] && best=$(jdk_major_at "$r")
+    done
+  fi
   [[ -n "$best" ]] && printf '%s\n' "$best"
 }
 
@@ -3979,6 +3987,60 @@ doc_kotlin() {  # <repo names> <count> <repo dirs>, one per line
       "$fixes"
   fi
   [[ -n "$high_repos" ]] && doc_row unchecked Kotlin "$(printf '%s' "$high_repos" | doc_list) compile for Java $high_floor, above the Kotlin server's own runtime (Java $rt) — not verified to import"
+  doc_kotlin_server
+  return 0
+}
+
+# The Kotlin server itself, started (#130). The Kotlin row above judges the
+# runtime and the builds' JDK requests, and never started the server -- so when
+# JetBrains' pre-release build expired, as each one does about a month after it
+# is built, the row stayed green and every Kotlin cs impls / cs refs refused.
+# Started the way an LSP client starts it, and asked `initialize`: an answer is
+# proof it starts, the expiry message or an exit is proof it does not.
+# scripts/lib/kotlin_server.py has the measurements.
+doc_kotlin_server() {
+  local which source launcher build built note res what fix newest
+  # Without uv no language server runs at all, and the uv row says so.
+  have uvx || return 0
+  which=$(python3 "$lib_dir/kotlin_server.py" which 2>/dev/null) || which=""
+  IFS=$'\t' read -r source launcher build built note <<< "$which"
+  fix="$(cd "$lib_dir/.." && pwd)/install-kotlin-server   (the newest build, SHA-256 checked; it prints the ls_path line for ~/.serena/serena_config.yml)"
+  [[ -n "$note" ]] && doc_row warn "Kotlin LS" "$note — the line is read as text, not a setting" "" \
+    "write it as 'ls_path: <path>', with a space (docs/install.md, \"Kotlin language server\")"
+  case "$source" in
+    ls_path) what="the ls_path build" ;;
+    serena)  what="Serena's own copy" ;;
+    *)
+      doc_row warn "Kotlin LS" "none: Serena has not downloaded one, and cannot (its download host answers 404)" \
+        "cs impls / cs refs on Kotlin refuse" "$fix"
+      return 0 ;;
+  esac
+  if [[ ! -x "$launcher" ]]; then
+    doc_row bad "Kotlin LS" "$what is configured at $launcher, which is not there" \
+      "cs impls / cs refs on Kotlin refuse" "$fix"
+    return 0
+  fi
+  local label="${build:-?}${built:+ (built $built)}, $what"
+  res=$(python3 "$lib_dir/kotlin_server.py" start "$launcher" 30 2>/dev/null) || res=""
+  case "$res" in
+    starts) doc_row ok "Kotlin LS" "$label: starts, and answers initialize" ;;
+    expired)
+      doc_row bad "Kotlin LS" "$label: has EXPIRED and exits at start-up — JetBrains' pre-release builds stop starting about a month after they are built" \
+        "every cs impls / cs refs on a Kotlin repo refuses" "$fix"
+      return 0 ;;
+    exits*)
+      doc_row bad "Kotlin LS" "$label: exits at start-up (exit $(cut -f2 <<< "$res"): $(cut -f3 <<< "$res"))" \
+        "every cs impls / cs refs on a Kotlin repo refuses" "$fix"
+      return 0 ;;
+    *)  doc_row unchecked "Kotlin LS" "$label: did not answer initialize within 30s, so whether it starts is not known" ;;
+  esac
+  # One HEAD request; nothing is said when it cannot be made. A newer release
+  # is the warning that this one is next to expire.
+  newest=$(python3 "$lib_dir/kotlin_server.py" newest 2>/dev/null) || newest=""
+  if [[ -n "$newest" && -n "$build" && "$newest" != "$build" ]] && version_lt "$build" "$newest"; then
+    doc_row note "Kotlin LS" "$newest is out, and $build is next to stop starting: these builds stop about a month after they are built${built:+ ($build: $built)}" \
+      "" "$fix"
+  fi
   return 0
 }
 

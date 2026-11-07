@@ -8,6 +8,28 @@ or behaviour, patch for a fix alone). Then tag the commit `vX.Y.Z`.
 
 ## Unreleased
 
+## 1.35.0 — 2026-11-07
+
+- **`cs doctor` starts the Kotlin language server** (#130). JetBrains ships
+  kotlin-server as pre-release builds that stop starting about a month after
+  they are built. 263.6379.0, the build `docs/install.md` named, had expired, and
+  `cs doctor` still marked Kotlin ✓, because it checked the runtime and never
+  started the server. Every Kotlin `cs impls` / `cs refs` refused at query time.
+  A new **Kotlin LS** row starts the build Serena runs (the `ls_path` one, or
+  Serena's own copy) the way an LSP client does and asks it `initialize`. It
+  fails with the fix when the build has expired, exits at start-up, or is not
+  where `ls_path` says. It also notes when a newer release is out, since yours
+  is then next to expire (one HEAD request to GitHub, silent when offline), and
+  when `ls_path:` has no space after the colon, which makes Serena ignore it.
+  The docs no longer pin a build: new **`scripts/install-kotlin-server`**
+  downloads the newest release, checks its SHA-256, unpacks it under
+  `~/.local/share/kotlin-server/`, and prints the `ls_path` line to use. The
+  Kotlin refusal's fix names it too. If cs doctor flags **Kotlin LS**, run that
+  script and update `ls_path`. New verify-engines probe `kotlin-server`, apart
+  from `serena-kt`, so an expired build shows as that, and the build is listed
+  under "Tested with" in the release notes. New verify-search checks
+  `kotlin-server-probe` and `doctor-kotlin-server`.
+
 ## 1.34.0 — 2026-11-06
 
 - **A workspace graph is synced before it answers** (#127). In a ticket or

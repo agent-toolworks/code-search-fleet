@@ -171,6 +171,9 @@ Optionally, to prove the tool itself on this machine:
 | `! Kotlin … request a JDK N toolchain … installed but keg-only` | paste the printed `export JAVA_HOME=…` line. Homebrew's JDKs are invisible until `JAVA_HOME` points at them |
 | `! Kotlin … request a JDK N toolchain, and none is findable` | `brew install openjdk@N`, then the printed `JAVA_HOME` line. It must be **that** version: with another, the Kotlin server answers *empty*, so `cs` refuses. The request can come from a build the repo includes (`includeBuild`) |
 | `✓ Kotlin … request no Gradle toolchain` | nothing to do: a build pinned only by `sourceCompatibility` / `jvmTarget` is built on the Kotlin server's own runtime, with no JDK |
+| `✗ Kotlin LS … has EXPIRED and exits at start-up` | `"$CS_ROOT/scripts/install-kotlin-server"`, then put the path it prints in `ls_path` (see [Kotlin language server](#kotlin-language-server)). Every Kotlin `cs impls` / `cs refs` refuses until then |
+| `! Kotlin LS  <build> is out, and <yours> is next to stop starting` | the build you run starts, and is next to expire: the same script, when convenient |
+| `! Kotlin LS  ls_path:… has no space after the colon` | write `ls_path: <path>`. Without the space Serena reads the line as text and runs its own, expired, build |
 | `! C# … no runnable dotnet` | `brew install --cask dotnet-sdk`. It loads legacy .NET Framework projects too, on macOS and Linux, without their reference assemblies: framework and package types do not resolve, the repo's own do. Meanwhile `cs impls --engine=tokensave` answers where a graph exists |
 | `! TypeScript` / `JavaScript … no runnable node` | `brew install node` |
 | `? Python` / `Go` / `Rust` | not checked by `cs`. An empty `cs impls` / `cs refs` there is not proof of absence |
@@ -188,43 +191,56 @@ Java needs nothing: Serena's Java server ships its own runtime.
 
 ## Kotlin language server
 
-JetBrains publishes kotlin-server as pre-release builds that stop starting on a
-date. When the build Serena runs has expired, every `cs impls` / `cs refs` on a
-Kotlin repo refuses with *"the Kotlin language server Serena runs
-(kotlin-server N) is a pre-release build that has expired"*. Serena cannot
-replace it by itself: JetBrains' CDN answers 404 to the download URL Serena
-builds (since October 2026; that refusal says *"Serena could not download the
-Kotlin language server"*). Install a current build yourself and point Serena at
-it:
+JetBrains publishes kotlin-server as pre-release builds that stop starting
+about a month after they are built: 263.4702.0 (built 2026-09-08) had stopped by
+2026-10-09, and 263.6379.0 (built 2026-09-30) by 2026-11-07. When the build
+Serena runs has expired, every `cs impls` / `cs refs` on a Kotlin repo refuses
+with *"the Kotlin language server Serena runs (kotlin-server N) is a pre-release
+build that has expired"*, and `cs doctor`'s **Kotlin LS** row, which starts the
+server and asks it `initialize`, fails with the same cause. Serena cannot
+replace the build by itself: its download host (download-cdn.jetbrains.com)
+answers 404 for every kotlin-server build, the newest included. So install the
+newest build yourself and point Serena at it:
 
 ```sh
-v=263.6379.0                            # the newest at https://github.com/Kotlin/kotlin-lsp/releases
-a=kotlin-server-$v-aarch64.sit          # Apple silicon; Intel Mac: kotlin-server-$v.sit; Linux: kotlin-server-$v[-aarch64].tar.gz
-mkdir -p ~/.local/share/kotlin-server && cd ~/.local/share/kotlin-server
-curl -fLO "https://download.jetbrains.com/language-server/kotlin-server/$v/$a"
-curl -fsL "https://download.jetbrains.com/language-server/kotlin-server/$v/$a.sha256" | shasum -a 256 -c -   # prints "<file>: OK"; Linux: sha256sum -c -
-ditto -x -k "$a" .                      # a .sit is a zip; on Linux: tar xzf "$a"
-ls "$PWD/kotlin-server-$v/bin/intellij-server"
+"$CS_ROOT/scripts/install-kotlin-server"     # the newest release; --version <build> for another
 ```
 
-Then, in `~/.serena/serena_config.yml`, replace `ls_specific_settings: {}` with
-that path:
+It looks up the newest release, downloads it from download.jetbrains.com,
+checks its SHA-256 (published on the same host, so this proves the download is
+intact, not who made it), unpacks it under `~/.local/share/kotlin-server/`, and
+prints the line to put in `~/.serena/serena_config.yml`, in place of
+`ls_specific_settings: {}` or of the previous build's path:
 
 ```yaml
 ls_specific_settings:
   kotlin:
-    ls_path: /Users/you/.local/share/kotlin-server/kotlin-server-263.6379.0/bin/intellij-server
+    ls_path: /Users/you/.local/share/kotlin-server/kotlin-server-<build>/bin/intellij-server
 ```
 
-Keep the space after `ls_path:`. Without it YAML reads the whole line as a key
-with no value, Serena ignores it without a word, and the expired build keeps
-running (the refusal still names 263.4702.0).
-Nothing needs restarting: each `cs impls` / `cs refs` starts a fresh Serena.
-The build carries its own Java runtime, so it needs no `JAVA_HOME` beyond what
-the doctor table above asks for. `ls_path` overrides the version Serena
-manages, so repeat this when the new build expires too, and `verify-engines`
-(its `serena-kt` line) says whether it starts. Checked on macOS arm64 with
-263.6379.0; the Linux archive is named from the release page and not tried.
+Keep the space after `ls_path:`. Without it YAML reads the whole line as text,
+Serena ignores it without a word, and the expired build keeps running; `cs
+doctor` names that case. Nothing needs restarting: each `cs impls` / `cs refs`
+starts a fresh Serena. The build carries its own Java runtime, so it needs no
+`JAVA_HOME` beyond what the doctor table above asks for.
+
+By hand, the same steps (Apple silicon; an Intel Mac's archive ends `.sit`,
+Linux's `.tar.gz` or `-aarch64.tar.gz`, unpacked with `tar xzf`):
+
+```sh
+v=$(curl -fsI https://github.com/Kotlin/kotlin-lsp/releases/latest | sed -n 's|^[Ll]ocation:.*/v\([0-9.]*\).*|\1|p')
+a=kotlin-server-$v-aarch64.sit
+mkdir -p ~/.local/share/kotlin-server && cd ~/.local/share/kotlin-server
+curl -fLO "https://download.jetbrains.com/language-server/kotlin-server/$v/$a"
+curl -fsL "https://download.jetbrains.com/language-server/kotlin-server/$v/$a.sha256" | shasum -a 256 -c -   # "<file>: OK"; Linux: sha256sum -c -
+ditto -x -k "$a" . && ls "$PWD/kotlin-server-$v/bin/intellij-server"
+```
+
+When a newer build is out, `cs doctor` says so on a **Kotlin LS** note: the
+one you run is next to expire. Run the script again then, and update the path.
+`verify-engines` probes the same thing on its `kotlin-server` line, apart from
+`serena-kt`. Checked on macOS arm64 with 263.7084.0; the Linux archives are named as Serena's
+own installer names them, and not tried.
 
 ## Updating later
 
@@ -242,6 +258,13 @@ something new. See [updating.md](updating.md).
 
 For people, and for agents whose notes, `CLAUDE.md` or memory describe cs from
 before 1.16. Update anything that says otherwise:
+
+- **`cs doctor` starts the Kotlin language server** (1.35.0, #130). A **Kotlin
+  LS** row now starts the build Serena runs and fails when it has expired, so a
+  green doctor no longer coexists with refused Kotlin queries. Install a build
+  with `scripts/install-kotlin-server`, which takes the newest release. The
+  docs no longer name a build number, so notes that say "install kotlin-server
+  263.6379.0" are out of date: that build has expired.
 
 - **A workspace graph is synced before it answers** (1.34.0, #127). In a
   workspace, the graph-backed verbs (`cs callers`, `callees`, `impact`,

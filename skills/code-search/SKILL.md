@@ -55,6 +55,11 @@ repos rather than guessing.
 (`cs_changes` over MCP) lists everything since, small fixes included, and the
 MCP instructions name the running version. Details are in `docs/install.md`,
 "If you already use cs":
+- Since 1.35.0, `cs doctor`'s **Kotlin LS** row starts the Kotlin language
+  server, and fails when JetBrains' pre-release build has expired, which each
+  one does about a month after it is built. The fix is
+  `scripts/install-kotlin-server` (the newest build) and then pointing `ls_path`
+  at the path it prints. Do not install a build number from older notes.
 - Since 1.34.0, a workspace repo's tokensave graph is synced before a
   graph-backed answer (`cs callers` / `callees` / `impact` / `fields`, and
   `impls` / `def` through a graph), so the answer includes edits made since the

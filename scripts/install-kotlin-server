@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# install-kotlin-server -- download the newest kotlin-server, check its SHA-256,
+# unpack it under ~/.local/share/kotlin-server, and print the ls_path line for
+# ~/.serena/serena_config.yml (#130). JetBrains ships these as pre-release builds
+# that stop starting about a month after they are built, so this takes the
+# newest release rather than a pinned number; run it again when cs doctor says
+# the build Serena runs has expired.
+#
+# Usage: install-kotlin-server [--version <build>] [--dir <dir>]
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+launcher=$(python3 "$here/lib/kotlin_server.py" install "$@")
+cat <<MSG
+
+Unpacked: $launcher
+
+Point Serena at it in ~/.serena/serena_config.yml (replace an existing
+kotlin ls_path, or the line 'ls_specific_settings: {}'):
+
+ls_specific_settings:
+  kotlin:
+    ls_path: $launcher
+
+Keep the space after 'ls_path:'. Then check: cs doctor (its Kotlin LS row).
+MSG
